@@ -26,12 +26,17 @@ Run the commands below from `pwsh`, which picks the per-user Pester 5+.
 From the repository root, in `pwsh`:
 
 ```powershell
-Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+Get-ChildItem -Recurse -File -Include *.ps1, *.psm1, *.psd1 | Invoke-ScriptAnalyzer -Settings ./PSScriptAnalyzerSettings.psd1
 Invoke-Pester -Path ./tests -ExcludeTagFilter Hardware
 ```
 
-Both must be clean: zero diagnostics, zero failures. CI (`.github/workflows/ci.yml`) runs the same
-two commands on every push to `main` and every pull request.
+Both must be clean: zero diagnostics, zero failures, and no errors. CI
+(`.github/workflows/ci.yml`) runs the same two commands on every push to `main` and every pull
+request.
+
+- The analyzer gets the files **one at a time, through the pipeline**. With `-Recurse` it
+  analyzes files in parallel, and on a cold start some rules then fail their command lookups
+  ("the term 'Get-Command' is not recognized") and report errors instead of results.
 
 - **This test command needs no modem and no admin rights.** Tests that talk to a real device are
   tagged `Hardware`, and every documented command excludes them: Pester itself runs every tag

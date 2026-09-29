@@ -69,7 +69,7 @@ Everything else: **proceed**. Asking permission for routine work is its own fail
 - Setup: `docs/SETUP.md`. Linting and testing need no admin rights and no modem.
 - **Done means clean:**
   ```powershell
-  Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+  Get-ChildItem -Recurse -File -Include *.ps1, *.psm1, *.psd1 | Invoke-ScriptAnalyzer -Settings ./PSScriptAnalyzerSettings.psd1
   Invoke-Pester -Path ./tests -ExcludeTagFilter Hardware
   ```
   Zero diagnostics, zero failures. Every behavior change comes with tests.

@@ -22,8 +22,8 @@ ignores (see [`docs/SETUP.md`](docs/SETUP.md)).
 
 ## Before opening a pull request
 
-- `Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1` reports
-  nothing, and `Invoke-Pester -Path ./tests -ExcludeTagFilter Hardware` is green.
+- The two commands of [`docs/SETUP.md`](docs/SETUP.md) → *Lint and test* are clean: the analyzer
+  reports nothing, and `Invoke-Pester -Path ./tests -ExcludeTagFilter Hardware` is green.
 - Behavior changes come with tests.
 - `docs/ROADMAP.md`, `docs/DEVLOG.md` and `CHANGELOG.md` are updated when the change lands a
   roadmap item.

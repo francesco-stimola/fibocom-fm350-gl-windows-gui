@@ -29,10 +29,12 @@ jobs:
           Install-PSResource -Name Pester -Version 6.2.0 -Scope CurrentUser -TrustRepository -Quiet
           Install-PSResource -Name PSScriptAnalyzer -Version 1.25.0 -Scope CurrentUser -TrustRepository -Quiet
 
+      # One file at a time, through the pipeline: analyzing files in parallel (-Recurse) on a cold
+      # start makes some rules fail their command lookups with errors instead of results.
       - name: Lint
         shell: pwsh
         run: |
-          $diagnostics = Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+          $diagnostics = Get-ChildItem -Recurse -File -Include *.ps1, *.psm1, *.psd1 | Invoke-ScriptAnalyzer -Settings ./PSScriptAnalyzerSettings.psd1
           $diagnostics | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize -Wrap
           if ($diagnostics) { throw "$(@($diagnostics).Count) analyzer diagnostic(s)" }
 
