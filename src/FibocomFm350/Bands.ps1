@@ -63,7 +63,11 @@ function ConvertFrom-GtactBandCode {
         Decodes an AT+GTACT band code into its radio access technology and band number.
     .DESCRIPTION
         Returns an object with Kind ('LTE', 'NR', 'AllBands' or 'Unknown'), Band (the band
-        number, or $null) and Code (the input, unchanged).
+        number, or $null) and Code (the input, as an integer).
+
+        The code is taken as text and must be a non-negative integer written without leading
+        zeros. An empty or blank field is refused rather than read as 0, which would mean
+        "automatic band selection" and silently drop a band lock when written back.
     .EXAMPLE
         ConvertFrom-GtactBandCode -Code 5078
 
@@ -74,23 +78,25 @@ function ConvertFrom-GtactBandCode {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
+        # Text, not [int]: binding '' or ' ' to an [int] parameter silently yields 0.
         [Parameter(Mandatory, ValueFromPipeline)]
-        [ValidateRange(0, [int]::MaxValue)]
-        [int] $Code
+        [ValidatePattern('^(0|[1-9][0-9]{0,8})$')]
+        [string] $Code
     )
 
     process {
+        $value = [int]$Code
         $kind = 'Unknown'
         $band = $null
 
-        if ($Code -eq 0) {
+        if ($value -eq 0) {
             $kind = 'AllBands'
         }
-        elseif ($Code -gt 100 -and $Code -le 100 + $script:MaxLteBand) {
+        elseif ($value -gt 100 -and $value -le 100 + $script:MaxLteBand) {
             $kind = 'LTE'
-            $band = $Code - 100
+            $band = $value - 100
         }
-        elseif ("$Code" -match '^50([1-9][0-9]{0,2})$' -and [int]$Matches[1] -le $script:MaxNrBand) {
+        elseif ($Code -match '^50([1-9][0-9]{0,2})$' -and [int]$Matches[1] -le $script:MaxNrBand) {
             $kind = 'NR'
             $band = [int]$Matches[1]
         }
@@ -98,7 +104,7 @@ function ConvertFrom-GtactBandCode {
         [pscustomobject]@{
             Kind = $kind
             Band = $band
-            Code = $Code
+            Code = $value
         }
     }
 }

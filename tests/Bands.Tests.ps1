@@ -95,9 +95,39 @@ Describe 'ConvertFrom-GtactBandCode' {
         Should -ActualValue $decoded.Code -Be $Code
     }
 
-    It 'refuses a negative code' {
-        { ConvertFrom-GtactBandCode -Code -1 } |
+    It 'decodes a code given as text: <Code>' -ForEach @(
+        @{ Code = '0'; Kind = 'AllBands'; Value = 0 }
+        @{ Code = '103'; Kind = 'LTE'; Value = 103 }
+        @{ Code = '5078'; Kind = 'NR'; Value = 5078 }
+    ) {
+        $decoded = $Code | ConvertFrom-GtactBandCode
+        Should -ActualValue $decoded.Kind -Be $Kind
+        Should -ActualValue $decoded.Code -Be $Value
+        Should -ActualValue $decoded.Code -BeOfType ([int])
+    }
+
+    # An empty field must never read as 0 ("automatic band selection"): written back, it would
+    # drop the band lock. Leading zeros and non-integers are refused too, so Code is the raw value.
+    It 'refuses code <Label>' -ForEach @(
+        @{ Label = '-1'; Code = -1 }
+        @{ Label = 'empty'; Code = '' }
+        @{ Label = 'blank'; Code = ' ' }
+        @{ Label = 'abc'; Code = 'abc' }
+        @{ Label = '05078 (leading zero)'; Code = '05078' }
+        @{ Label = '1.5'; Code = '1.5' }
+        @{ Label = '1000000000 (too long)'; Code = '1000000000' }
+    ) {
+        { ConvertFrom-GtactBandCode -Code $Code } |
             Should -Throw -ExceptionType ([System.Management.Automation.ParameterBindingException])
+    }
+
+    # A binding error for pipeline input is raised before the function runs, so it reaches the
+    # error stream but not -ErrorVariable: capture the stream instead.
+    It 'refuses an empty field from the pipeline, with no output' {
+        $results = '' | ConvertFrom-GtactBandCode 2>&1
+        $results | Should -HaveCount 1
+        $results[0] | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $results[0].Exception | Should -BeOfType ([System.Management.Automation.ParameterBindingException])
     }
 }
 
