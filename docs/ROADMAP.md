@@ -14,7 +14,7 @@ written `(planned)`.
 | Milestone | Status |
 |---|---|
 | [M0 — Project setup](#m0) | ✅ complete |
-| [M1 — Modem protocol](#m1) | 📋 planned |
+| [M1 — Modem protocol](#m1) | 🔨 code-complete |
 | [M2 — Connection](#m2) | 📋 planned |
 | [M3 — Tray app](#m3) | 📋 planned |
 | [M4 — Health & recovery](#m4) | 📋 planned |
@@ -50,8 +50,8 @@ Everything needed to talk to the modem and understand its answers — no connect
   - the port vanishing mid-command, and the device coming back under a different COM number;
   - `+CME ERROR` / SIM busy right after a mode or band change;
   - registration lost and regained; a slow `AT+COPS=0`.
-- [ ] Pure parsers, each tested on fixtures: identity, SIM state, registration, operator + access technology, signal quality, serving/neighbour cells, carrier aggregation, temperature.
-- [ ] Measurement index → dBm/dB and ARFCN → band tables transcribed from the 3GPP specs, with clause/table numbers recorded in `AT-COMMANDS.md`.
+- [x] Pure parsers, each tested on fixtures: identity, SIM state, registration, operator + access technology, signal quality, serving/neighbour cells, carrier aggregation, temperature. (On documented fixtures; the device session adds captured ones.)
+- [x] Measurement index → dBm/dB and ARFCN → band tables transcribed from the 3GPP specs, with clause/table numbers recorded in `AT-COMMANDS.md`.
 
 <a id="m2"></a>
 ## M2 — Connection

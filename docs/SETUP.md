@@ -26,18 +26,19 @@ Run the commands below from `pwsh`, which picks the per-user Pester 5+.
 From the repository root, in `pwsh`:
 
 ```powershell
-Get-ChildItem -Recurse -File -Include *.ps1, *.psm1, *.psd1 | Invoke-ScriptAnalyzer -Settings ./PSScriptAnalyzerSettings.psd1
+./tools/Invoke-Lint.ps1
 Invoke-Pester -Path ./tests -ExcludeTagFilter Hardware
 ```
 
-Both must be clean: zero diagnostics, zero failures, and no errors. CI
-(`.github/workflows/ci.yml`) runs the same two commands on every push to `main` and every pull
-request.
+Both must be clean: zero diagnostics, zero failures. CI (`.github/workflows/ci.yml`) runs the
+same two commands on every push to `main` and every pull request.
 
-- The analyzer gets the files **one at a time, through the pipeline**. With `-Recurse` it
-  analyzes files in parallel, and on a cold start some rules then fail their command lookups
-  ("the term 'Get-Command' is not recognized") and report errors instead of results.
-
+- **Lint goes through `tools/Invoke-Lint.ps1`**, not a bare `Invoke-ScriptAnalyzer`.
+  PSScriptAnalyzer 1.24–1.25 on PowerShell 7.6 intermittently fails its own command lookups
+  ("the term 'Get-Command' is not recognized") — an error of the analyzer, not a finding — and
+  stays broken for the rest of the process. The script analyzes the files one at a time in a
+  child process, moves whatever is left to a fresh process after such a failure, and exits with
+  1 on any diagnostic or on a file it could not analyze at all.
 - **This test command needs no modem and no admin rights.** Tests that talk to a real device are
   tagged `Hardware`, and every documented command excludes them: Pester itself runs every tag
   unless told otherwise. Run them on purpose on a machine where the modem is attached **and this
@@ -60,6 +61,10 @@ request.
 | `tests/SimulatedModem.Tests.ps1` | Fixture import and its format errors; the simulated modem answering from fixtures. |
 | `tests/Transport.Tests.ps1` | Serial port names refused, a missing port failing to open; the `Hardware` test on a real FM350. |
 | `tests/Fixtures.Tests.ps1` | Every fixture follows the format, names its source and carries only the documented fake identifiers; the identifier check catches real-looking ones. |
+| `tests/Measurements.Tests.ps1` | Every measurement kind's index → dBm/dB mapping: range edges, the open-ended lowest and highest indexes, "not known" and out-of-range indexes. |
+| `tests/Parsers.Tests.ps1` | Identity, SIM state, registration (read answers and URCs, every domain, reject causes), operator and technology, signal quality, temperature — on documented fixtures played through the channel. |
+| `tests/Cells.Tests.ps1` | `+GTCCINFO` serving and neighbour layouts on LTE, EN-DC and SA; `+GTCAINFO` primary and secondary carriers, older shorter lines, malformed fields. |
+| `tests/Arfcn.Tests.ps1` | EARFCN and NR-ARFCN against values worked out by hand from the 3GPP formulas, including the table rows that needed repair when transcribed. |
 
 ## Fixtures
 

@@ -342,7 +342,12 @@ src/
     Transport.ps1        the serial transport, and the shape every transport has (M1)
     SimulatedModem.ps1   the simulated modem: fixtures + scripted faults; fixture import (M1)
     AtChannel.ps1        the AT channel: commands, answers, unsolicited codes (M1)
-    …                    parsers, state machine, recovery, network, drivers (M1–M6)
+    Measurements.ps1     measurement index -> dBm/dB (M1, pure)
+    Parsers.ps1          identity, SIM, registration, operator, signal, temperature (M1, pure)
+    Cells.ps1            +GTCCINFO cells and +GTCAINFO carrier aggregation (M1, pure)
+    Arfcn.ps1            channel number -> frequency and band (M1, pure)
+    Data/                3GPP band tables, transcribed (EutraBands.psd1, NrBands.psd1)
+    …                    state machine, recovery, network, drivers (M2–M6)
   App/                   tray app: UI thread, worker runspace, supervisor (M3)
 tests/
   *.Tests.ps1            Pester
@@ -350,6 +355,8 @@ tests/
     documented/          answers written from the documentation, values invented (M1)
     device/              answers captured from a real FM350, redacted (device session)
     fakes.psd1           the only identifier-like values a fixture may carry
+tools/
+  Invoke-Lint.ps1        the linter, as CI runs it (docs/SETUP.md)
 assets/                  logo (source: logo.html)
 ```
 

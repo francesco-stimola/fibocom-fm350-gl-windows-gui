@@ -4,6 +4,36 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-09-29 — M1 code-complete: parsers, measurements, 3GPP band tables; a robust linter
+
+Everything in M1 that doesn't need the device is done; the device session remains.
+- **Parsers are pure and tolerant.** Each takes the answer lines, picks the lines with the prefix
+  it knows and ignores the rest, and returns `$null` for what isn't there, so an unexpected line
+  never breaks a parse. `+CEREG`-style reports tell the read answer from the URC by the second
+  argument (an unquoted number). `+GTCCINFO` lines are read by their first field, because serving
+  and neighbour lines have different layouts; `+GTCAINFO` lines from their start, because the
+  tail changed between firmware versions, and each carrier's technology comes from its band code.
+- **Parsers are tested through the channel**: each documented fixture is played by the simulated
+  modem and read back by `Invoke-AtCommand`, so the tests see what a parser will see.
+- **Measurements** map an index to the edge the specification names for it, plus whether that
+  edge is a bin, a ceiling (lowest index) or a floor (highest index).
+- **3GPP band tables** (36.101 Table 5.7.3-1, 38.101-1 Tables 5.4.2.1-1 and 5.4.2.3-1, V20.1.0) are
+  transcribed into data files rather than typed into code. They were extracted from the
+  specification documents and checked — every E-UTRA range starts at its offset, no two overlap —
+  and the extraction needed repairs, now covered by tests: footnote marks glued to band numbers
+  (`292` was band 29), and range dashes lost or varying. NR bands overlap, so an NR-ARFCN gives
+  every candidate band; the band the modem reports stays preferred.
+- **Numbers are culture-invariant** (new rule in `CLAUDE.md`): the first transcription wrote
+  `1844,9` for 1844.9 MHz under a comma-decimal culture — an array in PowerShell source. The
+  analyzer caught it; the decimal-frequency bands now have tests.
+- **Lint goes through `tools/Invoke-Lint.ps1`.** PSScriptAnalyzer 1.24/1.25 on PowerShell 7.6
+  intermittently fails its own command lookups ("'Get-Command' is not recognized"), in parallel or
+  sequential analysis alike, and then stays broken for the rest of the process — seen in about
+  half of the runs. The script analyzes files one at a time in a child process and hands whatever
+  is left to a fresh process after such a failure; diagnostics are never retried away.
+- **Timing-based tests** use generous timeouts except where a timeout is the point: a cold start
+  on a busy machine once made a 1 s initialization miss.
+
 ## 2026-09-29 — M1: the AT channel, the simulated modem, fixture rules
 
 The device-independent core of M1. Design decisions:

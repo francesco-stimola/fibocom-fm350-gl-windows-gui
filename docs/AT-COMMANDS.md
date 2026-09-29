@@ -29,8 +29,8 @@ Nothing is ✅ yet: no device capture exists (ROADMAP M1).
 | `[23.040]` | 3GPP TS 23.040 — *Technical realization of the Short Message Service* (PDU layouts) | Public standard |
 | `[23.038]` | 3GPP TS 23.038 — *Alphabets and language-specific information* (GSM 7-bit, UCS-2, data coding scheme) | Public standard |
 | `[V.250]` | ITU-T V.250 — *Serial asynchronous automatic dialling and control* | Public standard |
-| `[36.101]` | 3GPP TS 36.101 — *E-UTRA UE radio transmission and reception* | Public standard |
-| `[38.101-1]` | 3GPP TS 38.101-1 — *NR UE radio transmission and reception, FR1* | Public standard |
+| `[36.101]` | 3GPP TS 36.101 — *E-UTRA UE radio transmission and reception*, **V20.1.0** (`36101-k10.zip`, SHA-256 `9f9a56f5d0535e5f77da0b4154c3056ed6e0d09c4e0ee22b2beb9676de0144ad`) | Public standard |
+| `[38.101-1]` | 3GPP TS 38.101-1 — *NR UE radio transmission and reception, FR1*, **V20.1.0** (`38101-1-k10.zip`, SHA-256 `274357963736f04ef5fe419288c2341a7b02897dd478d0bb9c46304a2d9f5eda`) | Public standard |
 | `[36.133]` / `[38.133]` | 3GPP TS 36.133 / 38.133 — *Requirements for support of radio resource management* | Public standard |
 | `[FIBOCOM]` | Fibocom *FM350 AT Commands User Manual* **V2.10** (2023-07-04), cited as `§<section> p.<page>`. No applicability table; its SAR chapters name the FM350-GL-16 variant (no NR). Copies are published by resellers; the document is marked all rights reserved and confidential, so only facts are taken from it, in our own words. | Vendor documentation — facts only |
 | `[FIBOCOM-2.2]` | The same manual, **V2.2** (2021-02-22), whose applicability table names the FM350-GL. Same section numbers; cited only where it differs from V2.10. | Vendor documentation — facts only |
@@ -97,7 +97,8 @@ Each is 📄 `[27.007]` until a capture makes it ✅. The notes record what the 
 | Radio power / reset | `+CFUN=<fun>[,<rst>]` | `1` full, `4` RF off, `0` minimum. `<rst>=1` resets the MT before applying `<fun>`. `[FIBOCOM]` §4.2 p.48 adds `15` = **reset** (no `<rst>` with it); after `0` or `15` the `OK` may never arrive. The read form is `+CFUN: <power_mode>,<STK_mode>`. |
 | Operator selection | `+COPS` | `=0` automatic, `=2` deregister, `=3,<format>` sets the name format for the read. `?` returns `<mode>,<format>,<oper>,<AcT>`. Up to 3 min (`[FIBOCOM]` §11.1.6 p.160). |
 | Registration status | `+CREG`, `+CGREG`, `+CEREG`, `+C5GREG` | `<stat>`: `1` home, `5` roaming, `2` searching, `3` denied, `0` not searching. `[FIBOCOM]` §11.1.3–11.1.5 p.150–157 documents the first three; `+CEREG` gives TAC and cell ID as quoted hex strings and, for `<n>` 3–5, the reject cause of a denied registration. **`+C5GREG` is in neither manual** ❓. |
-| Legacy signal quality | `+CSQ` | `<rssi>` 0–31, `99` unknown. Not meaningful for LTE/NR quality. |
+| Registration report layout | `+CREG`, `+CGREG`, `+CEREG`, `+C5GREG` | The read answer starts with `<n>`, the unsolicited code doesn't: `+CEREG: <n>,<stat>[,…]` versus `+CEREG: <stat>[,…]`. After `<stat>`: `+CREG`/`+CEREG` `<lac or tac>,<ci>,<AcT>[,<cause_type>,<reject_cause>]`; `+CGREG` puts `<rac>` before the cause; `+C5GREG` puts `<Allowed_NSSAI_length>,<Allowed_NSSAI>` before it. Location fields are quoted hex. |
+| Legacy signal quality | `+CSQ` | `<rssi>` 0–31, `99` unknown: `0` is −113 dBm or less, `1` −111, `2`–`30` −109 to −53 dBm in 2 dB steps, `31` −51 dBm or more. Not meaningful for LTE/NR quality. |
 | Extended signal quality | `+CESQ` | RSRQ/RSRP for LTE and SS-RSRQ/SS-RSRP/SS-SINR for NR — the **standard** way to read LTE/NR quality. `[FIBOCOM]` §11.1.2 p.145: nine fields; the NR fields are valid on NR **and EN-DC** (so NSA reports them), the LTE ones on LTE and EN-DC; `<ber>` is always 99. |
 | Define data context | `+CGDCONT=<cid>,<PDP_type>,<APN>` | `<PDP_type>` `IP`, `IPV6`, `IPV4V6`. **Persistent** on the FM350 (`[FIBOCOM]` §12.2.1 p.193): the connect sequence reads `+CGDCONT?` and writes only what differs. An empty APN means the subscription's own. |
 | APN authentication | `+CGAUTH=<cid>,<auth_prot>,<user>,<password>` | **Password — never logged.** **In neither vendor manual** ❓: probe with `AT+CGAUTH=?`. The only documented alternative is `+EIAAPN` (§4), which writes persistent state. |
@@ -275,9 +276,10 @@ modem reported (ARCHITECTURE → *Invariants*).
 | LTE RSRP/RSRQ and NR SS-RSRP/SS-RSRQ/SS-SINR are reported as **indexes** that map to dBm/dB ranges. | 📄 | `[36.133]`, `[38.133]`, `[27.007]` (`+CESQ`), `[FIBOCOM]` §11.1.15 p.182–187 |
 | Index → value for `+GTCCINFO` (§4.1), `255` meaning *not available*: LTE RSRP = idx − 141 dBm; NR RSRP = idx − 157 dBm; LTE RSRQ = idx/2 − 20 dB; NR RSRQ = idx/2 − 43.5 dB; NR SINR = idx/2 − 23.5 dB — each the **lower edge** of the index's range. LTE SINR (RSSNR) = idx/2 dB, the **upper** edge, on a signed index. | 📄 | `[3GINFO]`, `[FIBOCOM]` (range tables below) |
 | The range edges, per the table below. | 📄 | `[FIBOCOM]` §11.1.15 p.182–187 and §11.1.2 p.145–149, which cite the 3GPP clauses listed |
-| LTE band from EARFCN: the EARFCN table of `[36.101]`. | 📄 | `[36.101]` |
-| NR band from NR-ARFCN: the applicable-NR-ARFCN-per-band table of `[38.101-1]`. | 📄 | `[38.101-1]` |
-| NR-ARFCN ranges **overlap** between bands (n77/n78 for instance), so ARFCN alone can be ambiguous: prefer the band the modem reports, fall back to the table. | 📄 | `[38.101-1]` |
+| LTE band and downlink frequency from EARFCN: `F_DL = F_DL_low + 0.1 (N_DL − N_Offs-DL)` MHz, with `F_DL_low`, `N_Offs-DL` and the range of `N_DL` per band from Table 5.7.3-1. Downlink channel numbers are unique across bands. Transcribed in `src/FibocomFm350/Data/EutraBands.psd1` (70 bands). | 📄 | `[36.101]` clause 5.7.3, Table 5.7.3-1 |
+| NR frequency from NR-ARFCN (FR1): `F_REF = F_REF-Offs + ΔF_Global (N_REF − N_REF-Offs)`; `0`–`599999`: 5 kHz steps from 0 MHz; `600000`–`2016666`: 15 kHz steps from 3000 MHz. | 📄 | `[38.101-1]` clause 5.4.2.1, Table 5.4.2.1-1 |
+| NR bands from NR-ARFCN: the downlink range of each band (first to last, over all its raster steps), supplementary-uplink bands left out. Transcribed in `src/FibocomFm350/Data/NrBands.psd1` (61 bands). | 📄 | `[38.101-1]` Table 5.4.2.3-1 |
+| NR-ARFCN ranges **overlap** between bands (n77/n78, n1/n65/n66 ...), so ARFCN alone can be ambiguous: prefer the band the modem reports, fall back to the table (all candidate bands). | 📄 | `[38.101-1]` |
 
 | Measure | Index `0` | Index *i* covers | Top index | 3GPP clause cited |
 |---|---|---|---|---|
