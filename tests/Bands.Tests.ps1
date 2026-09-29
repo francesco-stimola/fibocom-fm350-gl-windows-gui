@@ -121,13 +121,11 @@ Describe 'ConvertFrom-GtactBandCode' {
             Should -Throw -ExceptionType ([System.Management.Automation.ParameterBindingException])
     }
 
-    # A binding error for pipeline input is raised before the function runs, so it reaches the
-    # error stream but not -ErrorVariable: capture the stream instead.
-    It 'refuses an empty field from the pipeline, with no output' {
-        $results = '' | ConvertFrom-GtactBandCode 2>&1
-        $results | Should -HaveCount 1
-        $results[0] | Should -BeOfType ([System.Management.Automation.ErrorRecord])
-        $results[0].Exception | Should -BeOfType ([System.Management.Automation.ParameterBindingException])
+    # -ErrorAction Stop makes the outcome independent of the caller's $ErrorActionPreference
+    # (GitHub's pwsh shell sets it to Stop; an interactive session leaves it at Continue).
+    It 'refuses an empty field from the pipeline' {
+        { '' | ConvertFrom-GtactBandCode -ErrorAction Stop } |
+            Should -Throw -ExceptionType ([System.Management.Automation.ParameterBindingException])
     }
 }
 

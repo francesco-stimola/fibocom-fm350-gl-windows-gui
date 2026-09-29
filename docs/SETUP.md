@@ -38,6 +38,8 @@ two commands on every push to `main` and every pull request.
   unless told otherwise. Run them on purpose with `Invoke-Pester -Path ./tests -TagFilter Hardware`
   on a machine where the modem is attached **and this app is not running** (it would hold the AT
   port).
+- CI's `pwsh` shell sets `$ErrorActionPreference = 'Stop'`; a test that expects an error passes
+  `-ErrorAction` explicitly so it behaves the same in CI and in an interactive session.
 - Tests import the module **through its manifest**, the way the app does, so a function missing
   from `FunctionsToExport` fails the tests instead of passing them.
 

@@ -73,6 +73,9 @@ Everything else: **proceed**. Asking permission for routine work is its own fail
   Invoke-Pester -Path ./tests -ExcludeTagFilter Hardware
   ```
   Zero diagnostics, zero failures. Every behavior change comes with tests.
+- **Tests must not depend on `$ErrorActionPreference`.** GitHub's `pwsh` shell runs CI with
+  `Stop`, an interactive session with `Continue`: a test that expects an error states
+  `-ErrorAction` itself.
 - Tests that need a real modem are tagged `Hardware`; every documented test command, CI
   included, excludes that tag. Run them only on purpose (`docs/SETUP.md`).
 - **When you mutate a file to prove a test bites, run Pester in a child process**
