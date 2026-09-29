@@ -16,7 +16,7 @@ changes you were given (a commit range or a file list).
 ## What you do
 
 1. **Run lint and tests**, writing down the expected test count first:
-   `Get-ChildItem -Recurse -File -Include *.ps1, *.psm1, *.psd1 | Invoke-ScriptAnalyzer -Settings ./PSScriptAnalyzerSettings.psd1` and
+   `./tools/Invoke-Lint.ps1` and
    `pwsh -NoProfile -Command "Invoke-Pester ./tests -ExcludeTagFilter Hardware"` (a child
    process — Pester can overwrite the caller's variables).
 2. **Walk this checklist on the changed code only:**

@@ -69,13 +69,17 @@ Everything else: **proceed**. Asking permission for routine work is its own fail
 - Setup: `docs/SETUP.md`. Linting and testing need no admin rights and no modem.
 - **Done means clean:**
   ```powershell
-  Get-ChildItem -Recurse -File -Include *.ps1, *.psm1, *.psd1 | Invoke-ScriptAnalyzer -Settings ./PSScriptAnalyzerSettings.psd1
+  ./tools/Invoke-Lint.ps1
   Invoke-Pester -Path ./tests -ExcludeTagFilter Hardware
   ```
   Zero diagnostics, zero failures. Every behavior change comes with tests.
 - **Tests must not depend on `$ErrorActionPreference`.** GitHub's `pwsh` shell runs CI with
   `Stop`, an interactive session with `Continue`: a test that expects an error states
   `-ErrorAction` itself.
+- **Numbers are culture-invariant.** `-f`, `.ToString()` and `[double]::Parse()` follow the
+  current culture, where `1844.9` may become `1844,9` — an array, in PowerShell source. Anything
+  that writes numbers into code, data files or AT commands, or parses them from the modem, uses
+  the invariant culture (PowerShell casts and string interpolation already do).
 - Tests that need a real modem are tagged `Hardware`; every documented test command, CI
   included, excludes that tag. Run them only on purpose (`docs/SETUP.md`).
 - **When you mutate a file to prove a test bites, run Pester in a child process**
