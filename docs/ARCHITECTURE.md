@@ -98,8 +98,25 @@ Everything the worker says to the modem goes through one **AT channel** per port
   would shift every later answer by one command — for as long as the process runs.
   `Initialize-AtChannel` turns the echo back on (`ATE1`) and sets numeric error codes
   (`AT+CMEE=1`); the worker runs it after opening a channel and after a timeout.
+- **Late answers stay answers.** After a timeout the channel remembers the command (up to the
+  last 10 of them) until its late answer ends — a stale final result closes the oldest — or the
+  next echo arrives; meanwhile those answers' lines are discarded, not passed on as unsolicited
+  codes: a late `+CSCON: 1,0` would otherwise read as "connected", and a late bare IMSI would look
+  like an unknown code worth logging. Registration reports are the exception — they say which form
+  they are in, so a real one is never held back and a late one still reads correctly. The price:
+  a real `+CSCON` code arriving while a late `AT+CSCON?` answer is due is dropped, until that
+  answer ends or the next command. `ATE1` can't be anchored, so it counts no line as its answer
+  while a late answer is due, and `Initialize-AtChannel` doesn't trust it anyway: the anchored
+  `AT+CMEE=1` decides.
 - **Unsolicited codes** are recognized by prefix and queued, including those arriving in the
-  middle of an answer; the worker drains the queue between commands.
+  middle of an answer; the worker drains the queue between commands. A read or test command
+  (`AT+CEREG?`) claims lines with its own prefix as its answer; a set command (`AT+CEREG=2`)
+  doesn't, so a registration code arriving during it still reaches the queue.
+- **Command text is printable ASCII.** A CR would make the modem run two commands; a character
+  the port can't carry would make the echo unrecognizable, and a command that ran would be
+  reported as a timeout and retried.
+- **A write that times out is not a lost port**: the port is there, the modem isn't draining it.
+  The command then times out without an echo — the symptom of a hung modem, not of a missing one.
 - **Pure core.** Framing (`Split-AtText`) and classification (`Resolve-AtLine`) are pure
   functions; the I/O loop around them is thin.
 - **Bounded.** Unterminated text is capped at 4096 characters and the unsolicited-code queue at

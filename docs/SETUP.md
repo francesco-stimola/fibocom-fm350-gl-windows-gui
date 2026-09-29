@@ -91,8 +91,9 @@ as the modem sends it, without echo, ending with its final result code. `Import-
 it; `New-SimulatedModem -Fixture` answers with it.
 
 **Before a capture is committed**, identifiers are replaced with the fakes listed in
-`tests/fixtures/fakes.psd1` — IMEI, IMSI, ICCID and EID digit runs, phone numbers, and the TAC and
-cell identity of registration reports and `+GTCCINFO` lines. Message text and USSD replies are
+`tests/fixtures/fakes.psd1` — IMEI, IMSI, ICCID and EID digit runs, phone numbers, the module
+serial number (`+CFSN`), and the TAC and cell identity of registration reports and `+GTCCINFO`
+lines. Message text and USSD replies are
 rewritten by hand. `tests/Fixtures.Tests.ps1` fails on any fixture that still carries an
 identifier-like value other than those fakes.
 

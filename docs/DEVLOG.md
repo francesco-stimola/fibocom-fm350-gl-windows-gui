@@ -34,6 +34,33 @@ Everything in M1 that doesn't need the device is done; the device session remain
 - **Timing-based tests** use generous timeouts except where a timeout is the point: a cold start
   on a busy machine once made a 1 s initialization miss.
 
+**End-of-milestone review: 7 findings in the product, all fixed**, each with a test that fails
+without the fix:
+- `Initialize-AtChannel` trusted ATE1's unanchored answer, which after a timeout — exactly when it
+  runs — can be the late error of the command that timed out. Now only the anchored `AT+CMEE=1`
+  decides.
+- `Invoke-AtCommand` accepted a CR (two commands run, e.g. `AT` + `AT+CFUN=0`) and non-ASCII
+  characters (echo unrecognizable, a command that ran reported as a timeout). Now printable ASCII
+  only — what the port carries.
+- A late answer came out as unsolicited codes: a late `+CSCON: 1,0` read as "connected", a late
+  IMSI as an unknown code. The channel now remembers timed-out commands until their answers end
+  or the next echo, and discards those answers' lines. This fix touched the classification of
+  every answer, so it got a targeted re-check, which found three gaps, all fixed with tests:
+  `ATE1` (unanchored) still took a late answer during `Initialize-AtChannel`; a second timeout
+  overwrote the first (now a queue of up to 10, which a modem that stopped answering reaches);
+  and a real registration report was held back while a late one was due (registration reports
+  are now exempt: they say which form they are in). What remains by design: a real `+CSCON` code
+  arriving while a late `AT+CSCON?` answer is due is dropped until that answer ends.
+- A write timeout marked the port lost, which would have sent a present-but-hung modem into a
+  reopen loop instead of the hung-modem recovery path.
+- Parsers threw on ten-digit band codes and on empty lines; they now return nothing for them.
+- `ConvertFrom-Earfcn -Earfcn $null` answered band 1 (an `[int]` binds `$null` as 0); a missing
+  channel number now gives nothing.
+- A set command (`AT+CEREG=2`) claimed its prefix, swallowing a registration code that arrived
+  during it; only read, test and execute forms claim theirs now.
+Minor, also fixed: the simulated modem's command log is bounded; the linter no longer reports
+success when its child process dies silently; the fixture check covers the module serial number.
+
 ## 2026-09-29 — M1: the AT channel, the simulated modem, fixture rules
 
 The device-independent core of M1. Design decisions:
