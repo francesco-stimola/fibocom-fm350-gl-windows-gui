@@ -1,0 +1,23 @@
+# The only identifier-like values a fixture may carry (docs/SETUP.md -> Fixtures).
+# tests/Fixtures.Tests.ps1 fails on any other value in these places.
+@{
+    # Any run of 14 or more digits: IMEI (15), IMSI (15), ICCID (19-20), EID (32).
+    LongNumbers  = @(
+        '000000000000000'                   # IMEI
+        '001010000000001'                   # IMSI on the 3GPP test network, MCC 001 / MNC 01
+        '8900100000000000000'               # ICCID, 19 digits
+        '89001000000000000000'              # ICCID, 20 digits
+        '89001000000000000000000000000000'  # EID, 32 digits
+    )
+
+    # Quoted phone numbers ("+" optional, 7 digits or more).
+    PhoneNumbers = @(
+        '+10000000000'
+        '10000000000'
+    )
+
+    # Location: the TAC and cell identity of registration reports (+CREG, +CGREG, +CEREG,
+    # +C5GREG) and of +GTCCINFO cell lines, in hexadecimal and in decimal.
+    Tac          = @('ABCD', '43981')
+    CellId       = @('0ABCDEF0', 'ABCDEF0', '180150000')
+}

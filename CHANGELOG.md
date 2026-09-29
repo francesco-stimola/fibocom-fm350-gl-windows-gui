@@ -12,3 +12,7 @@ All notable changes to this project are documented here. The format follows
   test tooling, CI on every push and pull request, logo.
 - Core module `FibocomFm350` with the `AT+GTACT` band-code codec: `ConvertTo-GtactBandCode` and
   `ConvertFrom-GtactBandCode`.
+- AT channel: `Open-SerialAtTransport`, `New-AtChannel`, `Initialize-AtChannel`,
+  `Invoke-AtCommand`, `Receive-AtUrc`, `Close-AtChannel`, with the line framing and classification
+  `Split-AtText` and `Resolve-AtLine`.
+- Simulated modem for tests and development: `New-SimulatedModem`, `Import-AtFixture`.

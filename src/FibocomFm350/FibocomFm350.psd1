@@ -8,8 +8,18 @@
     PowerShellVersion    = '7.6'
     CompatiblePSEditions = @('Core')
     FunctionsToExport    = @(
+        'Close-AtChannel'
         'ConvertFrom-GtactBandCode'
         'ConvertTo-GtactBandCode'
+        'Import-AtFixture'
+        'Initialize-AtChannel'
+        'Invoke-AtCommand'
+        'New-AtChannel'
+        'New-SimulatedModem'
+        'Open-SerialAtTransport'
+        'Receive-AtUrc'
+        'Resolve-AtLine'
+        'Split-AtText'
     )
     CmdletsToExport      = @()
     VariablesToExport    = @()

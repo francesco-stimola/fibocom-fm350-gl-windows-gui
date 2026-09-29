@@ -1,0 +1,4 @@
+# Source: [27.007] +CSQ, layout "+CSQ: <rssi>,<ber>"; values invented.
+AT+CSQ
++CSQ: 20,99
+OK
