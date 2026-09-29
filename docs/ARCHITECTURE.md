@@ -80,6 +80,33 @@ installs an update: updating stays *extract the zip, run `install.cmd`*, with it
 A setting turns the check off. Since the app can run for weeks, a release is noticed at the next
 start, not the day it is published.
 
+## AT channel (M1)
+
+Everything the worker says to the modem goes through one **AT channel** per port (facts:
+`AT-COMMANDS.md` §2).
+
+- **Transport.** The channel talks to a *transport*: any object with `PortName`, `Lost`,
+  `Write`, `Read` and `Close`. There are two: the serial port (`System.IO.Ports`) and the
+  **simulated modem**, which answers from fixtures and plays scripted faults — the tests use it,
+  and so does the app's development mode (M3). A transport that loses its port sets `Lost`
+  instead of throwing, and never touches the port again; the channel then reports `PortLost` to
+  every command, and the worker opens a new channel once the device is back, possibly under
+  another COM number.
+- **Echo as anchor.** The modem's echo stays on (its power-on default). A command's answer starts
+  after its echo: anything else that arrives before it is left over from an earlier command,
+  typically a late answer after a timeout, and is discarded. Without the anchor, one late answer
+  would shift every later answer by one command — for as long as the process runs.
+  `Initialize-AtChannel` turns the echo back on (`ATE1`) and sets numeric error codes
+  (`AT+CMEE=1`); the worker runs it after opening a channel and after a timeout.
+- **Unsolicited codes** are recognized by prefix and queued, including those arriving in the
+  middle of an answer; the worker drains the queue between commands.
+- **Pure core.** Framing (`Split-AtText`) and classification (`Resolve-AtLine`) are pure
+  functions; the I/O loop around them is thin.
+- **Bounded.** Unterminated text is capped at 4096 characters and the unsolicited-code queue at
+  1000 entries (oldest dropped): nothing grows without limit over weeks.
+- **Timeouts** are given per command by the caller; their values are the human's decision (see
+  ROADMAP → *Open decisions*).
+
 ## Connection state machine (M2)
 
 ```
@@ -309,14 +336,18 @@ src/
     FibocomFm350.psd1
     FibocomFm350.psm1
     Bands.ps1            AT+GTACT band codes (M0)
-    …                    AT channel, parsers, state machine, recovery, network, drivers (M1–M6)
-                         The AT channel talks to a transport: the real serial port, or the
-                         simulated modem (fixtures + scripted faults) used by the tests and
-                         by the app's development mode.
+    AtText.ps1           framing and classifying the lines on the AT port (M1, pure)
+    Transport.ps1        the serial transport, and the shape every transport has (M1)
+    SimulatedModem.ps1   the simulated modem: fixtures + scripted faults; fixture import (M1)
+    AtChannel.ps1        the AT channel: commands, answers, unsolicited codes (M1)
+    …                    parsers, state machine, recovery, network, drivers (M1–M6)
   App/                   tray app: UI thread, worker runspace, supervisor (M3)
 tests/
   *.Tests.ps1            Pester
-  fixtures/              redacted responses captured from real devices (M1)
+  fixtures/
+    documented/          answers written from the documentation, values invented (M1)
+    device/              answers captured from a real FM350, redacted (device session)
+    fakes.psd1           the only identifier-like values a fixture may carry
 assets/                  logo (source: logo.html)
 ```
 

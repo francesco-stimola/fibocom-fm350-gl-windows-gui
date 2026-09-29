@@ -41,10 +41,10 @@ written `(planned)`.
 
 Everything needed to talk to the modem and understand its answers — no connection logic yet.
 
-- [ ] **Device session**: answer the open questions in [`AT-COMMANDS.md` §7](AT-COMMANDS.md#7-open-questions-for-the-first-device-session) and capture the responses.
-- [ ] Fixture rules in place: capture format, redaction of identifiers, and a test that fails if a fixture contains an unredacted IMEI/IMSI/ICCID pattern.
-- [ ] AT channel over a **transport** interface, with `System.IO.Ports` as the real transport: send a command, collect lines until the final result code, per-command timeout, URCs separated from responses.
-- [ ] **Simulated modem**: a transport that answers from fixtures and runs **scripted fault scenarios**, each an automated test in the default run:
+- [ ] **Device session**: answer the open questions in [`AT-COMMANDS.md` §7](AT-COMMANDS.md#7-open-questions-for-the-first-device-session), capture the responses into `tests/fixtures/device/`, and run the `Hardware` tests — the first time the serial transport meets the real port.
+- [x] Fixture rules in place: capture format, redaction of identifiers, and a test that fails if a fixture contains an unredacted IMEI/IMSI/ICCID pattern.
+- [x] AT channel over a **transport** interface, with `System.IO.Ports` as the real transport: send a command, collect lines until the final result code, per-command timeout, URCs separated from responses.
+- [x] **Simulated modem**: a transport that answers from fixtures and runs **scripted fault scenarios**, each an automated test in the default run:
   - no final result code (timeout); a response split across reads; garbled bytes;
   - an unsolicited result code arriving in the middle of a response;
   - the port vanishing mid-command, and the device coming back under a different COM number;
@@ -148,7 +148,10 @@ data is left (design: ARCHITECTURE → *SMS, USSD and data usage*; facts: `AT-CO
 Decisions that change what happens next and are the maintainer's to take. Remove a line when it is
 decided, and record the decision in `DEVLOG.md`.
 
-*None open.*
+- **M2 — per-command timeouts.** The AT channel takes a timeout for every command. The vendor
+  manual documents each command's worst-case duration (`AT-COMMANDS.md` §2: `+COPS` 3 min,
+  `+CMGS` 60 s, `+CGACT` 30 s, `+CGATT` 15 s, `+CUSD` 10 s, most others under 3 s). What should
+  the timeouts be?
 
 ---
 

@@ -4,6 +4,39 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-09-29 — M1: the AT channel, the simulated modem, fixture rules
+
+The device-independent core of M1. Design decisions:
+- **The echo is the anchor.** The FM350's echo is on by default and comes back on after a reset,
+  so the channel keeps it on instead of sending `ATE0`. A command's answer starts after its echo;
+  anything else before it is left over from an earlier command and is discarded. The failure this
+  prevents is permanent: after one timeout, a late answer read as the next command's answer
+  shifts every answer by one command, for as long as the process runs. The modem executes one
+  command at a time, so a late answer always precedes the next echo — and the simulated modem
+  behaves the same way. A timeout without echo (someone turned it off) is recovered by
+  `Initialize-AtChannel`.
+- **Transports are a shape, not a class hierarchy.** A transport is any object with `PortName`,
+  `Lost`, `Write`, `Read` and `Close`. Port loss sets `Lost` instead of throwing: the channel checks
+  a flag, no custom exception type crosses files or runspaces, and the static analyzer (which reads
+  one file at a time) doesn't meet types defined elsewhere. Classes carry
+  `[NoRunspaceAffinity()]`, because M3's worker runspace will own the port.
+- **Numeric errors** (`AT+CMEE=1`): the app maps error numbers itself instead of depending on
+  firmware wording.
+- **7-bit text.** The port speaks IRA by default, with PDUs and UCS-2 in hex, so anything outside
+  printable ASCII is line noise and is dropped: garbled bytes can't corrupt a final result code.
+- **Bounded memory.** Unterminated text is capped at 4096 characters and the URC queue at 1000
+  entries.
+- **Fixtures** are plain text (notes, command, answer) in `tests/fixtures/documented/` (written from
+  the documentation, values invented) or `tests/fixtures/device/` (captures). A test checks their
+  format and source note, and fails on any identifier-like value other than the fakes in
+  `tests/fixtures/fakes.psd1`.
+- **Timeouts are the caller's.** `Invoke-AtCommand` requires one; the values are an open decision
+  for M2.
+
+New device questions (`AT-COMMANDS.md` §7): whether DTR/RTS matter, which URCs arrive unprompted,
+and whether `pwsh` survives the modem being unplugged while the port is open — a known weak spot
+of `System.IO.Ports`.
+
 ## 2026-09-29 — M0 complete: CI green; review fixes
 
 The first push ran CI on GitHub's Windows runner: lint and tests green. The end-of-milestone review

@@ -35,9 +35,10 @@ two commands on every push to `main` and every pull request.
 
 - **This test command needs no modem and no admin rights.** Tests that talk to a real device are
   tagged `Hardware`, and every documented command excludes them: Pester itself runs every tag
-  unless told otherwise. Run them on purpose with `Invoke-Pester -Path ./tests -TagFilter Hardware`
-  on a machine where the modem is attached **and this app is not running** (it would hold the AT
-  port).
+  unless told otherwise. Run them on purpose on a machine where the modem is attached **and this
+  app is not running** (it would hold the AT port), naming the modem's AT port:
+  `$env:FM350_AT_PORT = 'COM5'; Invoke-Pester -Path ./tests -TagFilter Hardware`. Without the
+  variable they are skipped.
 - CI's `pwsh` shell sets `$ErrorActionPreference = 'Stop'`; a test that expects an error passes
   `-ErrorAction` explicitly so it behaves the same in CI and in an interactive session.
 - Tests import the module **through its manifest**, the way the app does, so a function missing
@@ -49,14 +50,41 @@ two commands on every push to `main` and every pull request.
 |---|---|
 | `tests/Bands.Tests.ps1` | `AT+GTACT` band codes: encoding matrix per RAT, rejected inputs, decoding matrix, unknown codes kept as-is, empty or malformed fields refused (never read as "all bands"), full encode→decode round trip. |
 | `tests/Module.Tests.ps1` | The manifest is valid and exports exactly the public functions. |
+| `tests/AtText.Tests.ps1` | Framing the port's text into lines (split reads, CR-only echo, noise) and classifying each line: echo, answer, final result with its error code, unsolicited, stale. |
+| `tests/AtChannel.Tests.ps1` | The AT channel over the simulated modem, and every fault scenario of ROADMAP M1: timeout, split answer, garbled bytes, a URC mid-answer, the port vanishing, the device back under another COM number, SIM busy after a band change, registration lost and regained, a slow `AT+COPS=0`, a late answer after a timeout, echo turned off. Also the bounded URC queue and closing. |
+| `tests/SimulatedModem.Tests.ps1` | Fixture import and its format errors; the simulated modem answering from fixtures. |
+| `tests/Transport.Tests.ps1` | Serial port names refused, a missing port failing to open; the `Hardware` test on a real FM350. |
+| `tests/Fixtures.Tests.ps1` | Every fixture follows the format, names its source and carries only the documented fake identifiers; the identifier check catches real-looking ones. |
 
-## Fixtures (from M1)
+## Fixtures
 
-Raw captures go to `captures/` at the repository root, which git ignores. Redacted copies go to
-`tests/fixtures/`, one file per command and situation. Before a fixture is committed, identifiers are replaced with obviously fake values of
-the same shape: IMEI, IMSI, ICCID, EID, MSISDN and other phone numbers, serial numbers, cell
-identity + TAC, message text and USSD replies. M1 adds a test
-that fails on any fixture still carrying something that looks like a real identifier.
+Raw captures go to `captures/` at the repository root, which git ignores. What is committed goes to
+`tests/fixtures/`, one file per command and situation:
+
+- `tests/fixtures/documented/` — answers written from the documentation: the layout is the cited
+  source's, the values are invented. They let parsers be written before a device session, and are
+  never mistaken for captures (status 📄 in `AT-COMMANDS.md`, not ✅).
+- `tests/fixtures/device/` — answers captured from a real FM350, redacted.
+
+A fixture is a text file:
+
+```
+# Source: [27.007] +CSQ, layout "+CSQ: <rssi>,<ber>"; values invented.
+AT+CSQ
++CSQ: 20,99
+OK
+```
+
+Lines starting with `#` are notes — the first says where the content comes from (a source key
+such as `[FIBOCOM]`, or `captured` with the date and firmware). Then the command, then the answer
+as the modem sends it, without echo, ending with its final result code. `Import-AtFixture` reads
+it; `New-SimulatedModem -Fixture` answers with it.
+
+**Before a capture is committed**, identifiers are replaced with the fakes listed in
+`tests/fixtures/fakes.psd1` — IMEI, IMSI, ICCID and EID digit runs, phone numbers, and the TAC and
+cell identity of registration reports and `+GTCCINFO` lines. Message text and USSD replies are
+rewritten by hand. `tests/Fixtures.Tests.ps1` fails on any fixture that still carries an
+identifier-like value other than those fakes.
 
 ## Releasing (from M7)
 

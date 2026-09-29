@@ -72,8 +72,12 @@ When a source is added, record its exact version or commit here.
 | Fact | Status | Source |
 |---|---|---|
 | Commands end with `CR`; responses are framed by `CR LF` and end with a final result code: `OK`, `ERROR`, or `+CME ERROR: <err>`. Result codes are verbose by default; unsolicited codes are framed the same way. | 📄 | `[V.250]`, `[27.007]`, `[FIBOCOM]` §2.4 p.13–14 |
-| `ATE0` disables command echo, which is **on** by default. We run **without echo**, so a response never contains the command that produced it. | 📄 | `[V.250]`, `[FIBOCOM]` §4.1 p.47 |
-| `AT+CMEE=2` makes `+CME ERROR` (and `+CMS ERROR`) carry verbose text instead of a number. Default `0`: plain `ERROR`. | 📄 | `[27.007]`, `[FIBOCOM]` §20.1.1 p.324 |
+| Command echo is **on** by default (`ATE1`) and comes back on after a reset; `ATE0` turns it off. The echo ends with CR alone. | 📄 | `[V.250]`, `[FIBOCOM]` §4.1 p.47 |
+| **We keep echo on and anchor every answer on it**: a command's answer starts after its echo, so anything else arriving before the echo is left over from an earlier command (a late answer after a timeout) and is discarded. The modem runs one command at a time, so a late answer always comes out before the next command's echo. | — | Project design (ARCHITECTURE → *AT channel*) |
+| `AT+CMEE=1` makes `+CME ERROR` and `+CMS ERROR` carry a **number**, `=2` verbose text; default `0`: plain `ERROR`. **We use `1`** and map the numbers ourselves, rather than depend on firmware wording. | 📄 | `[27.007]`, `[FIBOCOM]` §20.1.1 p.324 |
+| The port speaks the 7-bit IRA character set by default (`+CSCS`); PDUs and UCS-2 strings travel as hex. So the channel reads bytes as text and drops anything outside printable ASCII as line noise. | 📄 | `[FIBOCOM]` §8.1.1 p.85 |
+| Unsolicited codes the app enables, told apart from answers by their prefix: `+CREG`, `+CGREG`, `+CEREG`, `+C5GREG`, `+CSCON`, `+CMTI`, `+CDSI`, `+CUSD`, `+CGEV`. A prefix equal to the pending command's own (`+CEREG:` after `AT+CEREG?`) is read as the answer. Two-line codes (`+CMT`, `+CDS`) are never enabled. | 📄 | `[27.007]`, `[27.005]`; the FM350's actual URCs are a device question (§7) |
+| DTR and RTS asserted on the USB virtual port, as a modem expects from a ready terminal. | ❓ | `[DEVICE]` — does the FM350 answer without them? |
 | Error codes worth recognizing: CME `14` and CMS `314` = SIM busy; CME `149` = PDP authentication failure. `+CEER` gives the reason for the last failure, attach and activation errors included. | 📄 | `[27.007]`, `[FIBOCOM]` §20.1.2 p.325, §20.2 p.327, §20.3 p.332 |
 | Unsolicited result codes (URCs) can arrive **between** a command and its final result code. The reader must separate them from the response. | 📄 | `[27.007]` |
 | Commands have documented worst-case durations — `+COPS` up to 3 min, `+CMGS` 60 s, `+CGACT` 30 s, `+CGATT` 15 s, `+CUSD` 10 s, most others under 3 s — which bound the per-command timeouts. | 📄 | `[FIBOCOM]` (each command's attribute table) |
@@ -304,6 +308,8 @@ and flips a row above to ✅.
 10. `AT+GTCCINFO?;+GTCAINFO?` on LTE, LTE-A, NSA and SA — confirm §4.1/§4.2: hex or decimal TAC and cell ID, the bandwidth codes in `+GTCCINFO`, the NR block of `+GTCAINFO` under EN-DC.
 11. APN credentials: if `+CGAUTH` is missing, the only documented route is `+EIAAPN`, which writes persistent state — a human decision then.
 12. `+CGDCONT?` before and after a power cycle — is it persistent, as documented?
+13. The serial port: does the FM350 answer with DTR and RTS asserted (and without)? Which URCs arrive unprompted after power-on, and with which prefixes?
+14. Unplugging the modem while the app holds the AT port: does the `pwsh` process survive? `System.IO.Ports` has a history of crashing the process from its background thread when a USB serial device disappears; if it happens, the transport needs a different implementation.
 
 ## 8. eSIM (M8)
 
