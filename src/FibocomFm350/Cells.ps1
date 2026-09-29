@@ -12,12 +12,23 @@ function ConvertFrom-AtBandwidthCode {
     if ($Code -eq 6) { 1.4 } else { $Code / 5 }
 }
 
+function ConvertFrom-AtBandField {
+    # ConvertFrom-GtactBandCode for a band code read from the modem; $null for a value it doesn't
+    # take (negative, or more than nine digits), so an odd field never makes a parser throw.
+    param($Code)
+
+    if ($null -eq $Code -or $Code -lt 0 -or $Code -gt 999999999) { return }
+    ConvertFrom-GtactBandCode -Code "$Code"
+}
+
 function Get-AtBandName {
     # A +GTACT band code as 'B3' or 'n78'; $null for anything else.
     param($Code)
 
-    if ($null -eq $Code -or $Code -lt 0) { return }
-    $decoded = ConvertFrom-GtactBandCode -Code "$Code"
+    $decoded = ConvertFrom-AtBandField -Code $Code
+    if (-not $decoded) {
+        return
+    }
     switch ($decoded.Kind) {
         'LTE' { "B$($decoded.Band)" }
         'NR' { "n$($decoded.Band)" }
@@ -46,6 +57,7 @@ function ConvertFrom-AtCellInfo {
     param(
         [Parameter(Mandatory)]
         [AllowEmptyCollection()]
+        [AllowEmptyString()]
         [string[]] $Lines
     )
 
@@ -127,6 +139,7 @@ function ConvertFrom-AtCarrierAggregation {
     param(
         [Parameter(Mandatory)]
         [AllowEmptyCollection()]
+        [AllowEmptyString()]
         [string[]] $Lines
     )
 
@@ -148,7 +161,7 @@ function ConvertFrom-AtCarrierAggregation {
             @{ Band = 2; Pci = 3; Arfcn = 4; DlBw = 5; UlBw = 6; DlMimo = 7; UlMimo = 8; DlMod = 9; UlMod = 10 }
         }
         $bandCode = & $number $at.Band
-        $decoded = if ($bandCode -ge 0) { ConvertFrom-GtactBandCode -Code "$bandCode" }
+        $decoded = ConvertFrom-AtBandField -Code $bandCode
         $technology = if ($decoded -and $decoded.Kind -in 'LTE', 'NR') { $decoded.Kind } else { $null }
         $modulation = { param($i) $code = & $number $i; if ($null -ne $code) { $script:Modulations[$code] } }
 

@@ -69,6 +69,15 @@ Describe 'Resolve-AtLine' {
         # A prefix inside a quoted argument is not the command's own.
         @{ Command = 'AT+CUSD=1,"+CEREG",15'; Line = '+CEREG: 1'; Kind = 'Urc' }
         @{ Command = 'ATI'; Line = 'Fibocom'; Kind = 'Response' }
+        # A set form doesn't claim its prefix: a URC arriving during it stays a URC.
+        @{ Command = 'AT+CEREG=2'; Line = '+CEREG: 1'; Kind = 'Urc' }
+        @{ Command = 'AT+CSCON=1'; Line = '+CSCON: 1'; Kind = 'Urc' }
+        @{ Command = 'AT+CUSD=1,"*123#",15'; Line = '+CUSD: 0,"Balance",15'; Kind = 'Urc' }
+        # Read and test forms do.
+        @{ Command = 'AT+CEREG=?'; Line = '+CEREG: (0-5)'; Kind = 'Response' }
+        @{ Command = 'AT+CSCON?'; Line = '+CSCON: 1,0'; Kind = 'Response' }
+        # Set forms with a data answer keep it: their prefixes are not URC prefixes.
+        @{ Command = 'AT+GTSENRDTEMP=0'; Line = '+GTSENRDTEMP: 1,45000'; Kind = 'Response' }
     ) {
         (Resolve-AtLine -Line $Line -Command $Command -EchoSeen).Kind | Should -Be $Kind
     }
@@ -89,6 +98,33 @@ Describe 'Resolve-AtLine' {
         $resolved.Status | Should -Be $Status
         $resolved.ErrorCode | Should -Be $Code
         $resolved.ErrorText | Should -Be $Text
+    }
+
+    It 'while the answer to <Late> may still arrive, reads <Line> as <Kind> (pending: <Command>)' -ForEach @(
+        @{ Late = 'AT+CSCON?'; Command = $null; Line = '+CSCON: 1,0'; Kind = 'Stale' }
+        @{ Late = 'AT+CSCON?'; Command = $null; Line = 'AT+CSCON?'; Kind = 'Stale' }
+        @{ Late = 'AT+CSCON?'; Command = $null; Line = '+CEREG: 1'; Kind = 'Urc' }
+        @{ Late = 'AT+CIMI'; Command = $null; Line = '001010000000001'; Kind = 'Stale' }
+        @{ Late = 'AT+CSCON?'; Command = 'AT+CSQ'; Line = '+CSCON: 1,0'; Kind = 'Stale' }
+        @{ Late = 'AT+CSCON?'; Command = 'AT+CSQ'; Line = '+CEREG: 1'; Kind = 'Urc' }
+        @{ Late = 'AT+CSCON?'; Command = 'AT+CSQ'; Line = 'AT+CSQ'; Kind = 'Echo' }
+        # Several late answers at once.
+        @{ Late = @('AT+CSCON?', 'AT+CPIN?'); Command = $null; Line = '+CSCON: 1,0'; Kind = 'Stale' }
+        @{ Late = @('AT+CSCON?', 'AT+CPIN?'); Command = $null; Line = 'AT+CPIN?'; Kind = 'Stale' }
+        @{ Late = @('AT+CSCON?', 'AT+CPIN?'); Command = $null; Line = '+CPIN: READY'; Kind = 'Stale' }
+        @{ Late = @('AT+CSCON?', 'AT+CPIN?'); Command = $null; Line = '+CEREG: 1'; Kind = 'Urc' }
+        # Registration reports say which form they are in: they are never held back.
+        @{ Late = 'AT+CEREG?'; Command = $null; Line = '+CEREG: 0'; Kind = 'Urc' }
+        @{ Late = 'AT+CEREG?'; Command = 'AT+CSQ'; Line = '+CEREG: 0'; Kind = 'Urc' }
+    ) {
+        (Resolve-AtLine -Line $Line -Command $Command -LateCommand $Late).Kind | Should -Be $Kind
+    }
+
+    It 'gives the status of a final result that is stale' {
+        $resolved = Resolve-AtLine -Line '+CME ERROR: 30'
+        $resolved.Kind | Should -Be 'Stale'
+        $resolved.Status | Should -Be 'CmeError'
+        $resolved.ErrorCode | Should -Be 30
     }
 
     It 'gives no status or error to a line that is not a final result' {

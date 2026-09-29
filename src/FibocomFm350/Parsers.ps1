@@ -102,6 +102,7 @@ function ConvertFrom-AtIdentity {
     param(
         [Parameter(Mandatory)]
         [AllowEmptyCollection()]
+        [AllowEmptyString()]
         [string[]] $Lines
     )
 
@@ -136,6 +137,7 @@ function ConvertFrom-AtSimState {
     param(
         [Parameter(Mandatory)]
         [AllowEmptyCollection()]
+        [AllowEmptyString()]
         [string[]] $Lines
     )
 
@@ -171,6 +173,7 @@ function ConvertFrom-AtRegistration {
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory, ValueFromPipeline)]
+        [AllowEmptyString()]
         [string] $Line
     )
 
@@ -225,6 +228,7 @@ function ConvertFrom-AtOperator {
     param(
         [Parameter(Mandatory)]
         [AllowEmptyCollection()]
+        [AllowEmptyString()]
         [string[]] $Lines
     )
 
@@ -264,6 +268,7 @@ function ConvertFrom-AtSignalQuality {
     param(
         [Parameter(Mandatory)]
         [AllowEmptyCollection()]
+        [AllowEmptyString()]
         [string[]] $Lines
     )
 
@@ -309,6 +314,7 @@ function ConvertFrom-AtTemperature {
     param(
         [Parameter(Mandatory)]
         [AllowEmptyCollection()]
+        [AllowEmptyString()]
         [string[]] $Lines
     )
 

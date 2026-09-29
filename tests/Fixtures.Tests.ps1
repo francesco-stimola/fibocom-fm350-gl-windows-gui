@@ -21,9 +21,12 @@ BeforeAll {
             }
         }
         foreach ($match in [regex]::Matches($Line, '"(\+?\d{7,})"')) {
-            if ($match.Groups[1].Value -notin $script:fakes.PhoneNumbers) {
+            if ($match.Groups[1].Value -notin ($script:fakes.PhoneNumbers + $script:fakes.SerialNumbers)) {
                 "phone number '$($match.Groups[1].Value)'"
             }
+        }
+        if ($Line -match '^\s*\+CFSN\s*:\s*"([^"]*)"' -and $Matches[1] -notin $script:fakes.SerialNumbers) {
+            "serial number '$($Matches[1])'"
         }
         # Registration reports: every quoted hex field is a TAC or a cell identity.
         if ($Line -match '^\+C(5G|E|G)?REG:') {
@@ -74,6 +77,7 @@ Describe 'The identifier check itself' {
         @{ Name = 'an IMSI'; Line = '+CIMI: 222015602712345' }
         @{ Name = 'an ICCID'; Line = '+ICCID: 8939104520001234567' }
         @{ Name = 'a phone number'; Line = '+CNUM: "","+393331234567",145' }
+        @{ Name = 'a module serial number'; Line = '+CFSN: "AB12CD34EF"' }
         @{ Name = 'a real TAC in +CEREG'; Line = '+CEREG: 2,1,"5A1F","0ABCDEF0",7' }
         @{ Name = 'a real cell identity in +GTCCINFO'; Line = '1,4,001,01,ABCD,1C2D3E4F,1300,123,103,100,40,60,50,20' }
     ) {
@@ -82,6 +86,7 @@ Describe 'The identifier check itself' {
 
     It 'accepts <Name>' -ForEach @(
         @{ Name = 'the fake IMEI'; Line = '000000000000000' }
+        @{ Name = 'the fake serial number'; Line = '+CFSN: "0000000000"' }
         @{ Name = 'fake location in +CEREG'; Line = '+CEREG: 2,1,"ABCD","0ABCDEF0",7' }
         @{ Name = 'fake location in +GTCCINFO'; Line = '1,4,001,01,ABCD,0ABCDEF0,1300,123,103,100,40,60,50,20' }
         @{ Name = 'ordinary numbers'; Line = '+CSQ: 20,99' }

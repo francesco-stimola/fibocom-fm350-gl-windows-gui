@@ -10,6 +10,9 @@
         '89001000000000000000000000000000'  # EID, 32 digits
     )
 
+    # The module serial number, quoted in +CFSN answers.
+    SerialNumbers = @('0000000000')
+
     # Quoted phone numbers ("+" optional, 7 digits or more).
     PhoneNumbers = @(
         '+10000000000'

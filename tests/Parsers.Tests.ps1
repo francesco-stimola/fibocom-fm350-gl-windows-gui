@@ -146,6 +146,23 @@ Describe 'ConvertFrom-AtSignalQuality' {
     }
 }
 
+Describe 'Parsers on odd input' {
+    # The channel never delivers an empty line, but a parser must not throw on one.
+    It '<Parser> accepts an empty line' -ForEach @(
+        @{ Parser = 'ConvertFrom-AtIdentity' }
+        @{ Parser = 'ConvertFrom-AtSimState' }
+        @{ Parser = 'ConvertFrom-AtOperator' }
+        @{ Parser = 'ConvertFrom-AtSignalQuality' }
+        @{ Parser = 'ConvertFrom-AtTemperature' }
+    ) {
+        { & $Parser -Lines @('', 'noise') -ErrorAction Stop } | Should -Not -Throw
+    }
+
+    It 'ConvertFrom-AtRegistration gives nothing for an empty line' {
+        ConvertFrom-AtRegistration -Line '' | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'ConvertFrom-AtTemperature' {
     It 'reads every sensor, in degrees Celsius' {
         $sensors = @(ConvertFrom-AtTemperature -Lines (Get-FixtureAnswer -Name 'gtsenrdtemp.all.txt'))

@@ -156,6 +156,87 @@ Describe 'AT channel' {
             $answer.Discarded | Should -Be 1
         }
 
+        It 'initializes after a timeout even when the late answer is an error' {
+            $script:modem.Script('AT+COPS=0', @{ Lines = @('+CME ERROR: 30'); DelayMs = 300 })
+            (Invoke-AtCommand -Channel $script:channel -Command 'AT+COPS=0' -TimeoutMs 100).Status | Should -Be 'Timeout'
+
+            # ATE1 can't be anchored and may take the late error as its own answer; AT+CMEE=1 decides.
+            (Initialize-AtChannel -Channel $script:channel -TimeoutMs 5000).Status | Should -Be 'OK'
+            $script:modem.Received[-1] | Should -Be 'AT+CMEE=1'
+        }
+
+        It 'keeps a late answer out of the unsolicited codes: <Command>' -ForEach @(
+            @{ Command = 'AT+CSCON?'; Lines = @('+CSCON: 1,0', 'OK') }
+            @{ Command = 'AT+CIMI'; Lines = @('001010000000001', 'OK') }
+        ) {
+            $script:modem.Script($Command, @{ Lines = $Lines; DelayMs = 300 })
+            (Invoke-AtCommand -Channel $script:channel -Command $Command -TimeoutMs 100).Status | Should -Be 'Timeout'
+            $script:modem.EmitUnsolicited('+CEREG: 1', 500)
+
+            $received = [System.Collections.Generic.List[string]]::new()
+            $clock = [System.Diagnostics.Stopwatch]::StartNew()
+            while ($received -notcontains '+CEREG: 1' -and $clock.ElapsedMilliseconds -lt 5000) {
+                foreach ($urc in Receive-AtUrc -Channel $script:channel -TimeoutMs 200) {
+                    $received.Add($urc)
+                }
+            }
+            $received | Should -Be @('+CEREG: 1')
+        }
+
+        It 'keeps a late answer out of the unsolicited codes when Initialize-AtChannel runs next' {
+            $script:modem.Script('AT+CSCON?', @{ Lines = @('+CSCON: 1,0', 'OK'); DelayMs = 300 })
+            (Invoke-AtCommand -Channel $script:channel -Command 'AT+CSCON?' -TimeoutMs 100).Status | Should -Be 'Timeout'
+            (Initialize-AtChannel -Channel $script:channel -TimeoutMs 5000).Status | Should -Be 'OK'
+            Receive-AtUrc -Channel $script:channel -TimeoutMs 300 | Should -BeNullOrEmpty
+        }
+
+        It 'keeps two late answers in a row out of the unsolicited codes' {
+            $script:modem.Script('AT+CSCON?', @{ Lines = @('+CSCON: 1,0', 'OK'); DelayMs = 300 })
+            $script:modem.SetAnswer('AT+CPIN?', @('+CPIN: READY', 'OK'))
+            (Invoke-AtCommand -Channel $script:channel -Command 'AT+CSCON?' -TimeoutMs 100).Status | Should -Be 'Timeout'
+            # The modem is still busy: this one's echo comes after the late answer, too late.
+            $second = Invoke-AtCommand -Channel $script:channel -Command 'AT+CPIN?' -TimeoutMs 100
+            $second.Status | Should -Be 'Timeout'
+            $second.EchoSeen | Should -BeFalse
+            $script:modem.EmitUnsolicited('+CEREG: 1', 700)
+
+            $received = [System.Collections.Generic.List[string]]::new()
+            $clock = [System.Diagnostics.Stopwatch]::StartNew()
+            while ($received -notcontains '+CEREG: 1' -and $clock.ElapsedMilliseconds -lt 5000) {
+                foreach ($urc in Receive-AtUrc -Channel $script:channel -TimeoutMs 200) {
+                    $received.Add($urc)
+                }
+            }
+            $received | Should -Be @('+CEREG: 1')
+        }
+
+        It 'passes on a real registration report that arrives while a late one is due' {
+            $script:modem.Script('AT+CEREG?', @{ Lines = @('+CEREG: 2,1,"ABCD","0ABCDEF0",7', 'OK'); DelayMs = 400 })
+            (Invoke-AtCommand -Channel $script:channel -Command 'AT+CEREG?' -TimeoutMs 100).Status | Should -Be 'Timeout'
+            $script:modem.EmitUnsolicited('+CEREG: 0', 100)
+
+            $received = [System.Collections.Generic.List[string]]::new()
+            $clock = [System.Diagnostics.Stopwatch]::StartNew()
+            while ($clock.ElapsedMilliseconds -lt 1000) {
+                foreach ($urc in Receive-AtUrc -Channel $script:channel -TimeoutMs 200) {
+                    $received.Add($urc)
+                }
+            }
+            $received | Should -Contain '+CEREG: 0'
+            # The late read answer may come through too; it still reads as what it is.
+            $late = $received | Where-Object { $_ -ne '+CEREG: 0' } | ForEach-Object { ConvertFrom-AtRegistration -Line $_ }
+            @($late | Where-Object { $_.Stat -ne 1 }) | Should -BeNullOrEmpty
+        }
+
+        It 'leaves a URC that arrives during a set command to Receive-AtUrc' {
+            $script:modem.SetAnswer('AT+CEREG=2', @('OK'))
+            $script:modem.Script('AT+CEREG=2', @{ UrcAfter = 0; Urc = '+CEREG: 1' })
+            $answer = Invoke-AtCommand -Channel $script:channel -Command 'AT+CEREG=2' -TimeoutMs 5000
+            $answer.Status | Should -Be 'OK'
+            $answer.Lines | Should -BeNullOrEmpty
+            Receive-AtUrc -Channel $script:channel | Should -Be @('+CEREG: 1')
+        }
+
         It 'recovers when the modem''s echo was turned off' {
             (Invoke-AtCommand -Channel $script:channel -Command 'ATE0' -TimeoutMs 5000).Status | Should -Be 'OK'
             $lost = Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 150
@@ -164,6 +245,21 @@ Describe 'AT channel' {
 
             (Initialize-AtChannel -Channel $script:channel -TimeoutMs 5000).Status | Should -Be 'OK'
             (Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 5000).Lines | Should -Be @('+CSQ: 20,99')
+        }
+    }
+
+    Context 'command text' {
+        # A CR would make the modem run two commands; a character the port can't carry would
+        # leave the echo unrecognizable, and a command that ran would be reported as a timeout.
+        It 'refuses <Name> without writing anything' -ForEach @(
+            @{ Name = 'an embedded CR'; Command = "AT`rAT+CFUN=0" }
+            @{ Name = 'an embedded LF'; Command = "AT`nAT+CFUN=0" }
+            @{ Name = 'a non-ASCII character'; Command = "AT+CGDCONT=1,`"IP`",`"apn$([char]0xE8)`"" }
+        ) {
+            $written = $script:modem.Received.Count
+            { Invoke-AtCommand -Channel $script:channel -Command $Command -TimeoutMs 5000 -ErrorAction Stop } |
+                Should -Throw -ExceptionType ([System.Management.Automation.ParameterBindingException])
+            $script:modem.Received.Count | Should -Be $written
         }
     }
 
@@ -191,6 +287,30 @@ Describe 'New-AtChannel' {
     It 'refuses an object that is not a transport' {
         { New-AtChannel -Transport ([pscustomobject]@{ PortName = 'COM5' }) -ErrorAction Stop } |
             Should -Throw -ExceptionType ([System.ArgumentException])
+    }
+}
+
+Describe 'Late command queue' {
+    It 'remembers at most 10 timed-out commands, and the next echo clears them' {
+        $modem = New-SimulatedModem
+        $modem.Echo = $false
+        $channel = New-AtChannel -Transport $modem
+        try {
+            # A modem that stops answering: no echo, no answer, every command times out.
+            foreach ($i in 1..12) {
+                $modem.Script("AT+X$i", @{ Lines = @() })
+                [void](Invoke-AtCommand -Channel $channel -Command "AT+X$i" -TimeoutMs 1)
+            }
+            $channel.LateCommands.Count | Should -Be 10
+            $channel.LateCommands[0] | Should -Be 'AT+X3'
+
+            $modem.Echo = $true
+            (Invoke-AtCommand -Channel $channel -Command 'AT' -TimeoutMs 5000).Status | Should -Be 'OK'
+            $channel.LateCommands.Count | Should -Be 0
+        }
+        finally {
+            Close-AtChannel -Channel $channel
+        }
     }
 }
 

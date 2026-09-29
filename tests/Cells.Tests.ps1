@@ -88,10 +88,19 @@ Describe 'ConvertFrom-AtCellInfo' {
         $cells[0].Technology | Should -Be 'LTE'
     }
 
-    It 'survives a malformed band code' {
-        $cell = ConvertFrom-AtCellInfo -Lines '1,4,001,01,ABCD,0ABCDEF0,1300,123,-1,100,40,60,60,20'
+    It 'survives band code <Code>' -ForEach @(
+        @{ Code = '-1' }
+        @{ Code = '1000000000' }
+        @{ Code = '2147483647' }
+    ) {
+        $cell = ConvertFrom-AtCellInfo -Lines "1,4,001,01,ABCD,0ABCDEF0,1300,123,$Code,100,40,60,60,20"
         $cell.Band | Should -BeNullOrEmpty
         $cell.Rsrp.Value | Should -Be -81
+    }
+
+    It 'accepts empty lines' {
+        ConvertFrom-AtCellInfo -Lines '', '1,4,001,01,ABCD,0ABCDEF0,1300,123,103,100,40,60,60,20' |
+            Should -HaveCount 1
     }
 }
 
@@ -155,9 +164,17 @@ Describe 'ConvertFrom-AtCarrierAggregation' {
         (ConvertFrom-AtCarrierAggregation -Lines 'PCC:103,123,1300,100,2,1,6,6,60').DlModulation | Should -BeNullOrEmpty
     }
 
-    It 'survives a malformed band code' {
-        $carrier = ConvertFrom-AtCarrierAggregation -Lines 'PCC:-1,123,1300,100'
+    It 'survives band code <Code>' -ForEach @(
+        @{ Code = '-1' }
+        @{ Code = '2000000000' }
+    ) {
+        $carrier = ConvertFrom-AtCarrierAggregation -Lines "PCC:$Code,123,1300,100"
         $carrier.Band | Should -BeNullOrEmpty
         $carrier.Technology | Should -BeNullOrEmpty
+        $carrier.DlBandwidthMHz | Should -Be 20
+    }
+
+    It 'accepts empty lines' {
+        ConvertFrom-AtCarrierAggregation -Lines '', 'PCC:103,123,1300,100' | Should -HaveCount 1
     }
 }

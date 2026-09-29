@@ -13,7 +13,8 @@ function ConvertFrom-Earfcn {
     .DESCRIPTION
         F_DL = F_DL_low + 0.1 (N_DL - N_Offs-DL), 3GPP TS 36.101 clause 5.7.3. Downlink channel
         numbers are unique across bands, so the answer is one band. Returns Earfcn, Band (the
-        number), Name ('B3') and DownlinkMHz; $null for a number outside every band.
+        number), Name ('B3') and DownlinkMHz; $null for a number outside every band, a negative
+        one, or $null (a field the modem left empty).
     .EXAMPLE
         ConvertFrom-Earfcn -Earfcn 1300
 
@@ -25,11 +26,15 @@ function ConvertFrom-Earfcn {
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory, ValueFromPipeline)]
-        [ValidateRange(0, [int]::MaxValue)]
-        [int] $Earfcn
+        [AllowNull()]
+        [Nullable[int]] $Earfcn
     )
 
     process {
+        # A field the modem left empty arrives as $null: nothing to convert (not channel 0).
+        if ($null -eq $Earfcn -or $Earfcn -lt 0) {
+            return
+        }
         foreach ($band in $script:EutraBands) {
             if ($Earfcn -ge $band.First -and $Earfcn -le $band.Last) {
                 return [pscustomobject]@{
@@ -51,7 +56,8 @@ function ConvertFrom-NrArfcn {
         F_REF = F_REF-Offs + dF_Global (N_REF - N_REF-Offs), 3GPP TS 38.101-1 clause 5.4.2.1.
         NR bands overlap (n77 and n78, n1 and n65 ...), so a channel can belong to several:
         Bands lists every band whose downlink range contains it ('n77', 'n78'). Returns Arfcn,
-        FrequencyMHz and Bands; $null outside FR1 (above 2016666).
+        FrequencyMHz and Bands; $null outside FR1 (above 2016666), for a negative number, or for
+        $null (a field the modem left empty).
     .EXAMPLE
         ConvertFrom-NrArfcn -Arfcn 632448
 
@@ -63,11 +69,15 @@ function ConvertFrom-NrArfcn {
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory, ValueFromPipeline)]
-        [ValidateRange(0, [int]::MaxValue)]
-        [int] $Arfcn
+        [AllowNull()]
+        [Nullable[int]] $Arfcn
     )
 
     process {
+        # A field the modem left empty arrives as $null: nothing to convert (not channel 0).
+        if ($null -eq $Arfcn -or $Arfcn -lt 0) {
+            return
+        }
         $raster = $script:NrData.Raster | Where-Object { $Arfcn -ge $_.First -and $Arfcn -le $_.Last } | Select-Object -First 1
         if (-not $raster) {
             return

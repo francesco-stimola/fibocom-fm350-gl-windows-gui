@@ -21,6 +21,12 @@ $script:AtFinalResults = @{
 # lines (+CMT, +CDS) are never enabled, so they are not listed.
 $script:AtUrcPrefixes = @('+CREG', '+CGREG', '+CEREG', '+C5GREG', '+CSCON', '+CMTI', '+CDSI', '+CUSD', '+CGEV')
 
+# Registration reports say which form they are in (the read answer starts with <n>;
+# ConvertFrom-AtRegistration tells them apart), so one of these is passed on as unsolicited even
+# while a late answer with the same prefix is due: a late read answer read as a URC is still read
+# correctly, and a real report is never lost.
+$script:AtSelfDescribingPrefixes = @('+CREG', '+CGREG', '+CEREG', '+C5GREG')
+
 # Longest unterminated text kept between reads. Real lines are a few hundred characters at most
 # (an SMS PDU); more than this without a line end is noise, and keeping it would grow forever.
 $script:AtMaxRemainder = 4096
@@ -78,8 +84,11 @@ function Split-AtText {
 }
 
 function Get-AtCommandPrefix {
-    # The information-response prefixes a command line expects: 'AT+CREG?' -> '+CREG';
-    # 'AT+GTCCINFO?;+GTCAINFO?' -> '+GTCCINFO', '+GTCAINFO'; 'ATI' -> none.
+    # The information-response prefixes a command line claims: 'AT+CREG?' -> '+CREG';
+    # 'AT+GTCCINFO?;+GTCAINFO?' -> '+GTCCINFO', '+GTCAINFO'; 'ATI' -> none. Read ('?'), test
+    # ('=?') and execute forms claim their prefix; a set form ('AT+CEREG=2') doesn't, so a URC with
+    # that prefix arriving during it stays a URC. (Set forms that answer with data, like
+    # AT+CGCONTRDP=1, have prefixes that are not URC prefixes: nothing changes for them.)
     [CmdletBinding()]
     [OutputType([string])]
     param(
@@ -94,8 +103,12 @@ function Get-AtCommandPrefix {
     # Quoted arguments may contain ';' or '+'; they never carry a prefix.
     $body = $body.Substring(2) -replace '"[^"]*"', '""'
     foreach ($part in $body.Split(';')) {
-        if ($part.Trim() -match '^(\+[A-Z0-9]+)') {
-            $Matches[1].ToUpperInvariant()
+        if ($part.Trim() -match '^(\+[A-Z0-9]+)(.*)$') {
+            $name = $Matches[1].ToUpperInvariant()
+            $rest = $Matches[2]
+            if ($rest -notmatch '^\s*=(?!\s*\?)') {
+                $name
+            }
         }
     }
 }
@@ -110,10 +123,16 @@ function Resolve-AtLine {
         itself and unsolicited codes are expected: anything else is left over from an earlier
         command. With no command pending, every line is unsolicited, except a stray final result.
 
+        -LateCommand lists commands that timed out and whose answers may still arrive. While any
+        is due, their echoes, lines with their own prefixes and lines without a URC prefix are
+        stale, not unsolicited: a late '+CSCON: 1,0' is an answer, not a code saying "connected".
+        Registration reports are the exception: they say which form they are in, so they stay
+        unsolicited and a real one is never lost.
+
         Returns an object with:
         - Kind: 'Echo', 'Response', 'Final', 'Urc' or 'Stale'.
-        - Status, for a final result: 'OK', 'Error', 'CmeError', 'CmsError', 'NoCarrier',
-          'Busy', 'NoAnswer' or 'NoDialtone'; otherwise $null.
+        - Status, when the line is a final result code (whatever its Kind): 'OK', 'Error',
+          'CmeError', 'CmsError', 'NoCarrier', 'Busy', 'NoAnswer' or 'NoDialtone'; else $null.
         - ErrorCode: the number of a '+CME ERROR:' or '+CMS ERROR:', or $null.
         - ErrorText: the text after '+CME ERROR:' or '+CMS ERROR:', or $null.
     .EXAMPLE
@@ -131,7 +150,10 @@ function Resolve-AtLine {
 
         [string] $Command,
 
-        [switch] $EchoSeen
+        [switch] $EchoSeen,
+
+        [AllowEmptyCollection()]
+        [string[]] $LateCommand = @()
     )
 
     $text = $Line.Trim()
@@ -151,15 +173,24 @@ function Resolve-AtLine {
 
     $prefix = if ($text -match '^(\+[A-Z0-9]+)\s*:') { $Matches[1].ToUpperInvariant() }
     $isUrcPrefix = $prefix -and $prefix -in $script:AtUrcPrefixes
+    # Part of a late answer: a late command's echo, or a line with its own prefix (registration
+    # reports excepted).
+    $lateCommands = @($LateCommand | Where-Object { $_ })
+    $isLate = $false
+    foreach ($late in $lateCommands) {
+        if ($text -eq $late.Trim() -or ($prefix -and $prefix -notin $script:AtSelfDescribingPrefixes -and $prefix -in @(Get-AtCommandPrefix -Command $late))) {
+            $isLate = $true
+        }
+    }
 
     $kind = if (-not $Command) {
-        if ($status) { 'Stale' } else { 'Urc' }
+        if ($status -or ($lateCommands.Count -gt 0 -and ($isLate -or -not $isUrcPrefix))) { 'Stale' } else { 'Urc' }
     }
     elseif ($text -eq $Command.Trim()) {
         'Echo'
     }
     elseif (-not $EchoSeen) {
-        if ($isUrcPrefix) { 'Urc' } else { 'Stale' }
+        if ($isUrcPrefix -and -not $isLate) { 'Urc' } else { 'Stale' }
     }
     elseif ($status) {
         'Final'
@@ -173,8 +204,8 @@ function Resolve-AtLine {
 
     [pscustomobject]@{
         Kind      = $kind
-        Status    = if ($kind -eq 'Final') { $status } else { $null }
-        ErrorCode = if ($kind -eq 'Final') { $errorCode } else { $null }
-        ErrorText = if ($kind -eq 'Final') { $errorText } else { $null }
+        Status    = $status
+        ErrorCode = $errorCode
+        ErrorText = $errorText
     }
 }

@@ -49,6 +49,11 @@ class SerialAtTransport {
         try {
             $this.Port.Write($text)
         }
+        catch [System.TimeoutException] {
+            # The port is there but the modem isn't draining it (hung): not a lost port. The
+            # command then times out without an echo, which is how a hung modem shows up.
+            Write-Debug "Write to $($this.PortName) timed out."
+        }
         catch {
             $this.MarkLost("write: $($_.Exception.Message)")
         }

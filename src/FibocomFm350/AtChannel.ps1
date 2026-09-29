@@ -9,6 +9,10 @@
 # falls behind can't make the queue grow for weeks.
 $script:AtMaxQueuedUrcs = 1000
 
+# Timed-out commands whose answers may still arrive. A modem that stops answering times out every
+# command without ever echoing one; beyond this many, the oldest is forgotten.
+$script:AtMaxLateCommands = 10
+
 [NoRunspaceAffinity()]
 class AtChannel {
     [object] $Transport
@@ -16,6 +20,9 @@ class AtChannel {
     [string] $State = 'Open'
     # Unterminated text carried over between reads.
     hidden [string] $Buffer = ''
+    # Commands that timed out and whose answers may still arrive, oldest first. A stale final
+    # result closes the oldest; the next command's echo closes them all.
+    hidden [System.Collections.Generic.List[string]] $LateCommands = [System.Collections.Generic.List[string]]::new()
     hidden [System.Collections.Generic.Queue[string]] $Urcs = [System.Collections.Generic.Queue[string]]::new()
 
     AtChannel([object] $transport) {
@@ -92,7 +99,11 @@ function Invoke-AtCommand {
         Writes the command, then collects the lines that follow its echo until a final result
         code or the timeout. Unsolicited result codes that arrive meanwhile are queued for
         Receive-AtUrc; lines left over from an earlier command (before this command's echo) are
-        discarded and counted.
+        discarded and counted. After a timeout, the channel remembers the command, so that its
+        late answer is discarded as well instead of passing for unsolicited codes.
+
+        The command must be printable ASCII: a CR would make the modem run two commands, and a
+        character the port can't carry would make the echo unrecognizable.
 
         Returns an object with:
         - Command, and Status: 'OK', 'Error', 'CmeError', 'CmsError', 'NoCarrier', 'Busy',
@@ -119,7 +130,7 @@ function Invoke-AtCommand {
         [AtChannel] $Channel,
 
         [Parameter(Mandatory)]
-        [ValidatePattern('^AT')]
+        [ValidatePattern('^AT[\x20-\x7E]*$')]
         [string] $Command,
 
         [Parameter(Mandatory)]
@@ -158,7 +169,7 @@ function Invoke-AtCommand {
             foreach ($line in @(Read-AtChannelLine -Channel $Channel -TimeoutMs $remaining)) {
                 if ($final) {
                     # The command is answered: what follows in the same read is unsolicited.
-                    if ((Resolve-AtLine -Line $line).Kind -eq 'Urc') {
+                    if ((Resolve-AtLine -Line $line -LateCommand $Channel.LateCommands.ToArray()).Kind -eq 'Urc') {
                         Add-AtQueuedUrc -Channel $Channel -Line $line
                     }
                     else {
@@ -166,13 +177,25 @@ function Invoke-AtCommand {
                     }
                     continue
                 }
-                $resolved = Resolve-AtLine -Line $line -Command $commandLine -EchoSeen:($echoSeen -or $NoEchoAnchor)
+                # Without an anchor, lines count as the answer only once no late answer is due.
+                $anchored = $echoSeen -or ($NoEchoAnchor -and $Channel.LateCommands.Count -eq 0)
+                $resolved = Resolve-AtLine -Line $line -Command $commandLine -EchoSeen:$anchored -LateCommand $Channel.LateCommands.ToArray()
                 switch ($resolved.Kind) {
-                    'Echo' { $echoSeen = $true }
+                    'Echo' {
+                        $echoSeen = $true
+                        # The modem runs one command at a time: nothing late can follow this echo.
+                        $Channel.LateCommands.Clear()
+                    }
                     'Urc' { Add-AtQueuedUrc -Channel $Channel -Line $line }
                     'Response' { $lines.Add($line) }
                     'Final' { $final = $resolved }
-                    'Stale' { $discarded++ }
+                    'Stale' {
+                        $discarded++
+                        if ($resolved.Status -and $Channel.LateCommands.Count -gt 0) {
+                            # A stale final result closes the oldest late answer.
+                            $Channel.LateCommands.RemoveAt(0)
+                        }
+                    }
                 }
             }
         }
@@ -181,6 +204,12 @@ function Invoke-AtCommand {
         }
         elseif ($Channel.State -eq 'Lost') {
             $status = 'PortLost'
+        }
+        else {
+            $Channel.LateCommands.Add($commandLine)
+            if ($Channel.LateCommands.Count -gt $script:AtMaxLateCommands) {
+                $Channel.LateCommands.RemoveAt(0)
+            }
         }
     }
 
@@ -203,9 +232,10 @@ function Initialize-AtChannel {
     .DESCRIPTION
         Sends ATE1 (echo on; the channel anchors every answer on the echo) and AT+CMEE=1
         ('+CME ERROR: <n>' with a number, which the app maps itself, instead of firmware text).
-        The second command is anchored on its echo, so an OK proves the channel is in step.
-        Run it after opening the channel, and again after a timeout. Returns the answer to
-        AT+CMEE=1, or to ATE1 if that one failed.
+        ATE1 can't be anchored - the echo may be off - so its answer may be a late one from a
+        command that timed out; it is not trusted. AT+CMEE=1 is anchored on its echo, so its OK
+        proves the channel is in step. Run it after opening the channel, and again after a
+        timeout. Returns the answer to AT+CMEE=1, or to ATE1 if the port was lost.
     .EXAMPLE
         $ready = Initialize-AtChannel -Channel $channel -TimeoutMs 2000
         if ($ready.Status -ne 'OK') { ... }
@@ -222,7 +252,7 @@ function Initialize-AtChannel {
     )
 
     $echo = Invoke-AtCommand -Channel $Channel -Command 'ATE1' -TimeoutMs $TimeoutMs -NoEchoAnchor
-    if ($echo.Status -ne 'OK') {
+    if ($echo.Status -eq 'PortLost') {
         return $echo
     }
     Invoke-AtCommand -Channel $Channel -Command 'AT+CMEE=1' -TimeoutMs $TimeoutMs
@@ -256,8 +286,13 @@ function Receive-AtUrc {
 
     if ($TimeoutMs -gt 0 -and $Channel.State -eq 'Open') {
         foreach ($line in @(Read-AtChannelLine -Channel $Channel -TimeoutMs $TimeoutMs)) {
-            if ((Resolve-AtLine -Line $line).Kind -eq 'Urc') {
+            $resolved = Resolve-AtLine -Line $line -LateCommand $Channel.LateCommands.ToArray()
+            if ($resolved.Kind -eq 'Urc') {
                 Add-AtQueuedUrc -Channel $Channel -Line $line
+            }
+            elseif ($resolved.Status -and $Channel.LateCommands.Count -gt 0) {
+                # The final result of the oldest late answer: nothing more of it will come.
+                $Channel.LateCommands.RemoveAt(0)
             }
         }
     }
@@ -287,6 +322,7 @@ function Close-AtChannel {
         $Channel.State = 'Closed'
         $Channel.Urcs.Clear()
         $Channel.Buffer = ''
+        $Channel.LateCommands.Clear()
         $Channel.Transport.Close()
     }
 }

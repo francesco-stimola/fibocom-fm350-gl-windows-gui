@@ -38,10 +38,13 @@ Describe 'ConvertFrom-Earfcn' {
         $channel.DownlinkMHz | Should -Be $MHz
     }
 
-    It 'gives nothing for EARFCN <Earfcn>, outside every band' -ForEach @(
+    # $null is a field the modem left empty: it must not become channel 0 (band 1).
+    It 'gives nothing for EARFCN <Earfcn>' -ForEach @(
         @{ Earfcn = 5000 }
         @{ Earfcn = 36000 - 1 }
         @{ Earfcn = 200000 }
+        @{ Earfcn = -1 }
+        @{ Earfcn = $null }
     ) {
         ConvertFrom-Earfcn -Earfcn $Earfcn | Should -BeNullOrEmpty
     }
@@ -64,8 +67,18 @@ Describe 'ConvertFrom-NrArfcn' {
         ($channel.Bands -join ',') | Should -Be ($Bands -join ',')
     }
 
-    It 'gives nothing outside FR1' {
-        ConvertFrom-NrArfcn -Arfcn 2016667 | Should -BeNullOrEmpty
+    It 'gives nothing for NR-ARFCN <Arfcn>' -ForEach @(
+        @{ Arfcn = 2016667 }
+        @{ Arfcn = -1 }
+        @{ Arfcn = $null }
+    ) {
+        ConvertFrom-NrArfcn -Arfcn $Arfcn | Should -BeNullOrEmpty
+    }
+
+    It 'passes on a cell whose channel was not reported' {
+        $cell = ConvertFrom-AtCellInfo -Lines '1,4,001,01,ABCD,0ABCDEF0,,123,103,100,40,60,60,20'
+        $cell.Arfcn | Should -BeNullOrEmpty
+        ConvertFrom-Earfcn -Earfcn $cell.Arfcn | Should -BeNullOrEmpty
     }
 
     It 'returns Bands as an array, even with one band or none' {

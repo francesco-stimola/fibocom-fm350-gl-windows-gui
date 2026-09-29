@@ -43,6 +43,16 @@ Describe 'New-SimulatedModem' {
         { New-SimulatedModem -Fixture $path, $path -ErrorAction Stop } | Should -Throw '*both answer*'
     }
 
+    It 'remembers only the last 1000 commands' {
+        $modem = New-SimulatedModem
+        foreach ($i in 1..1005) {
+            $modem.Write("AT+X$i`r")
+        }
+        $modem.Received.Count | Should -Be 1000
+        $modem.Received[0] | Should -Be 'AT+X6'
+        $modem.Received[-1] | Should -Be 'AT+X1005'
+    }
+
     It 'starts with echo on, as the FM350 does, and follows ATE0' {
         $modem = New-SimulatedModem
         $modem.Echo | Should -BeTrue

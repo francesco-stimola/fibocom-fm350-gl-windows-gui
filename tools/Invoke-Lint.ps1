@@ -58,7 +58,12 @@ for ($attempt = 1; $attempt -le $Attempts -and $pending.Count -gt 0; $attempt++)
         $relative = [System.IO.Path]::GetRelativePath($root, $failed[0].Path)
         Write-Warning "Attempt $attempt of ${Attempts}: the analyzer failed on $relative ($($failed[0].Problem)); retrying the rest in a new process."
     }
-    $pending = @($results | Where-Object { -not $_.Analyzed } | ForEach-Object Path)
+    elseif ($results.Count -lt $pending.Count) {
+        Write-Warning "Attempt $attempt of ${Attempts}: the analyzer process ended early; retrying the rest in a new process."
+    }
+    # Whatever wasn't reported as analyzed stays pending - a child that died silently included.
+    $analyzed = @($results | Where-Object Analyzed | ForEach-Object Path)
+    $pending = @($pending | Where-Object { $_ -notin $analyzed })
 }
 
 if ($diagnostics.Count) {

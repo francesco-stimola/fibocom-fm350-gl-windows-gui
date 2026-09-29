@@ -6,7 +6,8 @@
 class SimulatedModem {
     [string] $PortName
     [bool] $Lost = $false
-    # Commands received, in order, as written (without the CR).
+    # The last 1000 commands received, oldest first, as written (without the CR). Bounded: the
+    # development mode runs the simulated modem for as long as the app is open.
     [System.Collections.Generic.List[string]] $Received = [System.Collections.Generic.List[string]]::new()
     [bool] $Echo = $true
     [bool] $Closed = $false
@@ -133,6 +134,9 @@ class SimulatedModem {
 
     hidden [void] Handle([string] $command) {
         $this.Received.Add($command)
+        if ($this.Received.Count -gt 1000) {
+            $this.Received.RemoveAt(0)
+        }
         $behavior = @{}
         if ($this.Behaviors.ContainsKey($command) -and $this.Behaviors[$command].Count -gt 0) {
             $behavior = $this.Behaviors[$command].Dequeue()
