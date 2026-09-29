@@ -58,6 +58,7 @@ Everything needed to talk to the modem and understand its answers — no connect
 
 - [ ] Settings file (APN, optional APN credentials, DNS override, route metric) with defaults and validation.
 - [ ] Connection state machine as a pure transition function, with a matrix of tests.
+- [ ] Per-command timeouts as a pure lookup: each command's worst-case duration from the vendor manual (`AT-COMMANDS.md` §2), never less than 3 s.
 - [ ] Connect sequence: SIM check, data context definition (persistent on the FM350: written only when it differs from the settings), registration, attach, context activation.
 - [ ] Network configuration of the modem's adapter (address, mask, gateway, DNS) in the active store.
 - [ ] Startup reconciliation: attach to an existing connection without re-dialing.
@@ -148,10 +149,7 @@ data is left (design: ARCHITECTURE → *SMS, USSD and data usage*; facts: `AT-CO
 Decisions that change what happens next and are the maintainer's to take. Remove a line when it is
 decided, and record the decision in `DEVLOG.md`.
 
-- **M2 — per-command timeouts.** The AT channel takes a timeout for every command. The vendor
-  manual documents each command's worst-case duration (`AT-COMMANDS.md` §2: `+COPS` 3 min,
-  `+CMGS` 60 s, `+CGACT` 30 s, `+CGATT` 15 s, `+CUSD` 10 s, most others under 3 s). What should
-  the timeouts be?
+*None open.*
 
 ---
 

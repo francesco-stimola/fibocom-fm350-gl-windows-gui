@@ -30,8 +30,11 @@ The device-independent core of M1. Design decisions:
   the documentation, values invented) or `tests/fixtures/device/` (captures). A test checks their
   format and source note, and fails on any identifier-like value other than the fakes in
   `tests/fixtures/fakes.psd1`.
-- **Timeouts are the caller's.** `Invoke-AtCommand` requires one; the values are an open decision
-  for M2.
+- **Timeouts are the caller's.** `Invoke-AtCommand` requires one. **Decision:** each command's
+  worst-case duration as documented by the vendor manual, never less than 3 s — the manufacturer's
+  figures are maximums by design, and the floor covers USB latency and a busy modem. The cost is
+  that a stuck modem is noticed only after that duration (3 min for `AT+COPS`, which is rare).
+  M2 turns it into a lookup.
 
 New device questions (`AT-COMMANDS.md` §7): whether DTR/RTS matter, which URCs arrive unprompted,
 and whether `pwsh` survives the modem being unplugged while the port is open — a known weak spot

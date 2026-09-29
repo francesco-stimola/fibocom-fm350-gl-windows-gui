@@ -104,8 +104,10 @@ Everything the worker says to the modem goes through one **AT channel** per port
   functions; the I/O loop around them is thin.
 - **Bounded.** Unterminated text is capped at 4096 characters and the unsolicited-code queue at
   1000 entries (oldest dropped): nothing grows without limit over weeks.
-- **Timeouts** are given per command by the caller; their values are the human's decision (see
-  ROADMAP → *Open decisions*).
+- **Timeouts** are given per command by the caller: each command's worst-case duration as
+  documented by the vendor manual, never less than 3 s (margin for USB latency and a busy
+  modem). A stuck modem is noticed at most that long after the command — 3 min only for
+  `AT+COPS`, which is rare.
 
 ## Connection state machine (M2)
 

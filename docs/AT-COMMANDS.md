@@ -80,7 +80,7 @@ When a source is added, record its exact version or commit here.
 | DTR and RTS asserted on the USB virtual port, as a modem expects from a ready terminal. | ❓ | `[DEVICE]` — does the FM350 answer without them? |
 | Error codes worth recognizing: CME `14` and CMS `314` = SIM busy; CME `149` = PDP authentication failure. `+CEER` gives the reason for the last failure, attach and activation errors included. | 📄 | `[27.007]`, `[FIBOCOM]` §20.1.2 p.325, §20.2 p.327, §20.3 p.332 |
 | Unsolicited result codes (URCs) can arrive **between** a command and its final result code. The reader must separate them from the response. | 📄 | `[27.007]` |
-| Commands have documented worst-case durations — `+COPS` up to 3 min, `+CMGS` 60 s, `+CGACT` 30 s, `+CGATT` 15 s, `+CUSD` 10 s, most others under 3 s — which bound the per-command timeouts. | 📄 | `[FIBOCOM]` (each command's attribute table) |
+| Commands have documented worst-case durations — `+COPS` up to 3 min, `+CMGS` 60 s, `+CGACT` 30 s, `+CGATT` 15 s, `+CUSD` 10 s, `+CMGL` 5 s, `+CMGR` and `+CSIM` 2 s, most others under 3 s. **Each command's timeout is its documented duration, never less than 3 s** (decided 2026-09-29). | 📄 | `[FIBOCOM]` (each command's attribute table) |
 | Baud rate and flow control settings are irrelevant on the USB virtual COM port. | ❓ | `[DEVICE]` |
 
 ## 3. Standard commands we rely on (`[27.007]`)
