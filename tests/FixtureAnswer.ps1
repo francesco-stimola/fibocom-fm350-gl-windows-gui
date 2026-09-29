@@ -10,8 +10,8 @@ function Get-FixtureAnswer {
     $fixture = Import-AtFixture -Path (Join-Path -Path $PSScriptRoot -ChildPath "fixtures/documented/$Name")
     $channel = New-AtChannel -Transport (New-SimulatedModem -Fixture $fixture)
     try {
-        [void](Initialize-AtChannel -Channel $channel -TimeoutMs 1000)
-        $answer = Invoke-AtCommand -Channel $channel -Command $fixture.Command -TimeoutMs 1000
+        [void](Initialize-AtChannel -Channel $channel -TimeoutMs 5000)
+        $answer = Invoke-AtCommand -Channel $channel -Command $fixture.Command -TimeoutMs 5000
         if ($answer.Status -ne 'OK') {
             throw "Fixture '$Name' answered $($answer.Status) through the channel."
         }

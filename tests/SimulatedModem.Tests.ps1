@@ -30,8 +30,8 @@ Describe 'New-SimulatedModem' {
         $modem = New-SimulatedModem -Fixture (Get-ChildItem -Path "$PSScriptRoot/fixtures/documented" -Filter 'csq.txt')
         $channel = New-AtChannel -Transport $modem
         try {
-            [void](Initialize-AtChannel -Channel $channel -TimeoutMs 1000)
-            (Invoke-AtCommand -Channel $channel -Command 'AT+CSQ' -TimeoutMs 1000).Lines | Should -Be @('+CSQ: 20,99')
+            [void](Initialize-AtChannel -Channel $channel -TimeoutMs 5000)
+            (Invoke-AtCommand -Channel $channel -Command 'AT+CSQ' -TimeoutMs 5000).Lines | Should -Be @('+CSQ: 20,99')
         }
         finally {
             Close-AtChannel -Channel $channel

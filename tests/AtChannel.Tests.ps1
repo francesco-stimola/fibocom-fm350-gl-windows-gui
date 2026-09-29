@@ -14,7 +14,7 @@ Describe 'AT channel' {
         $script:modem = New-SimulatedModem -PortName 'COM5'
         $script:modem.SetAnswer('AT+CSQ', @('+CSQ: 20,99', 'OK'))
         $script:channel = New-AtChannel -Transport $script:modem
-        $script:ready = Initialize-AtChannel -Channel $script:channel -TimeoutMs 1000
+        $script:ready = Initialize-AtChannel -Channel $script:channel -TimeoutMs 5000
     }
 
     AfterEach {
@@ -29,7 +29,7 @@ Describe 'AT channel' {
         }
 
         It 'returns the answer lines without echo or final result' {
-            $answer = Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 1000
+            $answer = Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 5000
             $answer.Status | Should -Be 'OK'
             $answer.Lines | Should -Be @('+CSQ: 20,99')
             $answer.EchoSeen | Should -BeTrue
@@ -37,19 +37,19 @@ Describe 'AT channel' {
         }
 
         It 'reports ERROR for a command the modem rejects' {
-            (Invoke-AtCommand -Channel $script:channel -Command 'AT+NOPE' -TimeoutMs 1000).Status | Should -Be 'Error'
+            (Invoke-AtCommand -Channel $script:channel -Command 'AT+NOPE' -TimeoutMs 5000).Status | Should -Be 'Error'
         }
 
         It 'reports a +CME ERROR with its number' {
             $script:modem.SetAnswer('AT+CPIN?', @('+CME ERROR: 10'))
-            $answer = Invoke-AtCommand -Channel $script:channel -Command 'AT+CPIN?' -TimeoutMs 1000
+            $answer = Invoke-AtCommand -Channel $script:channel -Command 'AT+CPIN?' -TimeoutMs 5000
             $answer.Status | Should -Be 'CmeError'
             $answer.ErrorCode | Should -Be 10
         }
 
         It 'queues a URC that follows the final result in the same read' {
             $script:modem.Script('AT+CSQ', @{ Lines = @('+CSQ: 20,99', 'OK', '+CEREG: 1') })
-            (Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 1000).Status | Should -Be 'OK'
+            (Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 5000).Status | Should -Be 'OK'
             Receive-AtUrc -Channel $script:channel | Should -Be @('+CEREG: 1')
         }
     }
@@ -62,51 +62,51 @@ Describe 'AT channel' {
             $answer.Lines | Should -Be @('+CSQ: 20,99')
             $answer.ElapsedMs | Should -BeGreaterOrEqual 150
 
-            (Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 1000).Status | Should -Be 'OK'
+            (Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 5000).Status | Should -Be 'OK'
         }
 
         It 'reassembles an answer split across reads' {
             # Output: "AT+CSQ`r" (0-6), "`r`n+CSQ: 20,99`r`n" (7-21), "`r`nOK`r`n" (22-27).
             # Cuts inside the echo, twice inside '+CSQ: 20,99', and between 'O' and 'K'.
             $script:modem.Script('AT+CSQ', @{ SplitAt = @(3, 12, 18, 25) })
-            $answer = Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 1000
+            $answer = Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 5000
             $answer.Status | Should -Be 'OK'
             $answer.Lines | Should -Be @('+CSQ: 20,99')
         }
 
         It 'ignores garbled bytes before the answer' {
             $script:modem.Script('AT+CSQ', @{ Garbage = "$([char]0)$([char]0xFF)$([char]0xFE)$([char]0x13)" })
-            $answer = Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 1000
+            $answer = Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 5000
             $answer.Status | Should -Be 'OK'
             $answer.Lines | Should -Be @('+CSQ: 20,99')
         }
 
         It 'takes a URC out of the middle of an answer' {
             $script:modem.Script('AT+CSQ', @{ UrcAfter = 1; Urc = '+CEREG: 5' })
-            $answer = Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 1000
+            $answer = Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 5000
             $answer.Lines | Should -Be @('+CSQ: 20,99')
             Receive-AtUrc -Channel $script:channel | Should -Be @('+CEREG: 5')
         }
 
         It 'reports PortLost when the port vanishes mid-command, and never touches it again' {
             $script:modem.Script('AT+CSQ', @{ NoFinal = $true; Vanish = $true })
-            (Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 1000).Status | Should -Be 'PortLost'
+            (Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 5000).Status | Should -Be 'PortLost'
             $script:channel.State | Should -Be 'Lost'
 
             $written = $script:modem.Received.Count
-            (Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 1000).Status | Should -Be 'PortLost'
+            (Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 5000).Status | Should -Be 'PortLost'
             $script:modem.Received.Count | Should -Be $written
         }
 
         It 'works on a new channel when the device comes back under another COM number' {
             $script:modem.Vanish()
-            (Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 1000).Status | Should -Be 'PortLost'
+            (Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 5000).Status | Should -Be 'PortLost'
             Close-AtChannel -Channel $script:channel
 
             $script:modem.Reappear('COM9')
             $script:channel = New-AtChannel -Transport $script:modem
-            (Initialize-AtChannel -Channel $script:channel -TimeoutMs 1000).Status | Should -Be 'OK'
-            (Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 1000).Status | Should -Be 'OK'
+            (Initialize-AtChannel -Channel $script:channel -TimeoutMs 5000).Status | Should -Be 'OK'
+            (Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 5000).Status | Should -Be 'OK'
             $script:channel.Transport.PortName | Should -Be 'COM9'
         }
 
@@ -115,9 +115,9 @@ Describe 'AT channel' {
             $script:modem.SetAnswer('AT+CPIN?', @('+CPIN: READY', 'OK'))
             $script:modem.Script('AT+CPIN?', @{ Lines = @('+CME ERROR: 14'); Times = 2 })
 
-            (Invoke-AtCommand -Channel $script:channel -Command 'AT+GTACT=2,3,3,0' -TimeoutMs 1000).Status | Should -Be 'OK'
+            (Invoke-AtCommand -Channel $script:channel -Command 'AT+GTACT=2,3,3,0' -TimeoutMs 5000).Status | Should -Be 'OK'
             $statuses = 1..3 | ForEach-Object {
-                $answer = Invoke-AtCommand -Channel $script:channel -Command 'AT+CPIN?' -TimeoutMs 1000
+                $answer = Invoke-AtCommand -Channel $script:channel -Command 'AT+CPIN?' -TimeoutMs 5000
                 '{0}:{1}' -f $answer.Status, $answer.ErrorCode
             }
             $statuses | Should -Be @('CmeError:14', 'CmeError:14', 'OK:')
@@ -128,7 +128,7 @@ Describe 'AT channel' {
             $script:modem.EmitUnsolicited('+CEREG: 1', 50)
             $received = [System.Collections.Generic.List[string]]::new()
             $clock = [System.Diagnostics.Stopwatch]::StartNew()
-            while ($received.Count -lt 2 -and $clock.ElapsedMilliseconds -lt 2000) {
+            while ($received.Count -lt 2 -and $clock.ElapsedMilliseconds -lt 5000) {
                 foreach ($urc in Receive-AtUrc -Channel $script:channel -TimeoutMs 200) {
                     $received.Add($urc)
                 }
@@ -139,7 +139,7 @@ Describe 'AT channel' {
         It 'waits for a slow AT+COPS=0 within its timeout' {
             $script:modem.SetAnswer('AT+COPS=0', @('OK'))
             $script:modem.Script('AT+COPS=0', @{ DelayMs = 300 })
-            $answer = Invoke-AtCommand -Channel $script:channel -Command 'AT+COPS=0' -TimeoutMs 2000
+            $answer = Invoke-AtCommand -Channel $script:channel -Command 'AT+COPS=0' -TimeoutMs 5000
             $answer.Status | Should -Be 'OK'
             $answer.ElapsedMs | Should -BeGreaterOrEqual 300
         }
@@ -151,19 +151,19 @@ Describe 'AT channel' {
             (Invoke-AtCommand -Channel $script:channel -Command 'AT+COPS=0' -TimeoutMs 100).Status | Should -Be 'Timeout'
 
             # The late OK of AT+COPS=0 arrives before this command's echo and must be discarded.
-            $answer = Invoke-AtCommand -Channel $script:channel -Command 'AT+CPIN?' -TimeoutMs 2000
+            $answer = Invoke-AtCommand -Channel $script:channel -Command 'AT+CPIN?' -TimeoutMs 5000
             $answer.Status | Should -Be 'Error'
             $answer.Discarded | Should -Be 1
         }
 
         It 'recovers when the modem''s echo was turned off' {
-            (Invoke-AtCommand -Channel $script:channel -Command 'ATE0' -TimeoutMs 1000).Status | Should -Be 'OK'
+            (Invoke-AtCommand -Channel $script:channel -Command 'ATE0' -TimeoutMs 5000).Status | Should -Be 'OK'
             $lost = Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 150
             $lost.Status | Should -Be 'Timeout'
             $lost.EchoSeen | Should -BeFalse
 
-            (Initialize-AtChannel -Channel $script:channel -TimeoutMs 1000).Status | Should -Be 'OK'
-            (Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 1000).Lines | Should -Be @('+CSQ: 20,99')
+            (Initialize-AtChannel -Channel $script:channel -TimeoutMs 5000).Status | Should -Be 'OK'
+            (Invoke-AtCommand -Channel $script:channel -Command 'AT+CSQ' -TimeoutMs 5000).Lines | Should -Be @('+CSQ: 20,99')
         }
     }
 

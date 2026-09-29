@@ -16,3 +16,8 @@ All notable changes to this project are documented here. The format follows
   `Invoke-AtCommand`, `Receive-AtUrc`, `Close-AtChannel`, with the line framing and classification
   `Split-AtText` and `Resolve-AtLine`.
 - Simulated modem for tests and development: `New-SimulatedModem`, `Import-AtFixture`.
+- Parsers: `ConvertFrom-AtIdentity`, `ConvertFrom-AtSimState`, `ConvertFrom-AtRegistration`,
+  `ConvertFrom-AtOperator`, `ConvertFrom-AtSignalQuality`, `ConvertFrom-AtTemperature`,
+  `ConvertFrom-AtCellInfo`, `ConvertFrom-AtCarrierAggregation`.
+- Measurements and channels: `ConvertFrom-MeasurementIndex`, `ConvertFrom-Earfcn`,
+  `ConvertFrom-NrArfcn`, with the 3GPP band tables as data.

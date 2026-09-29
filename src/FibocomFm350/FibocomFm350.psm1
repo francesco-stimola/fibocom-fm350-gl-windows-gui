@@ -9,3 +9,4 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Measurements.ps1')
 . (Join-Path $PSScriptRoot 'Parsers.ps1')
 . (Join-Path $PSScriptRoot 'Cells.ps1')
+. (Join-Path $PSScriptRoot 'Arfcn.ps1')
