@@ -1,0 +1,4 @@
+# Source: [27.007] +COPS read form, <AcT> 7 = E-UTRAN; operator name invented.
+AT+COPS?
++COPS: 0,0,"Test Operator",7
+OK

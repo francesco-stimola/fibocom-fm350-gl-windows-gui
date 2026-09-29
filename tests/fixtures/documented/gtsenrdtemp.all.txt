@@ -1,0 +1,6 @@
+# Source: [FIBOCOM] §18.3 p.310 (id 0 lists every sensor, one line each; unit per [3GINFO]); values invented, sensors abridged.
+AT+GTSENRDTEMP=0
++GTSENRDTEMP: 1,48250
++GTSENRDTEMP: 10,45000
++GTSENRDTEMP: 23,39500
+OK

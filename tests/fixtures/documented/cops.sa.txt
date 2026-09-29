@@ -1,0 +1,4 @@
+# Source: [27.007] +COPS read form, <AcT> 11 = NR connected to a 5GCN (5G SA); as read by [3GINFO]; operator name invented.
+AT+COPS?
++COPS: 0,0,"Test Operator",11
+OK

@@ -1,0 +1,7 @@
+# Source: [FIBOCOM] §11.1.15 p.180-181: EN-DC (5G NSA) - LTE serving line, NR serving line, then LTE neighbours; values invented, location values are the documented fakes.
+AT+GTCCINFO?
++GTCCINFO:
+1,4,001,01,ABCD,0ABCDEF0,1300,123,103,100,40,60,60,20
+1,9,001,01,ABCD,0ABCDEF0,632448,321,5078,500,70,90,90,60
+2,4,001,01,ABCD,0ABCDEF0,1300,45,100,55,55,18
+OK

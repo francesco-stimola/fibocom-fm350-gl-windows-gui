@@ -1,0 +1,4 @@
+# Source: [27.007] +CPIN, [FIBOCOM] §10.1.1 p.132; SIM ready.
+AT+CPIN?
++CPIN: READY
+OK

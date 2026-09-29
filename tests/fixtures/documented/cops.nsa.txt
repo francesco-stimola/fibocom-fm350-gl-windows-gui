@@ -1,0 +1,4 @@
+# Source: [27.007] +COPS read form, <AcT> 13 = E-UTRA-NR dual connectivity (5G NSA); as read by [3GINFO]; operator name invented.
+AT+COPS?
++COPS: 0,0,"Test Operator",13
+OK

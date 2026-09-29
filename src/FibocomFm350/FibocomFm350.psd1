@@ -9,7 +9,16 @@
     CompatiblePSEditions = @('Core')
     FunctionsToExport    = @(
         'Close-AtChannel'
+        'ConvertFrom-AtCarrierAggregation'
+        'ConvertFrom-AtCellInfo'
+        'ConvertFrom-AtIdentity'
+        'ConvertFrom-AtOperator'
+        'ConvertFrom-AtRegistration'
+        'ConvertFrom-AtSignalQuality'
+        'ConvertFrom-AtSimState'
+        'ConvertFrom-AtTemperature'
         'ConvertFrom-GtactBandCode'
+        'ConvertFrom-MeasurementIndex'
         'ConvertTo-GtactBandCode'
         'Import-AtFixture'
         'Initialize-AtChannel'

@@ -1,0 +1,7 @@
+# Source: [FIBOCOM] §11.1.15 p.179-187: LTE serving line (14 fields) and LTE neighbour lines (12 fields); values invented, location values are the documented fakes.
+AT+GTCCINFO?
++GTCCINFO:
+1,4,001,01,ABCD,0ABCDEF0,1300,123,103,100,40,60,60,20
+2,4,001,01,ABCD,0ABCDEF0,1300,45,100,55,55,18
+2,4,001,01,ABCD,0ABCDEF0,3100,67,100,40,40,255
+OK

@@ -1,0 +1,4 @@
+# Source: [27.007] +CESQ, [FIBOCOM] §11.1.2 p.145 (nine fields; NR fields 255 on LTE alone); values invented.
+AT+CESQ
++CESQ: 99,99,255,255,20,60,255,255,255
+OK

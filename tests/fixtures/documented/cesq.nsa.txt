@@ -1,0 +1,4 @@
+# Source: [27.007] +CESQ, [FIBOCOM] §11.1.2 p.145 (NR fields valid on EN-DC); values invented.
+AT+CESQ
++CESQ: 99,99,255,255,20,60,60,90,70
+OK

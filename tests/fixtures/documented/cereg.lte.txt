@@ -1,0 +1,4 @@
+# Source: [27.007] +CEREG read form with <n>=2, [FIBOCOM] §11.1.5 p.157 (TAC and cell ID as quoted hex); registered at home on LTE; location values are the documented fakes.
+AT+CEREG?
++CEREG: 2,1,"ABCD","0ABCDEF0",7
+OK

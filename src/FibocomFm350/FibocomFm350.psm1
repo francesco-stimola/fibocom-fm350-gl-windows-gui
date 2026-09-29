@@ -6,3 +6,6 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Transport.ps1')
 . (Join-Path $PSScriptRoot 'SimulatedModem.ps1')
 . (Join-Path $PSScriptRoot 'AtChannel.ps1')
+. (Join-Path $PSScriptRoot 'Measurements.ps1')
+. (Join-Path $PSScriptRoot 'Parsers.ps1')
+. (Join-Path $PSScriptRoot 'Cells.ps1')
