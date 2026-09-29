@@ -1,0 +1,117 @@
+BeforeAll {
+    Import-Module "$PSScriptRoot/../src/FibocomFm350/FibocomFm350.psd1" -Force
+}
+
+AfterAll {
+    Remove-Module FibocomFm350 -ErrorAction SilentlyContinue
+}
+
+Describe 'ConvertTo-GtactBandCode' {
+    It 'encodes <Rat> band <Band> as <Code>' -ForEach @(
+        @{ Rat = 'LTE'; Band = 1; Code = 101 }
+        @{ Rat = 'LTE'; Band = 3; Code = 103 }
+        @{ Rat = 'LTE'; Band = 7; Code = 107 }
+        @{ Rat = 'LTE'; Band = 20; Code = 120 }
+        @{ Rat = 'LTE'; Band = 99; Code = 199 }
+        @{ Rat = 'NR'; Band = 1; Code = 501 }
+        @{ Rat = 'NR'; Band = 9; Code = 509 }
+        @{ Rat = 'NR'; Band = 10; Code = 5010 }
+        @{ Rat = 'NR'; Band = 78; Code = 5078 }
+        @{ Rat = 'NR'; Band = 99; Code = 5099 }
+        @{ Rat = 'NR'; Band = 100; Code = 50100 }
+        @{ Rat = 'NR'; Band = 257; Code = 50257 }
+        @{ Rat = 'NR'; Band = 512; Code = 50512 }
+    ) {
+        ConvertTo-GtactBandCode -Rat $Rat -Band $Band | Should -Be $Code
+    }
+
+    It 'encodes bands from the pipeline, in order' {
+        3, 7, 20 | ConvertTo-GtactBandCode -Rat LTE | Should -Be @(103, 107, 120)
+    }
+
+    # Each refusal guards the round trip: an accepted value here would encode to a code that
+    # decodes as something else (LTE 100 -> 200) or to an undocumented encoding (n513+, UMTS).
+    It 'refuses <Rat> band <Band>' -ForEach @(
+        @{ Rat = 'LTE'; Band = 0 }
+        @{ Rat = 'NR'; Band = 0 }
+        @{ Rat = 'NR'; Band = 513 }
+        @{ Rat = 'UMTS'; Band = 1 }
+    ) {
+        { ConvertTo-GtactBandCode -Rat $Rat -Band $Band } |
+            Should -Throw -ExceptionType ([System.Management.Automation.ParameterBindingException])
+    }
+
+    It 'refuses LTE band <Band> with an error and no output' -ForEach @(
+        @{ Band = 100 }
+        @{ Band = 512 }
+    ) {
+        $output = ConvertTo-GtactBandCode -Rat LTE -Band $Band -ErrorVariable failures -ErrorAction SilentlyContinue
+        $output | Should -BeNullOrEmpty
+        $failures | Should -HaveCount 1
+        $failures[0].FullyQualifiedErrorId | Should -BeLike 'LteBandOutOfRange*'
+        $failures[0].Exception | Should -BeOfType ([System.ArgumentOutOfRangeException])
+    }
+
+    It 'skips a refused LTE band in a pipeline and encodes the rest' {
+        $output = 3, 100, 7 | ConvertTo-GtactBandCode -Rat LTE -ErrorVariable failures -ErrorAction SilentlyContinue
+        $output | Should -Be @(103, 107)
+        $failures | Should -HaveCount 1
+    }
+}
+
+Describe 'ConvertFrom-GtactBandCode' {
+    It 'decodes <Code> as <Kind> <Band>' -ForEach @(
+        @{ Code = 0; Kind = 'AllBands'; Band = $null }
+        @{ Code = 101; Kind = 'LTE'; Band = 1 }
+        @{ Code = 103; Kind = 'LTE'; Band = 3 }
+        @{ Code = 171; Kind = 'LTE'; Band = 71 }
+        @{ Code = 199; Kind = 'LTE'; Band = 99 }
+        @{ Code = 501; Kind = 'NR'; Band = 1 }
+        @{ Code = 5010; Kind = 'NR'; Band = 10 }
+        @{ Code = 5078; Kind = 'NR'; Band = 78 }
+        @{ Code = 50100; Kind = 'NR'; Band = 100 }
+        @{ Code = 50512; Kind = 'NR'; Band = 512 }
+    ) {
+        $decoded = ConvertFrom-GtactBandCode -Code $Code
+        Should -ActualValue $decoded.Kind -Be $Kind
+        Should -ActualValue $decoded.Band -Be $Band
+        Should -ActualValue $decoded.Code -Be $Code
+    }
+
+    It 'keeps unrecognized code <Code> as Unknown with its raw value' -ForEach @(
+        @{ Code = 5 }
+        @{ Code = 100 }
+        @{ Code = 200 }
+        @{ Code = 500 }
+        @{ Code = 5000 }
+        @{ Code = 5001 }
+        @{ Code = 50012 }
+        @{ Code = 50513 }
+        @{ Code = 501000 }
+    ) {
+        $decoded = ConvertFrom-GtactBandCode -Code $Code
+        Should -ActualValue $decoded.Kind -Be 'Unknown'
+        Should -ActualValue $decoded.Band -BeNullOrEmpty
+        Should -ActualValue $decoded.Code -Be $Code
+    }
+
+    It 'refuses a negative code' {
+        { ConvertFrom-GtactBandCode -Code -1 } |
+            Should -Throw -ExceptionType ([System.Management.Automation.ParameterBindingException])
+    }
+}
+
+Describe 'Band code round trip' {
+    It 'decodes every encodable band back to itself' {
+        $bands = @{ LTE = 1..99; NR = 1..512 }
+        $failures = foreach ($rat in $bands.Keys) {
+            foreach ($band in $bands[$rat]) {
+                $decoded = ConvertTo-GtactBandCode -Rat $rat -Band $band | ConvertFrom-GtactBandCode
+                if ($decoded.Kind -ne $rat -or $decoded.Band -ne $band) {
+                    "$rat $band -> $($decoded.Kind) $($decoded.Band)"
+                }
+            }
+        }
+        $failures | Should -BeNullOrEmpty
+    }
+}

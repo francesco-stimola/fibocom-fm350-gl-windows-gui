@@ -1,0 +1,13 @@
+# Claude Code local (machine-specific) settings — never commit
+.claude/settings.local.json
+
+# Raw captures from a real modem: they carry identifiers (IMEI, IMSI, ICCID, cell IDs).
+# Only redacted copies go to tests/fixtures/ — see docs/SETUP.md.
+/captures/
+
+# Release build output
+/dist/
+
+# Pester output
+testResults.xml
+coverage.xml

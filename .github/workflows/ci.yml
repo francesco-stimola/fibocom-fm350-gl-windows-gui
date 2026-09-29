@@ -1,0 +1,43 @@
+name: CI
+
+# Lint + tests on every push to main and every pull request: the same two commands as
+# docs/SETUP.md, on a Windows runner, because the project is Windows-only.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The module manifest requires PowerShell 7.6: if the runner's pwsh is older,
+      # the import fails in the test step. This line makes the reason visible.
+      - name: PowerShell version
+        shell: pwsh
+        run: $PSVersionTable | Format-Table -AutoSize
+
+      # Pinned so a new analyzer rule or Pester release can't turn main red on its own.
+      - name: Install Pester and PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-PSResource -Name Pester -Version 6.2.0 -Scope CurrentUser -TrustRepository -Quiet
+          Install-PSResource -Name PSScriptAnalyzer -Version 1.25.0 -Scope CurrentUser -TrustRepository -Quiet
+
+      - name: Lint
+        shell: pwsh
+        run: |
+          $diagnostics = Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+          $diagnostics | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize -Wrap
+          if ($diagnostics) { throw "$(@($diagnostics).Count) analyzer diagnostic(s)" }
+
+      - name: Test
+        shell: pwsh
+        run: |
+          Import-Module Pester -RequiredVersion 6.2.0
+          Invoke-Pester -Path ./tests -CI
