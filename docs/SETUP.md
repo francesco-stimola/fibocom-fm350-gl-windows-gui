@@ -27,14 +27,15 @@ From the repository root, in `pwsh`:
 
 ```powershell
 Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
-Invoke-Pester -Path ./tests
+Invoke-Pester -Path ./tests -ExcludeTagFilter Hardware
 ```
 
 Both must be clean: zero diagnostics, zero failures. CI (`.github/workflows/ci.yml`) runs the same
 two commands on every push to `main` and every pull request.
 
-- **Plain `Invoke-Pester` needs no modem and no admin rights.** Tests that talk to a real device
-  are tagged `Hardware`; run them explicitly with `Invoke-Pester -Path ./tests -TagFilter Hardware`
+- **This test command needs no modem and no admin rights.** Tests that talk to a real device are
+  tagged `Hardware`, and every documented command excludes them: Pester itself runs every tag
+  unless told otherwise. Run them on purpose with `Invoke-Pester -Path ./tests -TagFilter Hardware`
   on a machine where the modem is attached **and this app is not running** (it would hold the AT
   port).
 - Tests import the module **through its manifest**, the way the app does, so a function missing
@@ -44,7 +45,7 @@ two commands on every push to `main` and every pull request.
 
 | File | What it proves |
 |---|---|
-| `tests/Bands.Tests.ps1` | `AT+GTACT` band codes: encoding matrix per RAT, rejected inputs, decoding matrix, unknown codes kept as-is, full encode→decode round trip. |
+| `tests/Bands.Tests.ps1` | `AT+GTACT` band codes: encoding matrix per RAT, rejected inputs, decoding matrix, unknown codes kept as-is, empty or malformed fields refused (never read as "all bands"), full encode→decode round trip. |
 | `tests/Module.Tests.ps1` | The manifest is valid and exports exactly the public functions. |
 
 ## Fixtures (from M1)

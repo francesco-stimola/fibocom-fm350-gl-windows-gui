@@ -13,7 +13,7 @@ written `(planned)`.
 
 | Milestone | Status |
 |---|---|
-| [M0 — Project setup](#m0) | 🔨 code-complete |
+| [M0 — Project setup](#m0) | ✅ complete |
 | [M1 — Modem protocol](#m1) | 📋 planned |
 | [M2 — Connection](#m2) | 📋 planned |
 | [M3 — Tray app](#m3) | 📋 planned |
@@ -34,7 +34,7 @@ written `(planned)`.
 - [x] CI workflow: lint + tests on every push and pull request.
 - [x] Core module skeleton `src/FibocomFm350` with its first pure function: the `AT+GTACT` band-code codec, with a matrix of tests.
 - [x] Logo (light/dark) from `assets/logo.html`.
-- [ ] First push; CI green on GitHub.
+- [x] First push; CI green on GitHub.
 
 <a id="m1"></a>
 ## M1 — Modem protocol

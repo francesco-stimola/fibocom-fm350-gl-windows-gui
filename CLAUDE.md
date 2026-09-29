@@ -70,12 +70,14 @@ Everything else: **proceed**. Asking permission for routine work is its own fail
 - **Done means clean:**
   ```powershell
   Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
-  Invoke-Pester -Path ./tests
+  Invoke-Pester -Path ./tests -ExcludeTagFilter Hardware
   ```
   Zero diagnostics, zero failures. Every behavior change comes with tests.
-- Tests that need a real modem are tagged `Hardware` and excluded by default.
+- Tests that need a real modem are tagged `Hardware`; every documented test command, CI
+  included, excludes that tag. Run them only on purpose (`docs/SETUP.md`).
 - **When you mutate a file to prove a test bites, run Pester in a child process**
-  (`pwsh -NoProfile -Command "Invoke-Pester ./tests"`) and restore by a literal path. Pester
+  (`pwsh -NoProfile -Command "Invoke-Pester ./tests -ExcludeTagFilter Hardware"`) and restore by
+  a literal path. Pester
   runs inside the caller's session state and can overwrite the caller's variables — a restore
   path held in a variable can end up pointing into Pester's own install.
 - **Only one process may own the modem's AT port.** If the user's own instance of this app is

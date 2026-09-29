@@ -4,6 +4,19 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-09-29 — M0 complete: CI green; review fixes
+
+The first push ran CI on GitHub's Windows runner: lint and tests green. The end-of-milestone review
+found two things, both fixed:
+- **An empty band field decoded as "all bands".** Binding `''` or `' '` to an `[int]` parameter
+  silently yields `0`, and code `0` means automatic band selection: once M5 splits a `+GTACT?`
+  line, a doubled comma would have been written back as `0`, dropping the user's band lock.
+  `ConvertFrom-GtactBandCode` now takes the code as text and accepts only a non-negative integer
+  without leading zeros; tests cover empty, blank, malformed and pipeline input.
+- **"Hardware tests are excluded by default" wasn't true.** Pester runs every tag unless told
+  otherwise, so the first `Hardware` test of M1 would have failed CI on the modem-less runner.
+  CI and every documented test command now pass `-ExcludeTagFilter Hardware`.
+
 ## 2026-09-29 — Vendor AT manual harvested; band codec extended to NR n512
 
 The Fibocom *FM350 AT Commands User Manual* — V2.10 (2023), and V2.2 (2021), whose applicability

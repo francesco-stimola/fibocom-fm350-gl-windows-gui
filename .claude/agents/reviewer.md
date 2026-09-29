@@ -17,8 +17,8 @@ changes you were given (a commit range or a file list).
 
 1. **Run lint and tests**, writing down the expected test count first:
    `Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1` and
-   `pwsh -NoProfile -Command "Invoke-Pester ./tests"` (a child process — Pester can overwrite the
-   caller's variables).
+   `pwsh -NoProfile -Command "Invoke-Pester ./tests -ExcludeTagFilter Hardware"` (a child
+   process — Pester can overwrite the caller's variables).
 2. **Walk this checklist on the changed code only:**
    - **The invariants** in ARCHITECTURE, one by one.
    - **Error paths.** For every resource acquired — COM port, event subscription, runspace,

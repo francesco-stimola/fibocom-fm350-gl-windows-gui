@@ -40,4 +40,5 @@ jobs:
         shell: pwsh
         run: |
           Import-Module Pester -RequiredVersion 6.2.0
-          Invoke-Pester -Path ./tests -CI
+          # The runner has no modem: tests tagged Hardware never run here.
+          Invoke-Pester -Path ./tests -ExcludeTagFilter Hardware -CI
