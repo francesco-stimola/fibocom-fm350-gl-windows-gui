@@ -4,6 +4,25 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-01 — Decided: detect the FCC lock, and offer to unlock it
+
+Modules taken from laptops are often locked by the laptop's maker and never search for networks;
+our own module had to be unlocked before this project's device session (`AT-COMMANDS.md` §4,
+source `[UNLOCK]`). The project had ruled the lock out of scope ("never touched by this app"); the
+maintainer decided otherwise (options considered: detect and explain only; a README note only;
+detect and offer the unlock): **the app detects the lock and offers to unlock it**. Design in
+ARCHITECTURE → *FCC lock*; logic in M2, the window in M3, no escalation in M4.
+- **The lock values explain, they don't gate.** Only the unlocked state of our firmware is known
+  (`0`, `0`, `0,1`); treating every other answer as "locked" could stop a working modem on another
+  firmware. So the diagnosis needs a registration that never starts as well.
+- **No reset unlocks a modem**, so the recovery ladder doesn't escalate on a locked one — the same
+  rule as for a SIM waiting for its PIN.
+- **The unlock writes the modem's non-volatile memory** and lifts a restriction tied to the
+  maker's radio certification: it runs only when the user asks, after a confirmation that says so,
+  once. The scope line "no NV editing" now names this one exception.
+- Our module being unlocked already, the unlock path is proven against the simulated modem; a
+  locked module is needed to test it on hardware and to capture the locked values.
+
 ## 2026-10-01 — M2 defaults decided; the PnP reader moves to M2
 
 Decided by the maintainer before M2 starts (ARCHITECTURE → *Network configuration*):

@@ -62,6 +62,7 @@ Everything needed to talk to the modem and understand its answers — no connect
 - [ ] Per-command timeouts as a pure lookup: each command's worst-case duration from the vendor manual (`AT-COMMANDS.md` §2), never less than 3 s.
 - [ ] Connect sequence: SIM check, data context definition (persistent on the FM350: written only when it differs from the settings), registration, attach, context activation.
 - [ ] SIM PIN (design: ARCHITECTURE → *SIM PIN*): the decision as a pure function with a matrix of tests (SIM state × stored PIN and its SIM × attempts left × already tried → send, ask the user, report, continue); the PIN stored DPAPI-encrypted with the SIM it belongs to; at most one attempt per stored PIN; a PUK never entered by the app.
+- [ ] FCC lock (design: ARCHITECTURE → *FCC lock*): read the three lock values in the connect sequence; the diagnosis as a pure function with a matrix of tests (lock values × registration state and its duration → locked or not) — it explains a registration that never starts and never stops a modem that registers; the unlock sequence, proven against the simulated modem.
 - [ ] Network configuration of the modem's adapter (address, mask, gateway, DNS) in the active store.
 - [ ] Startup reconciliation: attach to an existing connection without re-dialing.
 - [ ] Redacted rolling log.
@@ -75,6 +76,7 @@ Everything needed to talk to the modem and understand its answers — no connect
 - [ ] Single instance (mutex; a second launch shows the first window).
 - [ ] Tray icon rendering with handle disposal; tooltip; menu.
 - [ ] Main window: connection status, signal, cells, carrier aggregation.
+- [ ] FCC lock in the window and the tray: the diagnosis, and *Unlock* for a modem diagnosed as locked, behind a confirmation that says it writes the modem's non-volatile memory and lifts the maker's restriction; never automatic. On hardware with a locked module when one is available — capturing the locked values too.
 - [ ] SIM PIN in the main window: enter or replace the stored PIN; the SIM's state (PIN or PUK required, PIN rejected, attempts left); "remove the PIN from the SIM" (`AT+CLCK="SC",0`) behind a confirmation that says it changes the SIM.
 - [ ] Development mode: the app runs against the simulated modem, without a device and without admin rights (no system changes).
 
@@ -82,7 +84,7 @@ Everything needed to talk to the modem and understand its answers — no connect
 ## M4 — Health & recovery
 
 - [ ] Health checks H1–H7, including a data-path probe bound to the modem's address.
-- [ ] Recovery decision as a pure function (symptoms + history → step), with a matrix of tests.
+- [ ] Recovery decision as a pure function (symptoms + history → step), with a matrix of tests. No escalation for what no reset fixes: a SIM waiting for its PIN or PUK, a modem diagnosed as FCC-locked.
 - [ ] Recovery steps R1–R6 with settle times and backoff (**values: human decision**).
 - [ ] Maintenance windows.
 - [ ] On the device: `AT-COMMANDS.md` §7 question 8 for `+CFUN=1,1` (`+CFUN=15` and `+CFUN=4`/`1` are measured).

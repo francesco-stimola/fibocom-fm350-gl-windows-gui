@@ -45,6 +45,7 @@ A `[DEVICE]` fact names its fixture under `tests/fixtures/device/`.
 | `[LINUX-OPTION]` | Linux kernel patch *"USB: serial: option: add Fibocom FM350-GL"* (Bjørn Mork, June 2024, [LKML](https://lkml.iu.edu/hypermail/linux/kernel/2406.3/04255.html)) — its commit message lists the USB interfaces | GPL-2.0 — facts only |
 | `[UPSTREAM-README]` | [prusa-dev/fibocom-connect-fm350](https://github.com/prusa-dev/fibocom-connect-fm350) — **README only** (usage examples) | No license — facts only, never code |
 | `[DEVICE]` | Responses captured from a real FM350-GL, redacted, in `tests/fixtures/` | Ours |
+| `[UNLOCK]` | The maintainer's FCC unlock of our module, before this project's device session (2026): the commands, their order, the state after. The answers read while the module was locked were not kept. | Ours — first-hand, not captured |
 
 When a source is added, record its exact version or commit here.
 
@@ -185,7 +186,10 @@ allows it (`[3GINFO]`, `[MODEMBAND]`) — never from unlicensed code.
 | Module serial number | `+CFSN?` | 📄 `[FIBOCOM]` §3.16 p.33 | `+CFSN: "<10 characters>"`. **Identifier.** |
 | ICCID | `AT+ICCID` | 📄 `[FIBOCOM]` §3.12 p.29, `[3GINFO]` | Answers `+ICCID: <iccid>`, unquoted; works with the SIM locked. `+CCID` (§3.11) is the same. **Identifier.** |
 | Vendor reset | `AT+CFUN=15` | 📄 `[FIBOCOM]` §4.2 p.48 | Also `+CFUN=<fun>,1`. Whether the USB device re-enumerates, and under which COM number: ❓. `+CPWROFF` (§4.8) switches the modem off with no documented way back — never used. |
-| FCC lock state | `+GTFCCEFFSTATUS?` | 📄 `[FIBOCOM]` §17.3 p.304 | Read-only: `0` locked, `1` unlocked. The lock itself lives in NVRAM and is unlocked by a vendor challenge-response — **never** touched by this app. The device answers **two** values, `+GTFCCEFFSTATUS: 0,1`, which the manual doesn't explain ❓; the radio works over USB regardless (`+CFUN: 1`). |
+| FCC lock state | `+GTFCCEFFSTATUS?` | 📄 `[FIBOCOM]` §17.3 p.304 | Read-only: `0` locked, `1` unlocked. The lock itself lives in NVRAM; the manual unlocks it by a vendor challenge-response. The device answers **two** values, `+GTFCCEFFSTATUS: 0,1`, which the manual doesn't explain ❓, and its test form answers `+CME ERROR`. |
+| FCC lock mode and state | `+GTFCCLOCKMODE?`, `+GTFCCLOCKSTATE?` | ✅ `[DEVICE]` `fcc.unlocked.txt` | Our module, which registers: `+GTFCCLOCKMODE: 0` (test form `(0-2)`), `+GTFCCLOCKSTATE: 0` (`(0-1)`). Read together: `AT+GTFCCLOCKMODE?;+GTFCCLOCKSTATE?;+GTFCCEFFSTATUS?` → `0`, `0`, `0,1`. What the other values mean: ❓. |
+| **A locked module doesn't search for networks.** Modules taken from laptops are commonly locked by the laptop's maker, so that they work only in its machines. | — | `[UNLOCK]` |
+| Unlocking, as done on our module: `AT+GTFCCLOCKMODE=0`, `AT+GTFCCLOCKSTATE=0`, `AT+GTFCCEFFSTATUS=0,0`, `AT&W` (store the profile, `[V.250]`), `AT+CFUN=1,1` (reset). Afterwards the three reads answer `0`, `0`, `0,1` and the module registers. **Writes persistent modem state.** What the three reads answered while the module was locked: ❓ — not kept; to capture on a locked module. | ✅ after the unlock · ❓ before | `[UNLOCK]`; `[DEVICE]` `fcc.unlocked.txt` for the state after |
 
 **Persistent settings the app only reads** (writing any of them is a human decision, see
 `CLAUDE.md`): `+E5GOPT` — which of LTE, 5G SA ("option 2") and 5G NSA ("option 3") are enabled, as

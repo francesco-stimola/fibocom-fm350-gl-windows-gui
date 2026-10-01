@@ -33,7 +33,8 @@ When the link drops, nothing brings it back. This app does both, from the system
   Windows' mobile broadband stack are out of scope.
 - **No redistribution of the modem driver**, nor of any binary whose license doesn't allow it.
   Open-source tools ship only under their own license (lpac, from `v1.1.0` — see *eSIM*).
-- Not a firmware tool: no flashing, no NV editing, no IMEI changes.
+- Not a firmware tool: no flashing, no IMEI changes, no NV editing — with one exception the user
+  asks for explicitly, the FCC unlock (see *FCC lock*).
 
 ## Process model (M3)
 
@@ -178,6 +179,27 @@ let it lock the SIM (facts: `AT-COMMANDS.md` §3):
   fault the recovery ladder can fix: H3 failing for a PIN or PUK escalates nothing; the tray
   shows it.
 
+### FCC lock (M2; unlock offered in M3)
+FM350 modules taken from laptops are often locked by the laptop's maker: a locked module answers
+AT commands but never searches for networks (`AT-COMMANDS.md` §4). Left alone, the app would read
+that as a fault and climb the recovery ladder for nothing.
+- **Read, never assumed.** The connect sequence reads `+GTFCCLOCKMODE?;+GTFCCLOCKSTATE?;
+  +GTFCCEFFSTATUS?` before waiting for registration. Only the unlocked state of our firmware is
+  known (`0`, `0`, `0,1`), so the values **explain a registration that never starts; they never
+  stop a modem that registers**. The diagnosis — FCC values × registration state and how long it
+  has lasted → locked or not — is a pure function with a matrix of tests.
+- **No escalation.** A modem diagnosed as locked is not reset by the recovery ladder: no reset
+  unlocks it. The tray and the window say what it is.
+- **Unlock, only when asked.** For a modem diagnosed as locked the window offers *Unlock*, behind
+  a confirmation that says it writes the modem's non-volatile memory and lifts a restriction the
+  laptop's maker set for its radio certification, at the user's responsibility. The app then runs
+  the known sequence once — `AT+GTFCCLOCKMODE=0`, `AT+GTFCCLOCKSTATE=0`, `AT+GTFCCEFFSTATUS=0,0`,
+  `AT&W`, `AT+CFUN=1,1` — waits for the modem to come back on USB, reads the three values again
+  and reports. Never automatic, never repeated by itself.
+- **Tested where it can be.** Our module is already unlocked, so the unlock path is proven against
+  the simulated modem; on hardware it waits for a locked module, which is also how the locked
+  values get captured.
+
 ## Health checks and the recovery ladder (M4)
 
 **Health checks**, from cheapest to most expensive:
@@ -204,6 +226,8 @@ the checks keep failing after each step's settle time:
 | R5 | Modem reset (`+CFUN=15`) | R4 failed | Device re-enumerates on USB. |
 | R6 | Restart the USB device (`pnputil /restart-device`) | H2 with H1 passing | Device re-enumerates. |
 
+- **What no reset fixes is not escalated**: a SIM waiting for its PIN or PUK (*SIM PIN*), a modem
+  locked by its maker (*FCC lock*). The tray says what it is instead.
 - The checks **read** the state; they don't wait for unsolicited codes. The FM350 doesn't send
   every report it is asked for — no `+CSCON`, `+CGREG` or `+C5GREG` code was seen while the state
   changed (`AT-COMMANDS.md` §2) — so a code is a hint to read sooner, never the only source.
