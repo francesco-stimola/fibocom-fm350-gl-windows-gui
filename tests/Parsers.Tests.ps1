@@ -156,6 +156,28 @@ Describe 'ConvertFrom-AtRegistration' {
     }
 }
 
+Describe 'ConvertFrom-AtRegistration on read answers' {
+    It 'reads nothing from a read answer that carries <n> alone, as +C5GREG? does with <n> 0' {
+        ConvertFrom-AtRegistration -Line '+C5GREG: 0' -ReadAnswer | Should -BeNullOrEmpty
+        (ConvertFrom-AtRegistration -Line (Get-FixtureAnswer -Name 'c5greg.nosim.txt' -Folder device)[0] -ReadAnswer) | Should -BeNullOrEmpty
+    }
+
+    It 'reads <Line> as stat <Stat>' -ForEach @(
+        @{ Line = '+CEREG: 0,1'; Stat = 1 }
+        @{ Line = '+CEREG: 2,1,"ABCD","0ABCDEF0",13'; Stat = 1 }
+        @{ Line = '+C5GREG: 0,4'; Stat = 4 }
+    ) {
+        (ConvertFrom-AtRegistration -Line $Line -ReadAnswer).Stat | Should -Be $Stat
+    }
+
+    It 'takes the read answers of a compound line from the pipeline' {
+        $registrations = @('+CEREG: 0,1', '+C5GREG: 0' | ConvertFrom-AtRegistration -ReadAnswer)
+        $registrations.Count | Should -Be 1
+        $registrations[0].Domain | Should -Be 'EPS'
+        $registrations[0].Registered | Should -BeTrue
+    }
+}
+
 Describe 'ConvertFrom-AtOperator' {
     It 'reads <Fixture> as <Technology>' -ForEach @(
         @{ Fixture = 'cops.lte.txt'; AcT = 7; Technology = 'LTE' }

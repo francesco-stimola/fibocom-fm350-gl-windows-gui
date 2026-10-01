@@ -1,0 +1,5 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06; credentials set on context 1 with AT+CGAUTH=1,1,"probe","probe": the read form gives the password back in clear.
+AT+CGAUTH?
++CGAUTH: 1,1,"probe","probe"
++CGAUTH: 0,0,"",""
+OK

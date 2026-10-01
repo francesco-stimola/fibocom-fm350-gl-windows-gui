@@ -61,7 +61,7 @@ BeforeAll {
     # Commands that change the modem's state.
     function Get-WriteCommand {
         param($Modem)
-        @($Modem.Received | Where-Object { $_ -match '=' -and $_ -notmatch '=\?$' -and $_ -notin 'AT+CMEE=1' -and $_ -notmatch '^AT\+(CGCONTRDP|GTDNS)=' })
+        @($Modem.Received | Where-Object { $_ -match '=' -and $_ -notmatch '=\?$' -and $_ -notin 'AT+CMEE=1' -and $_ -notmatch '^AT\+(CGCONTRDP|CGPADDR|GTDNS)=' })
     }
 }
 
@@ -77,9 +77,22 @@ Describe 'Invoke-ModemConnect' {
         $script:logFolder = Join-Path $TestDrive "logs-$([guid]::NewGuid())"
         $script:adapterState = $script:configuredAdapter
         Mock -ModuleName FibocomFm350 Get-ModemAdapterState { $script:adapterState }
+        # Applies the plan to the adapter as Get-ModemAdapterState will read it next.
         Mock -ModuleName FibocomFm350 Set-ModemAdapterConfiguration {
-            $script:adapterState = $script:configuredAdapter
-            foreach ($action in $Plan.Actions) { [pscustomobject]@{ Action = $action.Action; Done = $true; Error = $null } }
+            $state = $script:adapterState | Select-Object -Property *
+            foreach ($action in $Plan.Actions) {
+                switch ($action.Action) {
+                    'DisableDhcp' { $state.Dhcp = 'Disabled' }
+                    'RemoveAddress' { $state.Addresses = @($state.Addresses | Where-Object Address -NE $action.Address) }
+                    'SetAddress' { $state.Addresses = @($state.Addresses) + [pscustomobject]@{ Address = $action.Address; PrefixLength = $action.PrefixLength; Origin = 'Manual' } }
+                    'RemoveGateway' { $state.Gateways = @($state.Gateways | Where-Object { $_ -ne $action.NextHop }) }
+                    'SetGateway' { $state.Gateways = @($state.Gateways) + $action.NextHop }
+                    'SetDns' { $state.DnsServers = $action.Servers }
+                    'SetMetric' { $state.InterfaceMetric = $action.Metric; $state.AutomaticMetric = $false }
+                }
+                [pscustomobject]@{ Action = $action.Action; Done = $true; Error = $null }
+            }
+            $script:adapterState = $state
         }
         # One pass on a channel the worker keeps open; $connect opens and closes one around it.
         $script:pass = {
@@ -151,6 +164,45 @@ Describe 'Invoke-ModemConnect' {
             $pass.State | Should -Be 'Online'
             $pass.SettingsPending | Should -BeTrue
             Get-WriteCommand -Modem $modem | Should -BeNullOrEmpty
+        }
+
+        It 'asks for the APN when the network put the app''s context on the IMS APN, and writes nothing' {
+            $modem = Get-OnlineModem -Answers @{ 'AT+CGCONTRDP=1' = Get-FixtureLine 'device/cgcontrdp.app-ims.txt' }
+            $pass = & $script:connect $modem
+            $pass.State | Should -Be 'Registered'
+            $pass.Reason | Should -Be 'ApnNeeded'
+            $pass.Blocked | Should -BeTrue
+            Get-WriteCommand -Modem $modem | Should -BeNullOrEmpty
+        }
+
+        It 'asks for the APN, and leaves the adapter alone, when the IMS APN came with an IPv4 address' {
+            $script:adapterState = $script:freshAdapter
+            $modem = Get-OnlineModem -Answers @{
+                'AT+CGCONTRDP=1' = Get-FixtureLine 'device/cgcontrdp.app-ims.txt'
+                'AT+CGPADDR=1'   = Get-FixtureLine 'device/cgpaddr.app-ims.txt'
+            }
+            $pass = & $script:connect $modem
+            $pass.Observation.ContextAddress | Should -Be '192.0.2.77'
+            $pass.State | Should -Be 'Registered'
+            $pass.Reason | Should -Be 'ApnNeeded'
+            Get-WriteCommand -Modem $modem | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName FibocomFm350 Set-ModemAdapterConfiguration -Times 0 -Exactly
+        }
+
+        It 'moves a context without an address to the APN of the settings: deactivate, define, activate' {
+            $script:settings = (ConvertTo-AppSetting -InputObject @{ Apn = 'internet.example' }).Settings
+            $modem = Get-OnlineModem -Answers @{ 'AT+CGCONTRDP=1' = Get-FixtureLine 'device/cgcontrdp.app-ims.txt' }
+            $modem.Script('AT+CGACT=0,1', @{ Lines = @('OK'); Then = @{ 'AT+CGACT?' = @('OK') } })
+            $modem.Script('AT+CGDCONT=1,"IPV4V6","internet.example"', @{ Lines = @('OK'); Then = @{ 'AT+CGDCONT?' = @('+CGDCONT: 1,"IPV4V6","internet.example","",0,0', 'OK') } })
+            $modem.Script('AT+CGACT=1,1', @{ Lines = @('OK'); Then = @{
+                        'AT+CGACT?'      = Get-FixtureLine 'documented/cgact.active.txt'
+                        'AT+CGCONTRDP=1' = Get-FixtureLine 'documented/cgcontrdp.data.txt'
+                    }
+                })
+            $pass = & $script:connect $modem
+            $pass.Steps.Action | Should -Be @('Initialize', 'DeactivateContext', 'DefineContext', 'ActivateContext')
+            $pass.State | Should -Be 'Online'
+            Get-WriteCommand -Modem $modem | Should -Be @('AT+CGACT=0,1', 'AT+CGDCONT=1,"IPV4V6","internet.example"', 'AT+CGACT=1,1')
         }
 
         It 'turns the radio on, then waits for the registration' {
@@ -295,6 +347,31 @@ Describe 'Invoke-ModemConnect' {
             $modem.Received | Should -Not -Contain 'AT+CPIN="1234"'
         }
 
+        It 'reads the attempts left from +EPINC where +CPINR is absent, as on the FM350' {
+            $answers = $script:locked.Clone()
+            $answers['AT+CPINR'] = Get-FixtureLine 'device/cpinr.absent.txt'
+            $answers['AT+EPINC?'] = @('+EPINC: 1, 3, 10, 10', 'OK')
+            $modem = Get-OnlineModem -Answers $answers
+            $pass = & $script:connect $modem
+            $pass.Reason | Should -Be 'LastAttempt'
+            $modem.Received | Should -Not -Contain 'AT+CPIN="1234"'
+        }
+
+        It 'enters the PIN as captured: SIM PIN, no +CPINR, +EPINC, then busy for a moment' {
+            $answers = $script:locked.Clone()
+            $answers['AT+CPIN?'] = Get-FixtureLine 'device/cpin.pin.txt'
+            $answers['AT+CPINR'] = Get-FixtureLine 'device/cpinr.absent.txt'
+            $answers['AT+EPINC?'] = Get-FixtureLine 'device/epinc.txt'
+            $modem = Get-OnlineModem -Answers $answers
+            $modem.Script('AT+CPIN="1234"', @{ Lines = @('OK'); Then = @{ 'AT+CPIN?' = Get-FixtureLine 'device/cpin.busy.txt' } })
+            $pass = & $script:connect $modem
+            $pass.Steps.Action | Should -Be @('Initialize', 'EnterPin')
+            $pass.State | Should -Be 'Identified'
+            $pass.Reason | Should -Be 'SimBusy'
+            $pass.Blocked | Should -BeFalse
+            (Get-SimPin -Path $script:pinPath).Attempted | Should -BeFalse
+        }
+
         It 'sends nothing to another SIM' {
             Save-SimPin -Pin (ConvertTo-TestSecret '1234') -Iccid '8900100000000000001' -Path $script:pinPath
             $modem = Get-OnlineModem -Answers $script:locked
@@ -380,13 +457,32 @@ Describe 'Invoke-ModemConnect' {
             $pass.Dropped | Should -BeTrue
         }
 
-        It 'reports an adapter it cannot configure from what the modem says' {
+        It 'takes the address from +CGPADDR when +CGCONTRDP leaves it out, as the FM350 does' {
             $script:adapterState = $script:freshAdapter
-            $modem = Get-OnlineModem -Answers @{ 'AT+CGCONTRDP=1' = @('+CGCONTRDP: 1,6,"internet","198.51.100.23.255.255.255.0","","203.0.113.53",""', 'OK') }
+            $modem = Get-OnlineModem -Answers @{
+                'AT+CGCONTRDP=1' = Get-FixtureLine 'device/cgcontrdp.app.txt'
+                'AT+CGPADDR=1'   = Get-FixtureLine 'device/cgpaddr.app.txt'
+            }
             $pass = & $script:connect $modem
-            $pass.State | Should -Be 'DataActive'
-            $pass.Reason | Should -Be 'NoGateway'
-            Should -Invoke -ModuleName FibocomFm350 Set-ModemAdapterConfiguration -Times 0 -Exactly
+            $pass.State | Should -Be 'Online'
+            $pass.Observation.ContextAddress | Should -Be '192.0.2.53'
+            Should -Invoke -ModuleName FibocomFm350 Set-ModemAdapterConfiguration -Times 1 -Exactly -ParameterFilter {
+                $set = $Plan.Actions | Where-Object Action -EQ 'SetAddress'
+                $route = $Plan.Actions | Where-Object Action -EQ 'SetGateway'
+                $set.Address -eq '192.0.2.53' -and $set.PrefixLength -eq 32 -and $route.NextHop -eq '0.0.0.0'
+            }
+        }
+
+        It 'stays without an address when neither +CGCONTRDP nor +CGPADDR gives one' {
+            $modem = Get-OnlineModem -Answers @{
+                'AT+CGCONTRDP=1' = Get-FixtureLine 'device/cgcontrdp.app.txt'
+                'AT+CGPADDR=1'   = @('+CGPADDR: 1,"0.0.0.0.0.0.0.0.32.1.13.184.0.0.0.1",""', 'OK')
+            }
+            $script:settings = (ConvertTo-AppSetting -InputObject @{ Apn = 'internet' }).Settings
+            $modem.SetAnswer('AT+CGDCONT?', @('+CGDCONT: 1,"IPV4V6","internet","",0,0', 'OK'))
+            $pass = & $script:connect $modem
+            $pass.State | Should -Be 'Registered'
+            $pass.Reason | Should -Be 'NoAddress'
         }
 
         It 'takes the DNS servers from +GTDNS when the context has none' {
@@ -463,5 +559,25 @@ Describe 'Disable-SimPin' {
     It 'goes ahead when the modem cannot tell the attempts left' {
         $script:modem.SetAnswer('AT+CPINR', @('+CME ERROR: 100'))
         (Disable-SimPin -Channel $script:channel -Pin $script:pin -Confirm:$false).Result | Should -Be 'Disabled'
+    }
+
+    Context 'where +CPINR is absent, as on the FM350' {
+        BeforeEach {
+            $script:modem.SetAnswer('AT+CPINR', @('+CME ERROR: 100'))
+        }
+
+        It 'reports a wrong PIN and the attempts left from +EPINC' {
+            $script:modem.SetAnswer('AT+EPINC?', @('+EPINC: 3, 3, 10, 10', 'OK'))
+            $script:modem.SetAnswer('AT+CLCK="SC",0,"1234"', @('+CME ERROR: 16'))
+            $result = Disable-SimPin -Channel $script:channel -Pin $script:pin -Confirm:$false
+            $result.Result | Should -Be 'PinRejected'
+            $result.AttemptsLeft | Should -Be 2
+        }
+
+        It 'sends nothing with one attempt left on +EPINC' {
+            $script:modem.SetAnswer('AT+EPINC?', @('+EPINC: 1, 3, 10, 10', 'OK'))
+            (Disable-SimPin -Channel $script:channel -Pin $script:pin -Confirm:$false).Result | Should -Be 'LastAttempt'
+            $script:modem.Received | Should -Not -Contain 'AT+CLCK="SC",0,"1234"'
+        }
     }
 }

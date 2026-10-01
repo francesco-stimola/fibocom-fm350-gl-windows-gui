@@ -9,6 +9,10 @@ $script:ConnectionStates = @('NoDevice', 'PortOpen', 'Identified', 'SimReady', '
 # (AT-COMMANDS section 3).
 $script:DataContextId = 1
 
+# The IMS APN as +CGCONTRDP names it: the network identifier 'ims', with or without the operator
+# identifier 'mnc<MNC>.mcc<MCC>.gprs' (AT-COMMANDS section 3). It carries no internet traffic.
+$script:ImsApnPattern = '^ims(\.mnc\d{3}\.mcc\d{3}\.gprs)?$'
+
 function Resolve-ConnectionState {
     <#
     .SYNOPSIS
@@ -27,7 +31,8 @@ function Resolve-ConnectionState {
         - RadioOn: +CFUN is 1. OperatorMode: +COPS's mode (2: deregistered by a command).
         - Registered, RegistrationState: from +CEREG / +C5GREG.
         - ContextDefined: the app's context is defined as the settings say. ContextActive,
-          ContextAddress: it is active, with this IPv4 address.
+          ContextAddress, ContextApn: it is active, with this IPv4 address, on this APN (as the
+          network reports it). ApnSet: the settings name an APN (empty: the subscription's own).
         - Adapter: 'Present' or 'Absent' (the modem's network adapter). AdapterConfigured: its
           configuration matches the context and the settings. AdapterProblem: why it can't be
           configured from what the modem reports.
@@ -37,11 +42,18 @@ function Resolve-ConnectionState {
         - State: 'NoDevice', 'PortOpen', 'Identified', 'SimReady', 'Registered', 'DataActive' or
           'Online'.
         - Action: the next step - 'OpenPort', 'Initialize', 'EnterPin', 'RadioOn',
-          'AutoRegister', 'DefineContext', 'ActivateContext', 'ConfigureAdapter' - or 'None'.
+          'AutoRegister', 'DefineContext', 'ActivateContext', 'DeactivateContext',
+          'ConfigureAdapter' - or 'None'.
         - Reason: why there is no step to take, or $null.
         - Blocked: $true when what stops the connection is out of the app's reach - no device or
-          driver, a SIM waiting for the user, an FCC lock: no recovery step changes it, so none
-          is escalated (ARCHITECTURE -> Health checks).
+          driver, a SIM waiting for the user, an FCC lock, an APN the user must give: no
+          recovery step changes it, so none is escalated (ARCHITECTURE -> Health checks).
+
+        A context that is active without an IPv4 address, or on the IMS APN, carries no internet
+        traffic. With an empty APN in the settings, the network chose the APN - on some networks
+        the IMS one, with or without an address: the reason is then 'ApnNeeded'. When it differs
+        from the settings, it is deactivated, to be defined and activated as they say: nothing
+        that works is broken.
         - Dropped: $true when -Previous was a further state than this one.
         - SettingsPending: the context is active but not as the settings say; it is left as it
           is - the new settings apply at the next connect.
@@ -131,7 +143,14 @@ function Resolve-ConnectionState {
     if (-not $contextActive) {
         return & $outcome 'Registered' 'ActivateContext' $null $false
     }
-    if (-not (& $fact 'ContextAddress')) {
+    # -match compares without case: APNs are not case-sensitive.
+    if (-not (& $fact 'ContextAddress') -or [string](& $fact 'ContextApn') -match $script:ImsApnPattern) {
+        if ((& $fact 'ContextDefined') -eq $false) {
+            return & $outcome 'Registered' 'DeactivateContext' $null $false
+        }
+        if ((& $fact 'ApnSet') -eq $false) {
+            return & $outcome 'Registered' 'None' 'ApnNeeded' $true
+        }
         return & $outcome 'Registered' 'None' 'NoAddress' $false
     }
 
@@ -189,7 +208,7 @@ function Get-ModemObservation {
     $facts = [ordered]@{
         Device = 'Present'; PortOpen = $true; Responsive = $null; Sim = $null; Fcc = $null
         RadioOn = $null; OperatorMode = $null; Registered = $null; RegistrationState = $null
-        ContextDefined = $null; ContextActive = $null; ContextAddress = $null
+        ContextDefined = $null; ContextActive = $null; ContextAddress = $null; ContextApn = $null; ApnSet = [bool]$Settings.Apn
         Adapter = $null; AdapterConfigured = $null; AdapterProblem = $null; DataPath = $null
     }
     $result = [pscustomobject]@{ Facts = $null; Context = $null; AdapterState = $null; AdapterPlan = $null }
@@ -225,10 +244,7 @@ function Get-ModemObservation {
     if ($sim.State -eq 'PinRequired' -and $stored) {
         $iccid = ConvertFrom-AtIccid -Lines (& $ask 'AT+ICCID').Lines
         $stored = Get-SimPin -Path $SimPinPath -Iccid $iccid
-        $retry = ConvertFrom-AtPinRetry -Lines (& $ask 'AT+CPINR').Lines | Where-Object Code -EQ 'SIM PIN' | Select-Object -First 1
-        if ($retry) {
-            $attemptsLeft = $retry.Retries
-        }
+        $attemptsLeft = Get-SimPinAttemptsLeft -Ask $ask
         if (& $stopped) {
             return & $finish
         }
@@ -246,7 +262,7 @@ function Get-ModemObservation {
     if ($null -ne $fun) {
         $facts.RadioOn = $fun -eq 1
     }
-    $registrations = @((& $ask 'AT+CEREG?;+C5GREG?').Lines | ConvertFrom-AtRegistration)
+    $registrations = @((& $ask 'AT+CEREG?;+C5GREG?').Lines | ConvertFrom-AtRegistration -ReadAnswer)
     if (& $stopped) {
         return & $finish
     }
@@ -282,6 +298,14 @@ function Get-ModemObservation {
         return & $finish
     }
     $context = ConvertFrom-AtContextParameter -Lines (& $ask "AT+CGCONTRDP=$script:DataContextId").Lines | Where-Object Cid -EQ $script:DataContextId | Select-Object -First 1
+    if ($context -and -not $context.IPv4Address) {
+        # The FM350 leaves the address out of +CGCONTRDP for a data context; +CGPADDR has it
+        # (AT-COMMANDS section 3).
+        $address = ConvertFrom-AtContextAddress -Lines (& $ask "AT+CGPADDR=$script:DataContextId").Lines | Where-Object Cid -EQ $script:DataContextId | Select-Object -First 1
+        if ($address) {
+            $context.IPv4Address = $address.IPv4Address
+        }
+    }
     if ($context -and @($context.Dns).Count -eq 0) {
         $servers = ConvertFrom-AtDnsServer -Lines (& $ask "AT+GTDNS=$script:DataContextId").Lines | Where-Object Cid -EQ $script:DataContextId | Select-Object -First 1
         if ($servers) {
@@ -290,6 +314,7 @@ function Get-ModemObservation {
     }
     $result.Context = $context
     $facts.ContextAddress = if ($context) { $context.IPv4Address } else { $null }
+    $facts.ContextApn = if ($context) { $context.Apn } else { $null }
 
     # The adapter.
     $adapter = if ($AdapterInstanceId) { Get-ModemAdapterState -InstanceId $AdapterInstanceId } else { $null }
@@ -367,6 +392,9 @@ function Invoke-ConnectionStep {
         'DefineContext' {
             if ((& $send ('AT+CGDCONT={0},"{1}","{2}"' -f $cid, $Settings.PdpType, $Settings.Apn)).Status -eq 'OK') { $result = 'Done' }
         }
+        'DeactivateContext' {
+            if ((& $send "AT+CGACT=0,$cid").Status -eq 'OK') { $result = 'Done' }
+        }
         'ActivateContext' {
             $authenticated = $true
             if ($Settings.ApnAuthentication -ne 'None') {
@@ -408,8 +436,9 @@ function Invoke-ModemConnect {
 
         The steps: enter the stored SIM PIN (once, under Resolve-SimPinAction's rules); turn the
         radio on; automatic operator selection; define the app's context (written only when it
-        differs from the settings: it is persistent); set its authentication and activate it;
-        configure the adapter (administrator rights).
+        differs from the settings: it is persistent); deactivate it when it is active without an
+        address and differs from the settings; set its authentication and activate it; configure
+        the adapter (administrator rights).
 
         Returns State, Action (the step still missing), Reason, Blocked, Dropped,
         SettingsPending (as Resolve-ConnectionState), Steps (the steps run, their commands

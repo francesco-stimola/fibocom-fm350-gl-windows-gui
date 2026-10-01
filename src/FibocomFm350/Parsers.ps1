@@ -201,15 +201,23 @@ function ConvertFrom-AtRegistration {
         and CSFB-not-preferred included), Tac and CellId as reported (location data; $null for
         the modem's "not known" pattern of F digits), AcT and Technology, and RejectCause when the
         report carries one. Returns $null if the line is not a registration report.
+
+        -ReadAnswer says the line answers a read command, whose first value is always <n>. The
+        FM350 answers '+C5GREG: 0' alone when <n> is 0: no status at all, so nothing is returned
+        - without the switch that line would read as a URC saying "not searching".
     .EXAMPLE
         ConvertFrom-AtRegistration -Line '+CEREG: 2,1,"ABCD","0ABCDEF0",7'
+    .EXAMPLE
+        (Invoke-AtCommand -Channel $channel -Command 'AT+CEREG?;+C5GREG?').Lines | ConvertFrom-AtRegistration -ReadAnswer
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory, ValueFromPipeline)]
         [AllowEmptyString()]
-        [string] $Line
+        [string] $Line,
+
+        [switch] $ReadAnswer
     )
 
     process {
@@ -218,7 +226,7 @@ function ConvertFrom-AtRegistration {
         }
         $domain = @{ CREG = 'CS'; CGREG = 'PS'; CEREG = 'EPS'; C5GREG = '5GS' }[$Matches['prefix']]
         $arguments = @(Split-AtArgument -Text $Matches['rest'])
-        $readForm = $arguments.Count -ge 2 -and -not $arguments[1].Quoted -and $arguments[1].Value -match '^\d+$'
+        $readForm = $ReadAnswer -or ($arguments.Count -ge 2 -and -not $arguments[1].Quoted -and $arguments[1].Value -match '^\d+$')
         if ($readForm) {
             $arguments = @($arguments | Select-Object -Skip 1)
         }

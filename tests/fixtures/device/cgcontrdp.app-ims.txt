@@ -1,0 +1,4 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06; SIM in, LTE, the app's context 1 defined with an empty APN and active: the network put it on the IMS APN, with no IPv4 address; operator replaced by 001/01, address by a documentation one.
+AT+CGCONTRDP=1
++CGCONTRDP: 1,6,"ims.mnc001.mcc001.gprs","","","192.0.2.53","","","",0,,1500,,,,,,,,,,,,0
+OK

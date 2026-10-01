@@ -276,3 +276,41 @@ function ConvertFrom-AtDnsServer {
         }
     }
 }
+
+function ConvertFrom-AtContextAddress {
+    <#
+    .SYNOPSIS
+        Reads a context's addresses from the answer to AT+CGPADDR=<cid>.
+    .DESCRIPTION
+        '+CGPADDR: <cid>,<address 1>[,<address 2>]', each address in dotted numbers: 4 for
+        IPv4, 16 for IPv6 (or IPv6 in text form). The family is told by the address, not by its
+        position: a context with IPv6 alone gives it first. Returns one object per context: Cid,
+        IPv4Address and IPv6Address ($null when absent).
+    .EXAMPLE
+        ConvertFrom-AtContextAddress -Lines '+CGPADDR: 1,"198.51.100.23",""'
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [AllowEmptyString()]
+        [string[]] $Lines
+    )
+
+    foreach ($text in Get-AtPrefixedLine -Lines $Lines -Prefix '+CGPADDR') {
+        $arguments = @(Split-AtArgument -Text $text)
+        $cid = ConvertTo-AtInteger -Text $arguments[0].Value
+        if ($null -eq $cid) {
+            continue
+        }
+        $addresses = @($arguments | Select-Object -Skip 1 | ForEach-Object { ConvertFrom-AtAddressField -Text $_.Value } | Where-Object { $_ })
+        $ipv4 = $addresses | Where-Object Family -EQ 'IPv4' | Select-Object -First 1
+        $ipv6 = $addresses | Where-Object Family -EQ 'IPv6' | Select-Object -First 1
+        [pscustomobject]@{
+            Cid         = $cid
+            IPv4Address = if ($ipv4) { $ipv4.Address } else { $null }
+            IPv6Address = if ($ipv6) { $ipv6.Address } else { $null }
+        }
+    }
+}

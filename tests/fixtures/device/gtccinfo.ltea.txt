@@ -1,0 +1,11 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06, SIM in, automatic mode; under traffic: an LTE serving cell and one neighbour, and LTE-A with three secondary carriers ('SCC <n>:' with a blank), no NR leg listed; location replaced by fakes, PCIs invented, operator replaced by 001/01.
+AT+GTCCINFO?;+GTCAINFO?
++GTCCINFO:
+1,4,001,01,ABCD,00ABCDEF0,1850,123,103,100,4,44,44,14
+2,4,,,FFFF,00FFFFFFF,1850,130,,42,42,10
++GTCAINFO:
+PCC:103,123,1850,100,100,2,1,1,3,-96
+SCC 1:2,1,107,137,3025,75,50,1,1,2,3,-96
+SCC 2:2,0,101,144,525,75,255,2,255,1,255,-96
+SCC 3:2,0,120,151,6400,50,255,1,255,2,255,-96
+OK

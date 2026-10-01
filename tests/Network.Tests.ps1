@@ -124,22 +124,42 @@ Describe 'Resolve-AdapterConfiguration' {
         (Resolve-AdapterConfiguration -Context $script:context -Adapter $adapter -Settings $script:settings).Actions.Action | Should -Be @('SetDns')
     }
 
-    It 'keeps a default route already there when the modem reports no gateway' {
+    It 'gives the address alone, as the FM350 does: a /32 and an on-link default route' {
+        $context = ConvertFrom-AtContextParameter -Lines (Get-FixtureAnswer -Name 'cgcontrdp.app.txt' -Folder device)
+        $context.IPv4Address = (ConvertFrom-AtContextAddress -Lines (Get-FixtureAnswer -Name 'cgpaddr.app.txt' -Folder device)).IPv4Address
+        $plan = Resolve-AdapterConfiguration -Context $context -Adapter (Get-TestAdapter) -Settings $script:settings
+        $plan.Problem | Should -BeNullOrEmpty
+        $plan.Actions.Action | Should -Be @('DisableDhcp', 'SetAddress', 'SetGateway', 'SetDns', 'SetMetric')
+        $plan.Actions[1].Address | Should -Be '192.0.2.53'
+        $plan.Actions[1].PrefixLength | Should -Be 32
+        $plan.Actions[2].NextHop | Should -Be '0.0.0.0'
+        $plan.Actions[3].Servers | Should -Be @('192.0.2.53', '192.0.2.54')
+    }
+
+    It 'plans nothing more once the /32 and the on-link route are there' {
+        $context = $script:context | Select-Object -Property *
+        $context.IPv4PrefixLength = $null
+        $context.IPv4Gateway = $null
+        $adapter = Get-TestConfiguredAdapter -Change @{
+            Addresses = @([pscustomobject]@{ Address = '198.51.100.23'; PrefixLength = 32; Origin = 'Manual' })
+            Gateways  = @('0.0.0.0')
+        }
+        (Resolve-AdapterConfiguration -Context $context -Adapter $adapter -Settings $script:settings).Configured | Should -BeTrue
+    }
+
+    It 'replaces a gateway route with an on-link one when the modem reports no gateway' {
         $context = $script:context | Select-Object -Property *
         $context.IPv4Gateway = $null
         $plan = Resolve-AdapterConfiguration -Context $context -Adapter (Get-TestConfiguredAdapter) -Settings $script:settings
-        $plan.Configured | Should -BeTrue
+        $plan.Actions.Action | Should -Be @('RemoveGateway', 'SetGateway')
+        $plan.Actions[1].NextHop | Should -Be '0.0.0.0'
     }
 
-    It 'plans nothing and says why: <Problem>' -ForEach @(
-        @{ Problem = 'NoAddress'; Change = @{ IPv4Address = $null } }
-        @{ Problem = 'NoMask'; Change = @{ IPv4PrefixLength = $null } }
-        @{ Problem = 'NoGateway'; Change = @{ IPv4Gateway = $null } }
-    ) {
+    It 'plans nothing and says why when the modem reports no IPv4 address' {
         $context = $script:context | Select-Object -Property *
-        foreach ($key in $Change.Keys) { $context.$key = $Change[$key] }
+        $context.IPv4Address = $null
         $plan = Resolve-AdapterConfiguration -Context $context -Adapter (Get-TestAdapter) -Settings $script:settings
-        $plan.Problem | Should -Be $Problem
+        $plan.Problem | Should -Be 'NoAddress'
         $plan.Configured | Should -BeFalse
         $plan.Actions | Should -BeNullOrEmpty
     }
@@ -183,7 +203,7 @@ Describe 'Get-ModemAdapterState' {
         $state.AutomaticMetric | Should -BeFalse
         $state.Addresses[0].Address | Should -Be '198.51.100.23'
         $state.Addresses[0].Origin | Should -Be 'Manual'
-        $state.Gateways | Should -Be @('198.51.100.1')
+        $state.Gateways | Should -Be @('198.51.100.1', '0.0.0.0')
         $state.DnsServers | Should -Be @('203.0.113.53', '203.0.113.54', '2001:db8::53')
         Should -Invoke -ModuleName FibocomFm350 Get-NetIPAddress -ParameterFilter { $InterfaceIndex -eq 12 }
     }

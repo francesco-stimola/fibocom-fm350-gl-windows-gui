@@ -1,0 +1,3 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06; AT+CPINR is not supported (also with ="SIM PIN" and =?): CME 100.
+AT+CPINR
++CME ERROR: 100

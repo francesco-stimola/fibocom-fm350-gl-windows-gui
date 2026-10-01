@@ -1,0 +1,4 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06; SIM with its PIN request on, PIN not yet entered (the same before and after it): the first field is the SIM PIN attempts left.
+AT+EPINC?
++EPINC: 3, 3, 10, 10
+OK

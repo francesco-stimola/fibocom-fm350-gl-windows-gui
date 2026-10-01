@@ -1,0 +1,4 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06; the app's context 1 on the operator's internet APN: no address, mask or gateway - the DNS servers only; operator replaced by 001/01, APN by 'internet', addresses by documentation ones.
+AT+CGCONTRDP=1
++CGCONTRDP: 1,6,"internet.mnc001.mcc001.gprs","","","192.0.2.53","192.0.2.54","","",0,,1500,,,,,,,,,,,,0
+OK

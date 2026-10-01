@@ -39,6 +39,46 @@ function ConvertFrom-AtPinRetry {
     }
 }
 
+function ConvertFrom-AtPinCounter {
+    <#
+    .SYNOPSIS
+        Reads how many SIM PIN attempts are left from the answer to AT+EPINC?.
+    .DESCRIPTION
+        The FM350's own counters, where AT+CPINR is absent: '+EPINC: <a>, <b>, <c>, <d>'. Only
+        the first is known - SIM PIN attempts left (AT-COMMANDS section 3) - so only it is
+        returned, shaped as ConvertFrom-AtPinRetry's objects: Code 'SIM PIN', Retries,
+        DefaultRetries $null. Nothing without a readable first field.
+    .EXAMPLE
+        ConvertFrom-AtPinCounter -Lines '+EPINC: 3, 3, 10, 10'
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [AllowEmptyString()]
+        [string[]] $Lines
+    )
+
+    $retries = ConvertTo-AtInteger -Text (Get-AtArgument -Lines $Lines -Prefix '+EPINC' -Position 0)
+    if ($null -ne $retries) {
+        [pscustomobject]@{ Code = 'SIM PIN'; Retries = $retries; DefaultRetries = $null }
+    }
+}
+
+function Get-SimPinAttemptsLeft {
+    # SIM PIN attempts left: from AT+CPINR, or from AT+EPINC? where the firmware has no AT+CPINR
+    # (AT-COMMANDS section 3); $null when neither tells. -Ask sends one command and returns its
+    # answer.
+    param([scriptblock] $Ask)
+
+    $retry = ConvertFrom-AtPinRetry -Lines (& $Ask 'AT+CPINR').Lines | Where-Object Code -EQ 'SIM PIN' | Select-Object -First 1
+    if (-not $retry) {
+        $retry = ConvertFrom-AtPinCounter -Lines (& $Ask 'AT+EPINC?').Lines | Select-Object -First 1
+    }
+    if ($retry) { $retry.Retries } else { $null }
+}
+
 function ConvertFrom-AtFacilityLock {
     <#
     .SYNOPSIS
@@ -334,10 +374,7 @@ function Disable-SimPin {
     if ($enabled -eq $false) {
         return & $outcome 'AlreadyOff'
     }
-    $retry = ConvertFrom-AtPinRetry -Lines (Invoke-AtCommand -Channel $Channel -Command 'AT+CPINR').Lines | Where-Object Code -EQ 'SIM PIN' | Select-Object -First 1
-    if ($retry) {
-        $attemptsLeft = $retry.Retries
-    }
+    $attemptsLeft = Get-SimPinAttemptsLeft -Ask { param($command) Invoke-AtCommand -Channel $Channel -Command $command }
     if ($null -ne $attemptsLeft -and $attemptsLeft -le 1) {
         return & $outcome 'LastAttempt'
     }

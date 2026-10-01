@@ -97,6 +97,23 @@ Describe 'ConvertFrom-AtContextParameter' {
         $context.Mtu | Should -Be 1500
     }
 
+    It 'reads the captured app context the network put on the IMS APN: no IPv4 address' {
+        $context = ConvertFrom-AtContextParameter -Lines (Get-FixtureAnswer -Name 'cgcontrdp.app-ims.txt' -Folder device)
+        $context.Cid | Should -Be 1
+        $context.Apn | Should -Be 'ims.mnc001.mcc001.gprs'
+        $context.IPv4Address | Should -BeNullOrEmpty
+        $context.Dns | Should -Be @('192.0.2.53')
+    }
+
+    It 'reads the captured app context on its internet APN: DNS servers, no address' {
+        $context = ConvertFrom-AtContextParameter -Lines (Get-FixtureAnswer -Name 'cgcontrdp.app.txt' -Folder device)
+        $context.Apn | Should -Be 'internet.mnc001.mcc001.gprs'
+        $context.IPv4Address | Should -BeNullOrEmpty
+        $context.IPv4PrefixLength | Should -BeNullOrEmpty
+        $context.IPv4Gateway | Should -BeNullOrEmpty
+        $context.Dns | Should -Be @('192.0.2.53', '192.0.2.54')
+    }
+
     It 'gathers DNS servers from extra lines, without repeating one' {
         $context = ConvertFrom-AtContextParameter -Lines @(
             '+CGCONTRDP: 1,5,"apn","198.51.100.23.255.255.255.255","198.51.100.1","203.0.113.53","203.0.113.54"'
@@ -162,6 +179,15 @@ Describe 'ConvertFrom-AtContextAuthentication' {
         $contexts[1].PSObject.Properties.Name | Should -Not -Contain 'Password'
     }
 
+    It 'never returns the password the device gives back in clear' {
+        $contexts = @(ConvertFrom-AtContextAuthentication -Lines (Get-FixtureAnswer -Name 'cgauth.probe.txt' -Folder device))
+        $probe = $contexts | Where-Object Cid -EQ 1
+        $probe.Protocol | Should -Be 'PAP'
+        $probe.User | Should -Be 'probe'
+        $probe.PasswordSet | Should -BeTrue
+        $probe.PSObject.Properties.Name | Should -Not -Contain 'Password'
+    }
+
     It 'reads the captured attach context: no authentication' {
         $context = ConvertFrom-AtContextAuthentication -Lines (Get-FixtureAnswer -Name 'cgauth.read.txt' -Folder device)
         $context.Cid | Should -Be 0
@@ -188,6 +214,31 @@ Describe 'ConvertFrom-AtContextAuthentication' {
         @{ Line = '+CGAUTH: x,1' }
     ) {
         ConvertFrom-AtContextAuthentication -Lines $Line | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'ConvertFrom-AtContextAddress' {
+    It 'reads the captured IPv4 address of the app''s context' {
+        $address = ConvertFrom-AtContextAddress -Lines (Get-FixtureAnswer -Name 'cgpaddr.app.txt' -Folder device)
+        $address.Cid | Should -Be 1
+        $address.IPv4Address | Should -Be '192.0.2.53'
+        $address.IPv6Address | Should -BeNullOrEmpty
+    }
+
+    It 'reads <Line>' -ForEach @(
+        # A context with IPv6 alone gives it first: the family comes from the address.
+        @{ Line = '+CGPADDR: 1,"0.0.0.0.0.0.0.0.32.1.13.184.0.0.0.1",""'; IPv4 = $null; IPv6 = '::2001:db8:0:1' }
+        @{ Line = '+CGPADDR: 1,"198.51.100.23","32.1.13.184.0.0.0.0.0.0.0.0.0.0.0.23"'; IPv4 = '198.51.100.23'; IPv6 = '2001:db8::17' }
+        @{ Line = '+CGPADDR: 1,198.51.100.23'; IPv4 = '198.51.100.23'; IPv6 = $null }
+        @{ Line = '+CGPADDR: 1,"",""'; IPv4 = $null; IPv6 = $null }
+    ) {
+        $address = ConvertFrom-AtContextAddress -Lines $Line
+        $address.IPv4Address | Should -Be $IPv4
+        $address.IPv6Address | Should -Be $IPv6
+    }
+
+    It 'skips a line without a context number' {
+        ConvertFrom-AtContextAddress -Lines '+CGPADDR: x,"198.51.100.23"' | Should -BeNullOrEmpty
     }
 }
 

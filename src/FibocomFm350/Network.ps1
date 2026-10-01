@@ -24,16 +24,19 @@ function Resolve-AdapterConfiguration {
 
         - An address the modem handed out by DHCP is kept as it is, with its gateway and DNS.
         - Otherwise the adapter gets the context's IPv4 address and mask, a default route
-          through its gateway, and its DNS servers. Manual addresses and default routes left on
-          the adapter from an earlier context are removed.
+          through its gateway, and its DNS servers. The FM350 reports neither mask nor gateway
+          for a data context, and answers ARP for every destination on its adapter: without a
+          mask the address is a /32, without a gateway the default route is on-link (next hop
+          0.0.0.0) - the configuration that carried traffic on the device. Manual addresses and
+          default routes left on the adapter from an earlier context are removed.
         - The DNS override, when set, replaces whichever DNS servers the adapter would have.
         - The interface metric is the settings' one, never automatic.
 
         Returns Configured ($true when nothing needs to change), Actions - in order, each with
         Action ('DisableDhcp', 'RemoveAddress', 'SetAddress', 'RemoveGateway', 'SetGateway',
-        'SetDns', 'SetMetric') and its values - and Problem: 'NoAddress', 'NoMask' or 'NoGateway'
-        when the modem doesn't report what a manual configuration needs (no action is planned
-        then).
+        'SetDns', 'SetMetric') and its values; a gateway of 0.0.0.0 is an on-link route - and
+        Problem: 'NoAddress' when the modem reports no IPv4 address for the context (no action
+        is planned then).
     .EXAMPLE
         Resolve-AdapterConfiguration -Context $context -Adapter $adapter -Settings $settings
     #>
@@ -73,31 +76,24 @@ function Resolve-AdapterConfiguration {
         if (-not $wanted) {
             return & $plan 'NoAddress'
         }
-        if ($null -eq $Context.IPv4PrefixLength) {
-            return & $plan 'NoMask'
-        }
-        $gateway = $Context.IPv4Gateway
-        if (-not $gateway -and $gateways.Count -eq 0) {
-            return & $plan 'NoGateway'
-        }
+        $prefixLength = if ($null -ne $Context.IPv4PrefixLength) { $Context.IPv4PrefixLength } else { 32 }
+        $gateway = if ($Context.IPv4Gateway) { $Context.IPv4Gateway } else { '0.0.0.0' }
         foreach ($address in $manual) {
-            if ($address.Address -ne $wanted -or $address.PrefixLength -ne $Context.IPv4PrefixLength) {
+            if ($address.Address -ne $wanted -or $address.PrefixLength -ne $prefixLength) {
                 $actions.Add([pscustomobject]@{ Action = 'RemoveAddress'; Address = $address.Address })
             }
         }
-        if (-not ($manual | Where-Object { $_.Address -eq $wanted -and $_.PrefixLength -eq $Context.IPv4PrefixLength })) {
+        if (-not ($manual | Where-Object { $_.Address -eq $wanted -and $_.PrefixLength -eq $prefixLength })) {
             if ($Adapter.Dhcp -eq 'Enabled') {
                 $actions.Insert(0, [pscustomobject]@{ Action = 'DisableDhcp' })
             }
-            $actions.Add([pscustomobject]@{ Action = 'SetAddress'; Address = $wanted; PrefixLength = $Context.IPv4PrefixLength })
+            $actions.Add([pscustomobject]@{ Action = 'SetAddress'; Address = $wanted; PrefixLength = $prefixLength })
         }
-        if ($gateway) {
-            foreach ($other in @($gateways | Where-Object { $_ -ne $gateway })) {
-                $actions.Add([pscustomobject]@{ Action = 'RemoveGateway'; NextHop = $other })
-            }
-            if ($gateway -notin $gateways) {
-                $actions.Add([pscustomobject]@{ Action = 'SetGateway'; NextHop = $gateway })
-            }
+        foreach ($other in @($gateways | Where-Object { $_ -ne $gateway })) {
+            $actions.Add([pscustomobject]@{ Action = 'RemoveGateway'; NextHop = $other })
+        }
+        if ($gateway -notin $gateways) {
+            $actions.Add([pscustomobject]@{ Action = 'SetGateway'; NextHop = $gateway })
         }
         $dnsWanted = @($Context.Dns | Where-Object { $_ })
     }
@@ -125,8 +121,8 @@ function Get-ModemAdapterState {
         Resolve-ModemUsbDevice - never by name or index. Reads only; needs no administrator
         rights. Returns what Resolve-AdapterConfiguration takes: InterfaceIndex, Name, Status,
         Dhcp, InterfaceMetric, AutomaticMetric, Addresses (IPv4: Address, PrefixLength, Origin),
-        Gateways (next hops of its IPv4 default routes) and DnsServers (IPv4, then IPv6). Returns
-        nothing when no adapter has that instance ID.
+        Gateways (next hops of its IPv4 default routes, 0.0.0.0 for an on-link one) and
+        DnsServers (IPv4, then IPv6). Returns nothing when no adapter has that instance ID.
     .EXAMPLE
         Get-ModemAdapterState -InstanceId $modem.Network.InstanceId
     #>
@@ -157,7 +153,7 @@ function Get-ModemAdapterState {
         Addresses       = [object[]]@($addresses | ForEach-Object {
                 [pscustomobject]@{ Address = [string]$_.IPAddress; PrefixLength = [int]$_.PrefixLength; Origin = [string]$_.PrefixOrigin }
             })
-        Gateways        = [string[]]@($routes | ForEach-Object { [string]$_.NextHop } | Where-Object { $_ -and $_ -ne '0.0.0.0' })
+        Gateways        = [string[]]@($routes | ForEach-Object { [string]$_.NextHop } | Where-Object { $_ })
         DnsServers      = [string[]]@(
             @($dns | Where-Object AddressFamily -EQ 2 | ForEach-Object { $_.ServerAddresses })
             @($dns | Where-Object AddressFamily -EQ 23 | ForEach-Object { $_.ServerAddresses })

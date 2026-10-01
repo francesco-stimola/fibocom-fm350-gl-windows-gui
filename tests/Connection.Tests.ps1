@@ -20,6 +20,7 @@ BeforeAll {
             ContextDefined    = $true
             ContextActive     = $true
             ContextAddress    = '198.51.100.23'
+            ApnSet            = $true
             Adapter           = 'Present'
             AdapterConfigured = $true
             AdapterProblem    = $null
@@ -70,6 +71,17 @@ Describe 'Resolve-ConnectionState' {
         @{ Name = 'context to define'; Change = @{ ContextDefined = $false; ContextActive = $false; ContextAddress = $null }; State = 'SimReady'; Action = 'DefineContext'; Reason = $null; Blocked = $false }
         @{ Name = 'context to activate'; Change = @{ ContextActive = $false; ContextAddress = $null }; State = 'Registered'; Action = 'ActivateContext'; Reason = $null; Blocked = $false }
         @{ Name = 'context active without an IPv4 address'; Change = @{ ContextAddress = $null }; State = 'Registered'; Action = 'None'; Reason = 'NoAddress'; Blocked = $false }
+        # With no APN in the settings the network chose one - the IMS APN on some networks.
+        @{ Name = 'context without an address, no APN set'; Change = @{ ContextAddress = $null; ApnSet = $false }; State = 'Registered'; Action = 'None'; Reason = 'ApnNeeded'; Blocked = $true }
+        @{ Name = 'context without an address, settings differ'; Change = @{ ContextAddress = $null; ContextDefined = $false }; State = 'Registered'; Action = 'DeactivateContext'; Reason = $null; Blocked = $false }
+        @{ Name = 'context without an address, settings differ, no APN set'; Change = @{ ContextAddress = $null; ContextDefined = $false; ApnSet = $false }; State = 'Registered'; Action = 'DeactivateContext'; Reason = $null; Blocked = $false }
+        @{ Name = 'context on the IMS APN with an address, no APN set'; Change = @{ ContextApn = 'ims.mnc001.mcc001.gprs'; ApnSet = $false }; State = 'Registered'; Action = 'None'; Reason = 'ApnNeeded'; Blocked = $true }
+        @{ Name = 'context on the IMS APN, written in capitals'; Change = @{ ContextApn = 'IMS.MNC001.MCC001.GPRS'; ApnSet = $false }; State = 'Registered'; Action = 'None'; Reason = 'ApnNeeded'; Blocked = $true }
+        @{ Name = 'context on the IMS APN, without the operator part'; Change = @{ ContextApn = 'ims'; ApnSet = $false }; State = 'Registered'; Action = 'None'; Reason = 'ApnNeeded'; Blocked = $true }
+        @{ Name = 'context on the IMS APN, settings differ'; Change = @{ ContextApn = 'ims.mnc001.mcc001.gprs'; ContextDefined = $false }; State = 'Registered'; Action = 'DeactivateContext'; Reason = $null; Blocked = $false }
+        @{ Name = 'context on the IMS APN, the APN of the settings'; Change = @{ ContextApn = 'ims.mnc001.mcc001.gprs' }; State = 'Registered'; Action = 'None'; Reason = 'NoAddress'; Blocked = $false }
+        @{ Name = 'context on an APN that only starts with ims'; Change = @{ ContextApn = 'ims.example.mnc001.mcc001.gprs'; ApnSet = $false }; State = 'Online'; Action = 'None'; Reason = $null; Blocked = $false }
+        @{ Name = 'context on the internet APN, no APN set'; Change = @{ ContextApn = 'internet.mnc001.mcc001.gprs'; ApnSet = $false }; State = 'Online'; Action = 'None'; Reason = $null; Blocked = $false }
         # The adapter.
         @{ Name = 'no network adapter'; Change = @{ Adapter = 'Absent'; AdapterConfigured = $null }; State = 'DataActive'; Action = 'None'; Reason = 'NoAdapter'; Blocked = $true }
         @{ Name = 'adapter to configure'; Change = @{ AdapterConfigured = $false }; State = 'DataActive'; Action = 'ConfigureAdapter'; Reason = $null; Blocked = $false }

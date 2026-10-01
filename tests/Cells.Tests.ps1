@@ -246,6 +246,49 @@ Describe 'Cells and carrier on the device while connected' {
     }
 }
 
+Describe 'Carriers on the device under traffic: LTE-A' {
+    BeforeAll {
+        $script:carriers = @(ConvertFrom-AtCarrierAggregation -Lines (Get-FixtureAnswer -Name 'gtccinfo.ltea.txt' -Folder device))
+    }
+
+    It 'reads the primary carrier and three secondary ones, written "SCC <n>:" with a blank' {
+        $script:carriers.Carrier | Should -Be @('PCC', 'SCC1', 'SCC2', 'SCC3')
+        $script:carriers.Band | Should -Be @('B3', 'B7', 'B1', 'B20')
+        $script:carriers.Pci | Should -Be @(123, 137, 144, 151)
+        $script:carriers.DlBandwidthMHz | Should -Be @(20, 15, 15, 10)
+    }
+
+    It 'reads every secondary carrier as active, the first with uplink aggregation' {
+        @($script:carriers | Where-Object { -not $_.Primary }).Active | Should -Be @($true, $true, $true)
+        @($script:carriers | Where-Object { -not $_.Primary }).UplinkCa | Should -Be @($true, $false, $false)
+    }
+}
+
+Describe 'Cells and carriers on the device under traffic: EN-DC' {
+    BeforeAll {
+        $script:lines = Get-FixtureAnswer -Name 'gtccinfo.endc.txt' -Folder device
+    }
+
+    It 'reads an LTE serving cell, then an NR one without MCC/MNC or location' {
+        $serving = @(ConvertFrom-AtCellInfo -Lines $script:lines | Where-Object Serving)
+        $serving.Technology | Should -Be @('LTE', 'NR')
+        $serving[1].Band | Should -Be 'n78'
+        $serving[1].BandwidthMHz | Should -Be 80
+        $serving[1].Arfcn | Should -Be 645312
+        $serving[1].Mcc | Should -BeNullOrEmpty
+        $serving[1].Tac | Should -BeNullOrEmpty
+        $serving[1].CellId | Should -BeNullOrEmpty
+    }
+
+    It 'reads the NR primary carrier first, then the LTE one and its secondary carriers' {
+        $carriers = @(ConvertFrom-AtCarrierAggregation -Lines $script:lines)
+        $carriers.Carrier | Should -Be @('PCC', 'PCC', 'SCC1', 'SCC2', 'SCC3')
+        $carriers.Technology | Should -Be @('NR', 'LTE', 'LTE', 'LTE', 'LTE')
+        $carriers[0].Band | Should -Be 'n78'
+        $carriers[0].DlBandwidthMHz | Should -Be 80
+    }
+}
+
 Describe 'A band from the channel number' {
     It 'is left out for an NR channel that two bands share' {
         # NR-ARFCN 632448 (3486.72 MHz) lies in both n77 and n78.

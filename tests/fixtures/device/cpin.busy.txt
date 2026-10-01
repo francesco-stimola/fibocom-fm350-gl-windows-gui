@@ -1,0 +1,3 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06; read a few seconds after the right PIN was accepted: CME 14, SIM busy.
+AT+CPIN?
++CME ERROR: 14

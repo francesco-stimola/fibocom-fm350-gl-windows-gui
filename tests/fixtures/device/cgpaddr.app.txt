@@ -1,0 +1,4 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06; the app's context 1 on the operator's internet APN: an IPv4 address only; address replaced by a documentation one.
+AT+CGPADDR=1
++CGPADDR: 1,"192.0.2.53",""
+OK

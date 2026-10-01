@@ -1,0 +1,4 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06; SIM waiting for its PIN: the ICCID is readable, 19 digits and a filler f in lower case; ICCID replaced by a fake of the same shape.
+AT+ICCID
++ICCID: 8900100000000000000f
+OK

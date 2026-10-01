@@ -77,6 +77,38 @@ Describe 'ConvertFrom-AtPinRetry' {
     ) {
         ConvertFrom-AtPinRetry -Lines $Line | Should -BeNullOrEmpty
     }
+
+    It 'reads nothing from the captured CME 100 of a firmware without AT+CPINR' {
+        ConvertFrom-AtPinRetry -Lines @((Get-FixtureResult -Name 'cpinr.absent.txt' -Folder device).Lines) | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'ConvertFrom-AtPinCounter' {
+    It 'reads the SIM PIN attempts from <Name>: <Retries>' -ForEach @(
+        @{ Name = 'epinc.txt'; Retries = 3 }
+        @{ Name = 'epinc.wrong-pin.txt'; Retries = 2 }
+    ) {
+        $retry = @(ConvertFrom-AtPinCounter -Lines (Get-FixtureAnswer -Name $Name -Folder device))
+        $retry.Count | Should -Be 1
+        $retry[0].Code | Should -Be 'SIM PIN'
+        $retry[0].Retries | Should -Be $Retries
+        $retry[0].DefaultRetries | Should -BeNullOrEmpty
+    }
+
+    It 'reads <Line>' -ForEach @(
+        @{ Line = '+EPINC:1,3,10,10'; Retries = 1 }
+        @{ Line = '+EPINC: 0, 3, 10, 10'; Retries = 0 }
+    ) {
+        (ConvertFrom-AtPinCounter -Lines $Line).Retries | Should -Be $Retries
+    }
+
+    It 'skips <Line>' -ForEach @(
+        @{ Line = '+EPINC: x, 3, 10, 10' }
+        @{ Line = '+EPINC:' }
+        @{ Line = '+CPINR: SIM PIN,3,3' }
+    ) {
+        ConvertFrom-AtPinCounter -Lines $Line | Should -BeNullOrEmpty
+    }
 }
 
 Describe 'ConvertFrom-AtFacilityLock' {
@@ -97,6 +129,10 @@ Describe 'ConvertFrom-AtFacilityLock' {
 Describe 'ConvertFrom-AtIccid' {
     It 'reads the documented answer' {
         ConvertFrom-AtIccid -Lines (Get-FixtureAnswer -Name 'iccid.txt') | Should -Be '8900100000000000000'
+    }
+
+    It 'reads the captured answer of a locked SIM, its lower-case filler in upper case' {
+        ConvertFrom-AtIccid -Lines (Get-FixtureAnswer -Name 'iccid.locked.txt' -Folder device) | Should -Be '8900100000000000000F'
     }
 
     It 'reads <Line>' -ForEach @(

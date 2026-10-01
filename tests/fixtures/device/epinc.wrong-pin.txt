@@ -1,0 +1,4 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06; after one wrong PIN (AT+CPIN answered CME 16): the first field went from 3 to 2, the others did not change.
+AT+EPINC?
++EPINC: 2, 3, 10, 10
+OK
