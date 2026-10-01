@@ -30,7 +30,7 @@ jobs:
           Install-PSResource -Name PSScriptAnalyzer -Version 1.25.0 -Scope CurrentUser -TrustRepository -Quiet
 
       # The script works around an intermittent analyzer failure (see its help); it exits
-      # with 1 on any diagnostic.
+      # with 1 on any diagnostic, each written as an annotation of the run.
       - name: Lint
         shell: pwsh
         run: ./tools/Invoke-Lint.ps1
@@ -40,4 +40,18 @@ jobs:
         run: |
           Import-Module Pester -RequiredVersion 6.2.0
           # The runner has no modem: tests tagged Hardware never run here.
-          Invoke-Pester -Path ./tests -ExcludeTagFilter Hardware -CI
+          $result = Invoke-Pester -Path ./tests -ExcludeTagFilter Hardware -Output Detailed -PassThru
+          # One annotation per failure: the run says what failed without its log.
+          $data = { param([string] $text) $text -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A' }
+          $property = { param([string] $text) (& $data $text) -replace ':', '%3A' -replace ',', '%2C' }
+          foreach ($test in $result.Failed) {
+              # A test failed by its block's BeforeAll carries no error of its own.
+              $record = @(@($test.ErrorRecord) + @($test.Block.ErrorRecord) | Where-Object { $_ }) | Select-Object -First 1
+              "::error title=$(& $property $test.ExpandedPath)::$(& $data $record)"
+          }
+          # A file that failed as a whole: discovery or a BeforeAll.
+          foreach ($container in $result.Containers | Where-Object { @($_.ErrorRecord).Count -gt 0 }) {
+              "::error title=$(& $property (Split-Path -Leaf $container.Item))::$(& $data ($container.ErrorRecord | Select-Object -First 1))"
+          }
+          # Explicit either way: a native command run by a test must not decide the step's result.
+          exit [int]($result.Result -ne 'Passed')
