@@ -65,6 +65,7 @@ same two commands on every push to `main` and every pull request.
 | `tests/Parsers.Tests.ps1` | Identity, SIM state, registration (read answers and URCs, every domain, reject causes), operator and technology, signal quality, temperature — on documented fixtures played through the channel. |
 | `tests/Cells.Tests.ps1` | `+GTCCINFO` serving and neighbour layouts on LTE, EN-DC and SA; `+GTCAINFO` primary and secondary carriers, older shorter lines, malformed fields. |
 | `tests/Arfcn.Tests.ps1` | EARFCN and NR-ARFCN against values worked out by hand from the 3GPP formulas, including the table rows that needed repair when transcribed. |
+| `tests/Devices.Tests.ps1` | The modem's USB functions on a captured PnP snapshot (AT port without its driver, RNDIS working), the AT port of each composition, problem codes → driver state, leftover devices and other MediaTek devices skipped, two modems told apart. |
 
 ## Fixtures
 
@@ -90,10 +91,16 @@ such as `[FIBOCOM]`, or `captured` with the date and firmware). Then the command
 as the modem sends it, without echo, ending with its final result code. `Import-AtFixture` reads
 it; `New-SimulatedModem -Fixture` answers with it.
 
+A **PnP snapshot** — how Windows sees the modem's USB functions — is a JSON file instead:
+`{ "Source": "captured <date>: <situation>", "Devices": [ <one record per device> ] }`, each record
+holding the device properties as `Get-PnpDeviceProperty` names them, without the `DEVPKEY_Device_`
+prefix (`InstanceId`, `Present`, `ProblemCode`, `Service`, `Parent`, `HardwareIds`...).
+
 **Before a capture is committed**, identifiers are replaced with the fakes listed in
 `tests/fixtures/fakes.psd1` — IMEI, IMSI, ICCID and EID digit runs, phone numbers, the module
-serial number (`+CFSN`), and the TAC and cell identity of registration reports and `+GTCCINFO`
-lines. Message text and USSD replies are
+serial number (`+CFSN`), the TAC and cell identity of registration reports and `+GTCCINFO`
+lines, and in PnP snapshots the instance part of every instance ID (a USB serial number, or a
+Windows-generated hash) and the container ID. Message text and USSD replies are
 rewritten by hand. `tests/Fixtures.Tests.ps1` fails on any fixture that still carries an
 identifier-like value other than those fakes.
 

@@ -97,7 +97,8 @@ Everything needed to talk to the modem and understand its answers — no connect
 where a known copy is published and by whom; the user downloads it and hands it over; the app
 verifies it and installs it (design: ARCHITECTURE → *Drivers*).
 
-- [ ] Detect the modem's USB functions and their driver state (AT ports present without a driver).
+- [x] Classify the modem's USB functions and their driver state (AT ports present without a driver) as a pure function, tested on a device capture: `Resolve-ModemUsbDevice`.
+- [ ] Read the PnP records it classifies (`Get-PnpDevice` / `Get-PnpDeviceProperty`), in the worker.
 - [ ] Driver dialog: the project does not distribute the driver; where a known copy is published (commit-pinned page from the manifest) and that it is a third party's copy of MediaTek's driver; actions *open that page* and *choose the downloaded package*.
 - [ ] Package intake: a zip or a folder chosen by the user; locate the INFs in it. Never run an executable from the package.
 - [ ] Verification as a pure decision function with a matrix of tests: catalog signed by Microsoft (WHQL) → required; INF covers the modem's hardware IDs → required; files match a known fingerprint → reported as a verified version.

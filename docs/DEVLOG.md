@@ -4,6 +4,30 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-01 — First device capture: the modem's USB functions on Windows; detection as a pure function
+
+The first look at a real FM350-GL, before any driver is installed, answers most of the open rows
+of `AT-COMMANDS.md` §1:
+- **Composition `7127`** (mode 41, the documented default): nine functions under the composite
+  device — RNDIS on `MI_00`, seven vendor-class serial ports, ADB on `MI_05`.
+- **The network adapter needs nothing**: Windows' own RNDIS driver claims it through the
+  compatible ID `USB\Class_e0&SubClass_01&Prot_03` (the interface association's class, not
+  interface 0's own). ADB is claimed by Windows' WinUSB. Only the serial ports wait for a driver,
+  each with problem code 28 and no COM port at all.
+- **The instance ID is Windows-generated** from the USB port, not a serial number: plugging the
+  modem into another port gives it new instance IDs, so nothing may remember them.
+- **Functions are linked through their composite device, not their container ID.** They do share
+  a container ID here, but a device on a port the firmware calls non-removable inherits the
+  computer's, which every built-in device shares; the network adapter will be found by its own
+  instance ID.
+
+M6's detection step is brought forward as `Resolve-ModemUsbDevice`: PnP records in, one object per
+modem out — AT port, network adapter, every function with role and driver state (`Working`,
+`NoDriver` for problem codes 1 and 28, `Problem` for any other). Tested on the redacted capture
+and a matrix (the 7126 layout, problem codes, leftover devices, other MediaTek devices, two
+modems). PnP snapshots are the first JSON fixtures; the identifier check now covers them too —
+instance IDs keep their shape with a zeroed hash, container IDs are fakes.
+
 ## 2026-09-29 — M1 code-complete: parsers, measurements, 3GPP band tables; a robust linter
 
 Everything in M1 that doesn't need the device is done; the device session remains.

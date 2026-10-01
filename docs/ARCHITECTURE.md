@@ -232,7 +232,13 @@ the user where a known copy is published and by whom, the user downloads it, and
 whether it is safe to install.
 
 1. **Detect** the modem's USB functions by hardware ID and classify them: absent, present without
-   a driver, working.
+   a driver (problem code 28 or 1), present with another problem (disabled, failed to start),
+   working. A modem is the composite device its functions hang from — not their container ID,
+   which a device on a port the firmware calls non-removable inherits from the computer and shares
+   with everything built in. For the same reason the network adapter is found by its own instance
+   ID (the adapter's `PnPDeviceID`). Instance IDs are not remembered across runs: the FM350's is
+   generated from the USB port it sits in. The classification is a pure function
+   (`Resolve-ModemUsbDevice`) over the PnP records; reading them is the thin part around it.
 2. **Guide.** A dialog explains that the project does not distribute the driver, shows where a
    known copy is published — a page pinned to a fixed commit, taken from the known-fingerprints
    manifest — and says plainly that it is a third party's copy of MediaTek's driver. Two actions:
@@ -363,6 +369,7 @@ src/
     Parsers.ps1          identity, SIM, registration, operator, signal, temperature (M1, pure)
     Cells.ps1            +GTCCINFO cells and +GTCAINFO carrier aggregation (M1, pure)
     Arfcn.ps1            channel number -> frequency and band (M1, pure)
+    Devices.ps1          the modem's USB functions: AT port, network adapter, driver state (M6, pure)
     Data/                3GPP band tables, transcribed (EutraBands.psd1, NrBands.psd1)
     …                    state machine, recovery, network, drivers (M2–M6)
   App/                   tray app: UI thread, worker runspace, supervisor (M3)
@@ -370,7 +377,7 @@ tests/
   *.Tests.ps1            Pester
   fixtures/
     documented/          answers written from the documentation, values invented (M1)
-    device/              answers captured from a real FM350, redacted (device session)
+    device/              answers and PnP snapshots captured from a real FM350, redacted (device session)
     fakes.psd1           the only identifier-like values a fixture may carry
 tools/
   Invoke-Lint.ps1        the linter, as CI runs it (docs/SETUP.md)
