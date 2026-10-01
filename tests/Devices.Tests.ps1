@@ -154,6 +154,56 @@ Describe 'Resolve-ModemUsbDevice' {
     }
 }
 
+Describe 'Resolve-ModemPresence' {
+    BeforeAll {
+        # A modem as Resolve-ModemUsbDevice gives it, its AT port in a given state.
+        function Get-TestModem {
+            param([string] $InstanceId = 'USB\VID_0E8D&PID_7127\7&00000000&0&1', [string] $State = 'Working', [string] $PortName = 'COM14', [switch] $NoNetwork, [switch] $NoAtPort)
+            [pscustomobject]@{
+                InstanceId = $InstanceId
+                AtPort     = if ($NoAtPort) { $null } else { [pscustomobject]@{ State = $State; PortName = $PortName } }
+                Network    = if ($NoNetwork) { $null } else { [pscustomobject]@{ InstanceId = "$InstanceId-net" } }
+            }
+        }
+    }
+
+    It 'finds the AT port and the adapter of the captured modem with its driver' {
+        $fixture = Get-Content -LiteralPath "$PSScriptRoot/fixtures/device/pnp.7127.driver.json" -Raw | ConvertFrom-Json
+        $presence = Resolve-ModemPresence -Modem @(Resolve-ModemUsbDevice -Device $fixture.Devices)
+        $presence.Device | Should -Be 'Present'
+        $presence.PortName | Should -Be 'COM9'
+        $presence.AdapterInstanceId | Should -BeLike 'USB\VID_0E8D&PID_7127&MI_00\*'
+        $presence.Modems | Should -Be 1
+    }
+
+    It 'says the driver is missing on the captured modem without it' {
+        $fixture = Get-Content -LiteralPath "$PSScriptRoot/fixtures/device/pnp.7127.nodriver.json" -Raw | ConvertFrom-Json
+        $presence = Resolve-ModemPresence -Modem @(Resolve-ModemUsbDevice -Device $fixture.Devices)
+        $presence.Device | Should -Be 'NoDriver'
+        $presence.PortName | Should -BeNullOrEmpty
+    }
+
+    It '<Name>: <Device>' -ForEach @(
+        @{ Name = 'no modem'; Modems = @(); Device = 'Absent'; PortName = $null }
+        @{ Name = 'a modem whose AT port is not there'; Modems = @(@{ NoAtPort = $true }); Device = 'Absent'; PortName = $null }
+        @{ Name = 'an AT port with another problem'; Modems = @(@{ State = 'Problem' }); Device = 'Problem'; PortName = $null }
+        @{ Name = 'an AT port that has no COM port'; Modems = @(@{ PortName = '' }); Device = 'Problem'; PortName = $null }
+        @{ Name = 'back under another COM number'; Modems = @(@{ PortName = 'COM15' }); Device = 'Present'; PortName = 'COM15' }
+        @{ Name = 'one modem without its driver, one working'; Modems = @(@{ InstanceId = 'USB\VID_0E8D&PID_7127\7&00000000&0&2'; State = 'NoDriver'; PortName = '' }, @{}); Device = 'Present'; PortName = 'COM14' }
+        @{ Name = 'two working modems: always the first by instance ID'; Modems = @(@{ InstanceId = 'USB\VID_0E8D&PID_7127\7&00000000&0&2'; PortName = 'COM20' }, @{}); Device = 'Present'; PortName = 'COM14' }
+    ) {
+        $modems = @(foreach ($change in $Modems) { Get-TestModem @change })
+        $presence = Resolve-ModemPresence -Modem $modems
+        $presence.Device | Should -Be $Device
+        $presence.PortName | Should -Be $PortName
+        $presence.Modems | Should -Be $modems.Count
+    }
+
+    It 'gives no adapter for a modem without its network function' {
+        (Resolve-ModemPresence -Modem @(Get-TestModem -NoNetwork)).AdapterInstanceId | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'Get-ModemPnpRecord' {
     BeforeAll {
         $script:composite = 'USB\VID_0E8D&PID_7127\7&00000000&0&1'

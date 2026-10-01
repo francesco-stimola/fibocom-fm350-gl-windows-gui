@@ -47,6 +47,8 @@ Describe 'Resolve-ConnectionState' {
         @{ Name = 'AT port without its driver'; Change = @{ Device = 'NoDriver' }; State = 'NoDevice'; Action = 'None'; Reason = 'NoDriver'; Blocked = $true }
         @{ Name = 'AT port with a problem'; Change = @{ Device = 'Problem' }; State = 'NoDevice'; Action = 'None'; Reason = 'DeviceProblem'; Blocked = $true }
         @{ Name = 'port not open'; Change = @{ PortOpen = $false }; State = 'NoDevice'; Action = 'OpenPort'; Reason = $null; Blocked = $false }
+        @{ Name = 'port held by another program'; Change = @{ PortOpen = $false; PortError = 'InUse' }; State = 'NoDevice'; Action = 'OpenPort'; Reason = 'PortInUse'; Blocked = $false }
+        @{ Name = 'port failing to open'; Change = @{ PortOpen = $false; PortError = 'Failed' }; State = 'NoDevice'; Action = 'OpenPort'; Reason = 'PortFailed'; Blocked = $false }
         @{ Name = 'modem not answering'; Change = @{ Responsive = $false }; State = 'PortOpen'; Action = 'Initialize'; Reason = $null; Blocked = $false }
         # The SIM.
         @{ Name = 'PIN to enter'; Change = @{ Sim = [pscustomobject]@{ Action = 'SendPin'; Reason = $null } }; State = 'Identified'; Action = 'EnterPin'; Reason = $null; Blocked = $false }
@@ -97,6 +99,11 @@ Describe 'Resolve-ConnectionState' {
         @{ Name = 'network adapter disabled'; Change = @{ Adapter = 'Disabled'; AdapterConfigured = $null }; State = 'DataActive'; Action = 'None'; Reason = 'AdapterDisabled'; Blocked = $true }
         @{ Name = 'adapter to configure'; Change = @{ AdapterConfigured = $false }; State = 'DataActive'; Action = 'ConfigureAdapter'; Reason = $null; Blocked = $false }
         @{ Name = 'adapter that cannot be configured'; Change = @{ AdapterConfigured = $false; AdapterProblem = 'NoGateway' }; State = 'DataActive'; Action = 'None'; Reason = 'NoGateway'; Blocked = $false }
+        # Configuring the adapter needs administrator rights; rights not known are no reason to stop.
+        @{ Name = 'adapter to configure without administrator rights'; Change = @{ AdapterConfigured = $false; Elevated = $false }; State = 'DataActive'; Action = 'None'; Reason = 'NotElevated'; Blocked = $true }
+        @{ Name = 'adapter to configure, rights not known'; Change = @{ AdapterConfigured = $false; Elevated = $null }; State = 'DataActive'; Action = 'ConfigureAdapter'; Reason = $null; Blocked = $false }
+        @{ Name = 'adapter configured, without administrator rights'; Change = @{ Elevated = $false }; State = 'Online'; Action = 'None'; Reason = $null; Blocked = $false }
+        @{ Name = 'no address to configure, without administrator rights'; Change = @{ AdapterConfigured = $false; AdapterProblem = 'NoAddress'; Elevated = $false }; State = 'DataActive'; Action = 'None'; Reason = 'NoAddress'; Blocked = $false }
         @{ Name = 'data path failing'; Change = @{ DataPath = $false }; State = 'DataActive'; Action = 'None'; Reason = 'DataPathFailed'; Blocked = $false }
     ) {
         $result = Resolve-ConnectionState -Observation (Get-TestObservation -Change $Change)

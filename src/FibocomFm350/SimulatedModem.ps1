@@ -82,6 +82,15 @@ class SimulatedModem {
         $this.Output.Clear()
     }
 
+    # The port opened again after Close, by a new channel: the device keeps its answers and what
+    # scripted commands changed (the development mode's worker restarts on the same device). A
+    # lost port stays lost until Reappear.
+    [void] Reopen() {
+        $this.Closed = $false
+        $this.Output.Clear()
+        $this.BusyUntil = 0
+    }
+
     [void] Write([string] $text) {
         if (-not $this.IsUsable()) {
             return
@@ -287,8 +296,8 @@ function New-SimulatedModem {
         $behavior) for one-shot behaviours (delay, split output, garbage, a URC inside the answer,
         no final result, the port vanishing, answers that change once the command has run),
         EmitUnsolicited($line, $delayMs), Vanish() and
-        Reappear($portName). SetAnswer($command, $lines) sets a standing answer. Received lists
-        the commands written to it.
+        Reappear($portName). SetAnswer($command, $lines) sets a standing answer. Reopen() opens
+        the port again after a channel closed it. Received lists the commands written to it.
     .EXAMPLE
         $modem = New-SimulatedModem -Fixture (Get-ChildItem tests/fixtures/documented)
         $modem.Script('AT+COPS=0', @{ DelayMs = 500 })

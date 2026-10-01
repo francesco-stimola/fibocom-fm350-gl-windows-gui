@@ -137,3 +137,53 @@ function Resolve-ModemUsbDevice {
         }
     }
 }
+
+function Resolve-ModemPresence {
+    <#
+    .SYNOPSIS
+        Tells whether there is a modem whose AT port can be opened, from Resolve-ModemUsbDevice's
+        modems.
+    .DESCRIPTION
+        A pure decision, made again every time the worker looks for the modem: after a
+        re-enumeration the modem can come back as a new device instance under other COM numbers
+        (AT-COMMANDS section 1), so nothing is remembered from an earlier look.
+
+        Returns Device - 'Present' (a modem whose AT port works and has a COM port), else
+        'NoDriver' (an AT port without its driver), else 'Problem' (an AT port with another
+        problem, or with no COM port), else 'Absent' - with PortName and AdapterInstanceId (its
+        network function, $null when absent) of the modem chosen, and Modems, how many there are.
+        With several usable modems the first by instance ID is chosen, so the choice is the same
+        at every look.
+    .EXAMPLE
+        Resolve-ModemPresence -Modem @(Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord))
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]] $Modem
+    )
+
+    $atPorts = @($Modem | Where-Object { $_.AtPort })
+    $usable = @($atPorts | Where-Object { $_.AtPort.State -eq 'Working' -and $_.AtPort.PortName } | Sort-Object -Property InstanceId)
+    $device = if ($usable.Count -gt 0) {
+        'Present'
+    }
+    elseif (@($atPorts | Where-Object { $_.AtPort.State -eq 'NoDriver' }).Count -gt 0) {
+        'NoDriver'
+    }
+    elseif ($atPorts.Count -gt 0) {
+        'Problem'
+    }
+    else {
+        'Absent'
+    }
+    $chosen = if ($usable.Count -gt 0) { $usable[0] } else { $null }
+    [pscustomobject]@{
+        Device            = $device
+        PortName          = if ($chosen) { $chosen.AtPort.PortName } else { $null }
+        AdapterInstanceId = if ($chosen -and $chosen.Network) { $chosen.Network.InstanceId } else { $null }
+        Modems            = $Modem.Count
+    }
+}

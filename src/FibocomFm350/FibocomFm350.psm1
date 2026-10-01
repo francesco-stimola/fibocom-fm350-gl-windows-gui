@@ -19,3 +19,6 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Cells.ps1')
 . (Join-Path $PSScriptRoot 'Arfcn.ps1')
 . (Join-Path $PSScriptRoot 'Devices.ps1')
+. (Join-Path $PSScriptRoot 'Radio.ps1')
+. (Join-Path $PSScriptRoot 'Simulation.ps1')
+. (Join-Path $PSScriptRoot 'Worker.ps1')

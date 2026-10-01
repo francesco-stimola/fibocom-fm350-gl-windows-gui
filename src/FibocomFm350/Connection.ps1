@@ -25,7 +25,8 @@ function Resolve-ConnectionState {
 
         -Observation carries:
         - Device: 'Present', 'Absent', 'NoDriver' or 'Problem' (the AT port, from PnP).
-        - PortOpen, Responsive: the AT port is open; the modem answers on it.
+        - PortOpen, Responsive: the AT port is open; the modem answers on it. PortError: why it
+          couldn't be opened - 'InUse' (another program holds it) or 'Failed'.
         - Sim: Resolve-SimPinAction's decision.
         - Fcc: Resolve-FccLock's diagnosis.
         - RadioOn: +CFUN is 1. OperatorMode: +COPS's mode (2: deregistered by a command).
@@ -40,7 +41,8 @@ function Resolve-ConnectionState {
         - Adapter: 'Present', 'Disabled' (by the user) or 'Absent' (the modem's network
           adapter). AdapterConfigured: its
           configuration matches the context and the settings. AdapterProblem: why it can't be
-          configured from what the modem reports.
+          configured from what the modem reports. Elevated: $false when the app has no
+          administrator rights to configure it.
         - DataPath: the last data-path probe passed ($null: not probed).
 
         Returns:
@@ -52,8 +54,8 @@ function Resolve-ConnectionState {
         - Reason: why there is no step to take, or $null.
         - Blocked: $true when what stops the connection is out of the app's reach - no device or
           driver, a SIM waiting for the user, an FCC lock, an APN or an APN password the user
-          must give, an adapter missing or disabled: no recovery step changes it, so none is
-          escalated (ARCHITECTURE -> Health checks).
+          must give, an adapter missing or disabled, no administrator rights to configure it: no
+          recovery step changes it, so none is escalated (ARCHITECTURE -> Health checks).
 
         A context that is active without an IPv4 address, or on the IMS APN, carries no internet
         traffic. With an empty APN in the settings, the network chose the APN - on some networks
@@ -108,7 +110,8 @@ function Resolve-ConnectionState {
         return & $outcome 'NoDevice' 'None' $reason $true
     }
     if ((& $fact 'PortOpen') -ne $true) {
-        return & $outcome 'NoDevice' 'OpenPort' $null $false
+        $reason = switch (& $fact 'PortError') { 'InUse' { 'PortInUse' } 'Failed' { 'PortFailed' } default { $null } }
+        return & $outcome 'NoDevice' 'OpenPort' $reason $false
     }
     if ((& $fact 'Responsive') -ne $true) {
         return & $outcome 'PortOpen' 'Initialize' $null $false
@@ -185,6 +188,10 @@ function Resolve-ConnectionState {
         if ($problem) {
             return & $outcome 'DataActive' 'None' $problem $false
         }
+        # Configuring the adapter needs administrator rights: without them the step can only fail.
+        if ((& $fact 'Elevated') -eq $false) {
+            return & $outcome 'DataActive' 'None' 'NotElevated' $true
+        }
         return & $outcome 'DataActive' 'ConfigureAdapter' $null $false
     }
     if ((& $fact 'DataPath') -eq $false) {
@@ -204,9 +211,10 @@ function Get-ModemObservation {
         while not registered - the operator selection and the FCC lock; once registered, the
         active context's parameters, and the adapter. A read that fails leaves its fact unknown.
 
-        Returns Facts (the observation for Resolve-ConnectionState), and what the steps need:
-        Context (the app's context parameters), AdapterState and AdapterPlan. The ICCID is read
-        only to match the stored PIN, and kept nowhere.
+        Returns Facts (the observation for Resolve-ConnectionState; also SimState, the SIM's
+        state, and PinAttemptsLeft, read while the SIM waits for its PIN), and what the steps
+        need: Context (the app's context parameters), AdapterState and AdapterPlan. The ICCID is
+        read only to match the stored PIN, and kept nowhere.
     .EXAMPLE
         $observation = Get-ModemObservation -Channel $channel -Settings $settings -AdapterInstanceId $modem.Network.InstanceId
     #>
@@ -222,6 +230,10 @@ function Get-ModemObservation {
         # The modem's network function (Resolve-ModemUsbDevice's Network.InstanceId).
         [string] $AdapterInstanceId,
 
+        # Development mode: the in-memory adapter of New-SimulatedDevice, read instead of a real
+        # one.
+        [object] $SimulatedAdapter,
+
         [string] $SimPinPath = (Get-AppDataPath -Name 'sim-pin.json'),
 
         [string] $ApnSecretPath = (Get-AppDataPath -Name 'apn-password.dat')
@@ -231,11 +243,11 @@ function Get-ModemObservation {
         throw [System.InvalidOperationException]::new('The AT channel is closed.')
     }
     $facts = [ordered]@{
-        Device = 'Present'; PortOpen = $true; Responsive = $null; Sim = $null; Fcc = $null
+        Device = 'Present'; PortOpen = $true; Responsive = $null; Sim = $null; SimState = $null; PinAttemptsLeft = $null; Fcc = $null
         RadioOn = $null; OperatorMode = $null; Registered = $null; RegistrationState = $null
         ContextDefined = $null; ContextActive = $null; ContextAddress = $null; ContextApn = $null; ContextRead = $null; ApnSet = [bool]$Settings.Apn
         ApnPasswordUnreadable = $Settings.ApnAuthentication -ne 'None' -and (Test-Path -LiteralPath $ApnSecretPath -PathType Leaf) -and -not (Get-ApnPassword -Path $ApnSecretPath)
-        Adapter = $null; AdapterConfigured = $null; AdapterProblem = $null; DataPath = $null
+        Adapter = $null; AdapterConfigured = $null; AdapterProblem = $null; Elevated = $null; DataPath = $null
     }
     $result = [pscustomobject]@{ Facts = $null; Context = $null; AdapterState = $null; AdapterPlan = $null }
     $finish = {
@@ -265,19 +277,19 @@ function Get-ModemObservation {
     if ($null -eq $sim) {
         return & $finish
     }
+    $facts.SimState = $sim.State
     $stored = Get-SimPin -Path $SimPinPath
-    $attemptsLeft = $null
+    # Read whenever the SIM waits for its PIN: the rules need it, and so does the user typing it.
+    $attemptsLeft = if ($sim.State -eq 'PinRequired') { Get-SimPinAttemptsLeft -Ask $ask }
+    $facts.PinAttemptsLeft = $attemptsLeft
     # The SIM is identified when a PIN may be sent to it, and when a ready SIM could confirm a
     # pending attempt - only the stored PIN's SIM does.
     if ($stored -and ($sim.State -eq 'PinRequired' -or ($sim.State -eq 'Ready' -and $stored.Attempted))) {
         $iccid = ConvertFrom-AtIccid -Lines (& $ask 'AT+ICCID').Lines
         $stored = Get-SimPin -Path $SimPinPath -Iccid $iccid
-        if ($sim.State -eq 'PinRequired') {
-            $attemptsLeft = Get-SimPinAttemptsLeft -Ask $ask
-        }
-        if (& $stopped) {
-            return & $finish
-        }
+    }
+    if (& $stopped) {
+        return & $finish
     }
     $pinForThisSim = if ($stored) { $stored.ForThisSim } else { $null }
     $facts.Sim = Resolve-SimPinAction -SimState $sim.State -PinStored:([bool]$stored) -PinForThisSim $pinForThisSim `
@@ -362,7 +374,7 @@ function Get-ModemObservation {
     $facts.ContextApn = if ($context) { $context.Apn } else { $null }
 
     # The adapter.
-    $adapter = if ($AdapterInstanceId) { Get-ModemAdapterState -InstanceId $AdapterInstanceId } else { $null }
+    $adapter = if ($SimulatedAdapter) { $SimulatedAdapter.Read() } elseif ($AdapterInstanceId) { Get-ModemAdapterState -InstanceId $AdapterInstanceId } else { $null }
     $facts.Adapter = if (-not $adapter -or $adapter.Status -eq 'Not Present') { 'Absent' } elseif ($adapter.Status -eq 'Disabled') { 'Disabled' } else { 'Present' }
     if ($facts.Adapter -eq 'Present') {
         $plan = Resolve-AdapterConfiguration -Context $context -Adapter $adapter -Settings $Settings
@@ -370,6 +382,8 @@ function Get-ModemObservation {
         $result.AdapterPlan = $plan
         $facts.AdapterConfigured = $plan.Configured
         $facts.AdapterProblem = $plan.Problem
+        # The simulated adapter needs no rights.
+        $facts.Elevated = [bool]$SimulatedAdapter -or (Test-AppElevation)
     }
     & $finish
 }
@@ -385,7 +399,8 @@ function Invoke-ConnectionStep {
         [object] $Settings,
         [string] $SimPinPath,
         [string] $ApnSecretPath,
-        [int] $InitializeTimeoutMs
+        [int] $InitializeTimeoutMs,
+        [object] $SimulatedAdapter
     )
 
     $commands = [System.Collections.Generic.List[object]]::new()
@@ -479,7 +494,12 @@ function Invoke-ConnectionStep {
             if ($authenticated -and (& $send "AT+CGACT=1,$cid").Status -eq 'OK') { $result = 'Done' }
         }
         'ConfigureAdapter' {
-            $applied = @(Set-ModemAdapterConfiguration -InterfaceIndex $Observation.AdapterState.InterfaceIndex -Plan $Observation.AdapterPlan -Confirm:$false)
+            $applied = if ($SimulatedAdapter) {
+                @($SimulatedAdapter.Apply($Observation.AdapterPlan))
+            }
+            else {
+                @(Set-ModemAdapterConfiguration -InterfaceIndex $Observation.AdapterState.InterfaceIndex -Plan $Observation.AdapterPlan -Confirm:$false)
+            }
             foreach ($change in $applied) {
                 $commands.Add([pscustomobject]@{ Command = $change.Action; Status = $(if ($change.Done) { 'OK' } else { 'Error' }); ErrorCode = $null })
             }
@@ -525,6 +545,10 @@ function Invoke-ModemConnect {
 
         [string] $AdapterInstanceId,
 
+        # Development mode: the in-memory adapter of New-SimulatedDevice, configured instead of a
+        # real one.
+        [object] $SimulatedAdapter,
+
         [ValidateSet('NoDevice', 'PortOpen', 'Identified', 'SimReady', 'Registered', 'DataActive', 'Online')]
         [string] $Previous,
 
@@ -541,8 +565,17 @@ function Invoke-ModemConnect {
 
     $steps = [System.Collections.Generic.List[object]]::new()
     $done = [System.Collections.Generic.HashSet[string]]::new()
+    # A log that can't be written (a full disk) never stops the pass.
     $log = if ($LogFolder) {
-        { param($level, $message) Write-AppLog -Folder $LogFolder -Level $level -Message $message }
+        {
+            param($level, $message)
+            try {
+                Write-AppLog -Folder $LogFolder -Level $level -Message $message -ErrorAction Stop
+            }
+            catch {
+                Write-Verbose "The log can't be written: $($_.Exception.Message)"
+            }
+        }
     }
     else {
         { }
@@ -558,7 +591,7 @@ function Invoke-ModemConnect {
     [void]$done.Add('Initialize')
 
     while ($true) {
-        $observation = Get-ModemObservation -Channel $Channel -Settings $Settings -AdapterInstanceId $AdapterInstanceId -SimPinPath $SimPinPath -ApnSecretPath $ApnSecretPath
+        $observation = Get-ModemObservation -Channel $Channel -Settings $Settings -AdapterInstanceId $AdapterInstanceId -SimulatedAdapter $SimulatedAdapter -SimPinPath $SimPinPath -ApnSecretPath $ApnSecretPath
         if ($observation.Facts.Sim -and $observation.Facts.Sim.Reason -eq 'PinAccepted') {
             try {
                 Set-SimPinAttempt -Attempted $false -Path $SimPinPath -Confirm:$false -ErrorAction Stop
@@ -575,7 +608,7 @@ function Invoke-ModemConnect {
         }
         [void]$done.Add($decision.Action)
         $step = Invoke-ConnectionStep -Channel $Channel -Action $decision.Action -Observation $observation -Settings $Settings `
-            -SimPinPath $SimPinPath -ApnSecretPath $ApnSecretPath -InitializeTimeoutMs $InitializeTimeoutMs
+            -SimPinPath $SimPinPath -ApnSecretPath $ApnSecretPath -InitializeTimeoutMs $InitializeTimeoutMs -SimulatedAdapter $SimulatedAdapter
         $steps.Add($step)
         $commands = ($step.Commands | ForEach-Object { "$($_.Command) $($_.Status)$(if ($null -ne $_.ErrorCode) { " $($_.ErrorCode)" })" }) -join '; '
         & $log $(if ($step.Result -eq 'Done') { 'Info' } else { 'Warning' }) "$($step.Action): $($step.Result) - $commands"

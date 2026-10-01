@@ -1,0 +1,160 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="FM350-GL" Width="700" Height="620" MinWidth="560" MinHeight="460"
+        WindowStartupLocation="CenterScreen" FontSize="13">
+    <DockPanel Margin="12">
+        <!-- The connection, always in view. -->
+        <Border DockPanel.Dock="Top" Padding="10" BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4">
+            <StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <Ellipse x:Name="ToneDot" Width="12" Height="12" Margin="0,0,8,0" VerticalAlignment="Center" Fill="#8A8A8A"/>
+                    <TextBlock x:Name="TitleText" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="TechnologyText" FontSize="14" Margin="14,0,0,0" VerticalAlignment="Center" Foreground="#505050"/>
+                    <TextBlock x:Name="OperatorText" FontSize="14" Margin="10,0,0,0" VerticalAlignment="Center" Foreground="#505050"/>
+                </StackPanel>
+                <TextBlock x:Name="DetailText" TextWrapping="Wrap" Margin="20,4,0,0"/>
+                <TextBlock x:Name="NoteText" TextWrapping="Wrap" Margin="20,4,0,0" Foreground="#606060"/>
+            </StackPanel>
+        </Border>
+
+        <!-- What blocks the connection, with the action that unblocks it. -->
+        <Border x:Name="BlockerPanel" DockPanel.Dock="Top" Margin="0,8,0,0" Padding="10" Background="#FFF6F6" BorderBrush="#E3B5B5" BorderThickness="1" CornerRadius="4" Visibility="Collapsed">
+            <StackPanel>
+                <TextBlock x:Name="BlockerText" TextWrapping="Wrap"/>
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <TextBox x:Name="BlockerInput" Width="240" Margin="0,0,8,0" Visibility="Collapsed"/>
+                    <PasswordBox x:Name="BlockerSecret" Width="240" Margin="0,0,8,0" Visibility="Collapsed"/>
+                    <Button x:Name="BlockerButton" Padding="12,3" Visibility="Collapsed"/>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- The last command's outcome, the port, the time of the last update. -->
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+            <Button x:Name="CheckNowButton" DockPanel.Dock="Right" Content="Check now" Padding="12,3" VerticalAlignment="Bottom"/>
+            <StackPanel>
+                <TextBlock x:Name="ResultText" TextWrapping="Wrap"/>
+                <TextBlock x:Name="FooterText" Foreground="#707070" Margin="0,2,0,0"/>
+            </StackPanel>
+        </DockPanel>
+
+        <TabControl Margin="0,8,0,0">
+            <TabItem Header="Signal">
+                <DockPanel Margin="8">
+                    <StackPanel DockPanel.Dock="Top">
+                        <TextBlock x:Name="SignalText" TextWrapping="Wrap"/>
+                        <TextBlock Text="Cells" FontWeight="SemiBold" Margin="0,10,0,4"/>
+                    </StackPanel>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <DataGrid x:Name="CellsGrid" Grid.Row="0" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" CanUserAddRows="False" GridLinesVisibility="None">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Cell" Binding="{Binding Role}"/>
+                                <DataGridTextColumn Header="RAT" Binding="{Binding Rat}"/>
+                                <DataGridTextColumn Header="Band" Binding="{Binding Band}"/>
+                                <DataGridTextColumn Header="Channel" Binding="{Binding Channel}"/>
+                                <DataGridTextColumn Header="PCI" Binding="{Binding Pci}"/>
+                                <DataGridTextColumn Header="Bandwidth" Binding="{Binding Bandwidth}"/>
+                                <DataGridTextColumn Header="RSRP" Binding="{Binding Rsrp}"/>
+                                <DataGridTextColumn Header="RSRQ" Binding="{Binding Rsrq}"/>
+                                <DataGridTextColumn Header="SINR" Binding="{Binding Sinr}"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <TextBlock Grid.Row="1" Text="Carrier aggregation" FontWeight="SemiBold" Margin="0,10,0,4"/>
+                        <DataGrid x:Name="CarriersGrid" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" CanUserAddRows="False" GridLinesVisibility="None">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Carrier" Binding="{Binding Carrier}"/>
+                                <DataGridTextColumn Header="State" Binding="{Binding State}"/>
+                                <DataGridTextColumn Header="Band" Binding="{Binding Band}"/>
+                                <DataGridTextColumn Header="Channel" Binding="{Binding Channel}"/>
+                                <DataGridTextColumn Header="PCI" Binding="{Binding Pci}"/>
+                                <DataGridTextColumn Header="Bandwidth DL/UL" Binding="{Binding Bandwidth}"/>
+                                <DataGridTextColumn Header="MIMO DL/UL" Binding="{Binding Mimo}"/>
+                                <DataGridTextColumn Header="Modulation DL/UL" Binding="{Binding Modulation}"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+                </DockPanel>
+            </TabItem>
+
+            <TabItem Header="SIM">
+                <StackPanel Margin="10">
+                    <TextBlock x:Name="SimStateText"/>
+                    <TextBlock x:Name="SimRequestText" Margin="0,2,0,0"/>
+                    <TextBlock x:Name="SimStoredText" Margin="0,2,0,0"/>
+                    <TextBlock x:Name="SimNoteText" Margin="0,6,0,0" TextWrapping="Wrap" Foreground="#B03030" Visibility="Collapsed"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                        <TextBlock Text="PIN" VerticalAlignment="Center" Width="40"/>
+                        <PasswordBox x:Name="SimPinBox" Width="120" MaxLength="8"/>
+                        <Button x:Name="StorePinButton" Content="Store PIN" Margin="8,0,0,0" Padding="10,2"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="40,8,0,0">
+                        <Button x:Name="ForgetPinButton" Content="Forget the stored PIN" Padding="10,2"/>
+                        <Button x:Name="DisablePinButton" Content="Remove the PIN from the SIM..." Margin="8,0,0,0" Padding="10,2"/>
+                    </StackPanel>
+                    <TextBlock TextWrapping="Wrap" Foreground="#606060" Margin="0,14,0,0"
+                               Text="A stored PIN is kept encrypted for your Windows user, with the SIM it belongs to. The app enters it once when that SIM asks for it - never twice, never with one attempt left, and never a PUK."/>
+                </StackPanel>
+            </TabItem>
+
+            <TabItem Header="Connection">
+                <Grid Margin="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="APN" Margin="0,4,12,4" VerticalAlignment="Center"/>
+                    <TextBox x:Name="ApnBox" Grid.Row="0" Grid.Column="1" Margin="0,4" ToolTip="Empty: the one of your subscription."/>
+                    <TextBlock Grid.Row="1" Text="PDP type" Margin="0,4,12,4" VerticalAlignment="Center"/>
+                    <ComboBox x:Name="PdpTypeBox" Grid.Row="1" Grid.Column="1" Margin="0,4" Width="140" HorizontalAlignment="Left">
+                        <ComboBoxItem Content="IPV4V6"/>
+                        <ComboBoxItem Content="IP"/>
+                    </ComboBox>
+                    <TextBlock Grid.Row="2" Text="Authentication" Margin="0,4,12,4" VerticalAlignment="Center"/>
+                    <ComboBox x:Name="AuthenticationBox" Grid.Row="2" Grid.Column="1" Margin="0,4" Width="140" HorizontalAlignment="Left">
+                        <ComboBoxItem Content="None"/>
+                        <ComboBoxItem Content="PAP"/>
+                        <ComboBoxItem Content="CHAP"/>
+                    </ComboBox>
+                    <TextBlock Grid.Row="3" Text="User" Margin="0,4,12,4" VerticalAlignment="Center"/>
+                    <TextBox x:Name="ApnUserBox" Grid.Row="3" Grid.Column="1" Margin="0,4"/>
+                    <TextBlock Grid.Row="4" Text="Password" Margin="0,4,12,4" VerticalAlignment="Center"/>
+                    <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Margin="0,4">
+                        <PasswordBox x:Name="ApnPasswordBox" Width="200"/>
+                        <CheckBox x:Name="ClearPasswordBox" Content="Delete the stored password" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <TextBlock x:Name="ApnPasswordStoredText" Grid.Row="5" Grid.Column="1" Margin="0,0,0,4" Foreground="#606060"/>
+                    <TextBlock Grid.Row="6" Text="DNS servers" Margin="0,4,12,4" VerticalAlignment="Center"/>
+                    <TextBox x:Name="DnsBox" Grid.Row="6" Grid.Column="1" Margin="0,4" ToolTip="Separated by commas. Empty: the operator's."/>
+                    <TextBlock Grid.Row="7" Text="Interface metric" Margin="0,4,12,4" VerticalAlignment="Center"/>
+                    <StackPanel Grid.Row="7" Grid.Column="1" Orientation="Horizontal" Margin="0,4">
+                        <TextBox x:Name="MetricBox" Width="80"/>
+                        <TextBlock Text="500 keeps the modem a backup connection; a low value makes it the preferred one." Margin="10,0,0,0" VerticalAlignment="Center" Foreground="#606060" TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <StackPanel Grid.Row="8" Grid.ColumnSpan="2" Margin="0,12,0,0">
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="SaveSettingsButton" Content="Save" Padding="16,3"/>
+                            <Button x:Name="ReloadSettingsButton" Content="Undo changes" Margin="8,0,0,0" Padding="10,3"/>
+                        </StackPanel>
+                        <TextBlock x:Name="SettingsProblemText" TextWrapping="Wrap" Foreground="#B03030" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>

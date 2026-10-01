@@ -290,3 +290,34 @@ Describe 'Set-ModemAdapterConfiguration' {
         Should -Invoke -ModuleName FibocomFm350 Set-NetIPInterface -Times 0 -Exactly
     }
 }
+
+Describe 'Enable-ModemAdapter' {
+    BeforeEach {
+        $script:modemId = 'USB\VID_0E8D&PID_7127&MI_00\8&00000000&0&0000'
+        Mock -ModuleName FibocomFm350 Get-NetAdapter {
+            [pscustomobject]@{ Name = 'Ethernet 2'; PnPDeviceID = 'PCI\VEN_8086&DEV_0000\0'; Status = 'Up' }
+            [pscustomobject]@{ Name = 'Ethernet 3'; PnPDeviceID = $script:modemId; Status = 'Disabled' }
+        }
+        Mock -ModuleName FibocomFm350 Enable-NetAdapter { }
+    }
+
+    It 'enables the modem''s adapter, found by its instance ID, and no other' {
+        Enable-ModemAdapter -InstanceId $script:modemId -Confirm:$false
+        Should -Invoke -ModuleName FibocomFm350 Enable-NetAdapter -Times 1 -Exactly -ParameterFilter { $Name -eq 'Ethernet 3' }
+    }
+
+    It 'fails when the modem has no adapter' {
+        { Enable-ModemAdapter -InstanceId 'USB\VID_0E8D&PID_7127&MI_00\8&00000000&0&0001' -Confirm:$false -ErrorAction Stop } | Should -Throw '*not there*'
+        Should -Invoke -ModuleName FibocomFm350 Enable-NetAdapter -Times 0 -Exactly
+    }
+
+    It 'passes on Windows'' refusal' {
+        Mock -ModuleName FibocomFm350 Enable-NetAdapter { throw 'Access is denied.' }
+        { Enable-ModemAdapter -InstanceId $script:modemId -Confirm:$false -ErrorAction Stop } | Should -Throw '*denied*'
+    }
+
+    It 'changes nothing under -WhatIf' {
+        Enable-ModemAdapter -InstanceId $script:modemId -WhatIf
+        Should -Invoke -ModuleName FibocomFm350 Enable-NetAdapter -Times 0 -Exactly
+    }
+}

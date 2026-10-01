@@ -80,6 +80,8 @@ Describe 'Invoke-ModemConnect' {
         $script:logFolder = Join-Path $TestDrive "logs-$([guid]::NewGuid())"
         $script:adapterState = $script:configuredAdapter
         Mock -ModuleName FibocomFm350 Get-ModemAdapterState { $script:adapterState }
+        # The app runs elevated; a test session may not be.
+        Mock -ModuleName FibocomFm350 Test-AppElevation { $true }
         # Applies the plan to the adapter as Get-ModemAdapterState will read it next.
         Mock -ModuleName FibocomFm350 Set-ModemAdapterConfiguration {
             $state = $script:adapterState | Select-Object -Property *
@@ -150,6 +152,42 @@ Describe 'Invoke-ModemConnect' {
             Should -Invoke -ModuleName FibocomFm350 Set-ModemAdapterConfiguration -Times 1 -Exactly -ParameterFilter {
                 $InterfaceIndex -eq 12 -and ($Plan.Actions.Action -join ',') -eq 'DisableDhcp,SetAddress,SetGateway,SetDns,SetMetric'
             }
+        }
+
+        It 'leaves the adapter alone without administrator rights, and says so' {
+            Mock -ModuleName FibocomFm350 Test-AppElevation { $false }
+            $script:adapterState = $script:freshAdapter
+            $modem = Get-OnlineModem
+            $pass = & $script:connect $modem
+            $pass.State | Should -Be 'DataActive'
+            $pass.Reason | Should -Be 'NotElevated'
+            $pass.Blocked | Should -BeTrue
+            $pass.Steps.Action | Should -Be @('Initialize')
+            Should -Invoke -ModuleName FibocomFm350 Set-ModemAdapterConfiguration -Times 0 -Exactly
+        }
+
+        It 'configures the simulated adapter of development mode, which needs no rights' {
+            Mock -ModuleName FibocomFm350 Test-AppElevation { $false }
+            $device = New-SimulatedDevice -Scenario Connect
+            $pass = & $script:connect $device.Modem @{ SimulatedAdapter = $device.Adapter }
+            $pass.State | Should -Be 'Online'
+            # ForEach-Object: .Address on an array is the array's own Address() method.
+            $device.Adapter.Read().Addresses | ForEach-Object Address | Should -Contain '192.0.2.10'
+            Should -Invoke -ModuleName FibocomFm350 Set-ModemAdapterConfiguration -Times 0 -Exactly
+            Should -Invoke -ModuleName FibocomFm350 Get-ModemAdapterState -Times 0 -Exactly
+        }
+
+        It 'reads the PIN attempts left for the user while the SIM waits, with no PIN stored' {
+            $modem = Get-OnlineModem -Answers @{
+                'AT+CPIN?'  = Get-FixtureLine 'device/cpin.pin.txt'
+                'AT+CPINR'  = Get-FixtureLine 'device/cpinr.absent.txt'
+                'AT+EPINC?' = Get-FixtureLine 'device/epinc.wrong-pin.txt'
+            }
+            $pass = & $script:connect $modem
+            $pass.Reason | Should -Be 'NoPin'
+            $pass.Observation.SimState | Should -Be 'PinRequired'
+            $pass.Observation.PinAttemptsLeft | Should -Be 2
+            $modem.Received | Should -Not -Contain 'AT+ICCID' -Because 'the SIM is identified only for a stored PIN'
         }
 
         It 'writes the APN of the settings' {

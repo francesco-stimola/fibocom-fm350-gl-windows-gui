@@ -1,6 +1,13 @@
 # The modem's network adapter: what its IP configuration should be, from the data context and the
 # settings. Design: docs/ARCHITECTURE.md -> Network configuration.
 
+function Test-AppElevation {
+    # Whether this process has administrator rights, which configuring or enabling the adapter
+    # needs.
+    $principal = [System.Security.Principal.WindowsPrincipal]::new([System.Security.Principal.WindowsIdentity]::GetCurrent())
+    $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
 function Test-UsableIPv4Address {
     # Not a link-local address (169.254.0.0/16, what Windows gives an adapter nobody configured)
     # and not the unspecified one.
@@ -244,5 +251,34 @@ function Set-ModemAdapterConfiguration {
         if ($failure) {
             break
         }
+    }
+}
+
+function Enable-ModemAdapter {
+    <#
+    .SYNOPSIS
+        Enables the modem's network adapter after the user disabled it.
+    .DESCRIPTION
+        Only when the user asks for it - the window's Enable button: a disabled adapter is the
+        user's choice, and the app never enables it on its own (ARCHITECTURE -> Network
+        configuration). The adapter is found by its PnP instance ID, as Get-ModemAdapterState
+        finds it. Needs administrator rights. Throws when no adapter has that instance ID or
+        Windows refuses.
+    .EXAMPLE
+        Enable-ModemAdapter -InstanceId $modem.Network.InstanceId
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)]
+        [string] $InstanceId
+    )
+
+    $adapter = Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue | Where-Object PnPDeviceID -EQ $InstanceId | Select-Object -First 1
+    if (-not $adapter) {
+        throw [System.InvalidOperationException]::new("The modem's network adapter is not there.")
+    }
+    if ($PSCmdlet.ShouldProcess("network adapter $($adapter.Name)", 'Enable')) {
+        # By the name it has now: the adapter was found by its instance ID just above.
+        Enable-NetAdapter -Name $adapter.Name -Confirm:$false -ErrorAction Stop
     }
 }

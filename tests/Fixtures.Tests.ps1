@@ -92,6 +92,21 @@ Describe 'Fixture <Name>' -ForEach $script:fixtureCases {
     }
 }
 
+Describe 'The simulated modem of development mode' {
+    It 'answers with no identifier other than the documented fakes' {
+        $data = Import-PowerShellDataFile -Path "$PSScriptRoot/../src/FibocomFm350/Data/Simulation.psd1"
+        # Every answer line: the base answers, and each scenario's answers and changes.
+        $answers = @($data.Answers) + @($data.Scenarios.Values | ForEach-Object { $_['Answers'] } | Where-Object { $_ })
+        $answers += @($data.Scenarios.Values | ForEach-Object { $_['Then'] } | Where-Object { $_ } | ForEach-Object { $_.Values } | Where-Object { $_ -is [hashtable] })
+        $lines = @($answers | ForEach-Object { $_.Values } | ForEach-Object { $_ } | Where-Object { $_ -is [string] })
+        $lines.Count | Should -BeGreaterThan 30
+        $found = foreach ($line in $lines) {
+            Find-UnredactedValue -Line $line
+        }
+        $found | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'The identifier check itself' {
     It 'flags <Name>' -ForEach @(
         @{ Name = 'an IMEI'; Line = '356938035643809' }
