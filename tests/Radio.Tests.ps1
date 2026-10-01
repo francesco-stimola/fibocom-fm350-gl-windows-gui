@@ -50,9 +50,11 @@ Describe 'Resolve-RadioStatus' {
     }
 
     It 'calls an idle LTE anchor with NR measured LTE, with 5G available' {
-        # As on the device, idle: +CESQ fills its NR fields though no NR cell is listed.
+        # Captured idle: +CESQ fills its NR fields though +GTCCINFO lists LTE cells only.
+        $idle = ConvertFrom-AtSignalQuality -Lines (Get-FixtureAnswer -Name 'cesq.idle-anchor.txt' -Folder device)
+        $idle.NrRsrp | Should -Not -BeNullOrEmpty
         $report = Get-TestReport -Name 'gtccinfo.lte.txt'
-        $status = Resolve-RadioStatus -Operator $script:lteOperator -Signal $script:nsaSignal @report
+        $status = Resolve-RadioStatus -Operator $script:lteOperator -Signal $idle @report
         $status.Technology | Should -Be 'LTE'
         $status.NrAvailable | Should -BeTrue
     }
@@ -76,6 +78,10 @@ Describe 'Resolve-RadioStatus' {
         $status.Rsrp | Should -BeNullOrEmpty
         $status.Bars | Should -BeNullOrEmpty
         $status.Operator | Should -BeNullOrEmpty
+    }
+
+    It 'names no technology from an operator alone, without a serving cell' {
+        (Resolve-RadioStatus -Operator $script:lteOperator -Signal $script:lteSignal -Cell @() -Carrier @()).Technology | Should -BeNullOrEmpty
     }
 
     It 'takes the serving cell''s RSRP when +CESQ has none' {
@@ -123,7 +129,24 @@ Describe 'Get-ModemRadioStatus' {
         }
         $status.Technology | Should -Be 'LTE-A'
         $status.Bars | Should -Be 2
-        $modem.Received | Should -Be @('AT+CESQ', 'AT+COPS?', 'AT+GTCCINFO?;+GTCAINFO?')
+        $status.Answered | Should -BeTrue
+        $modem.Received | Should -Be @('AT+CESQ', 'AT+GTCCINFO?;+GTCAINFO?', 'AT+COPS?')
+    }
+
+    It 'stops at a read that gets no answer: a modem that stopped answering costs one timeout' {
+        $modem = New-SimulatedModem -Fixture (Get-ChildItem "$PSScriptRoot/fixtures/device" -Filter '*.txt' | Where-Object Name -In 'cesq.lte.txt', 'cops.lte.txt', 'gtccinfo.ltea.txt')
+        $modem.Script('AT+CESQ', @{ NoFinal = $true })
+        $channel = New-AtChannel -Transport $modem
+        try {
+            $clock = [Diagnostics.Stopwatch]::StartNew()
+            $status = Get-ModemRadioStatus -Channel $channel
+        }
+        finally {
+            Close-AtChannel -Channel $channel
+        }
+        $status.Answered | Should -BeFalse
+        $modem.Received | Should -Be @('AT+CESQ') -Because 'AT+COPS? would wait three minutes'
+        $clock.ElapsedMilliseconds | Should -BeLessThan 10000
     }
 
     It 'leaves out what fails to read' {

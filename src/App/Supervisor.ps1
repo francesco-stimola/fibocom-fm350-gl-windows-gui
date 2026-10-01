@@ -26,6 +26,9 @@ function Resolve-SupervisorAction {
         A pure decision from the worker's state: -Ended (its runspace finished: an error ended
         it), -HeartbeatAgeMs (since its last sign of life), -UptimeMs (since it started), and
         -Failures, the workers that ended or hung in a row so far. -Stopping: the app is exiting.
+        -SinceResumeMs: since the UI thread resumed from a pause - a computer that slept stops
+        the worker's waits and the UI's timer alike while the clock runs on, so only silence the
+        UI has watched counts: a worker is hung when both ages pass the limit.
 
         Returns Action - 'None', 'Restart' (it ended: start a new one) or 'Replace' (it hangs:
         abandon it, start a new one) - Reason ('Ended', 'Hung' or $null), Failures (the count
@@ -48,11 +51,14 @@ function Resolve-SupervisorAction {
         [ValidateRange(0, [int]::MaxValue)]
         [int] $Failures,
 
-        [switch] $Stopping
+        [switch] $Stopping,
+
+        [long] $SinceResumeMs = [long]::MaxValue
     )
 
     $timings = $script:SupervisorTimings
-    $reason = if ($Stopping) { $null } elseif ($Ended) { 'Ended' } elseif ($HeartbeatAgeMs -gt $timings.HungMs) { 'Hung' } else { $null }
+    $silence = [Math]::Min($HeartbeatAgeMs, $SinceResumeMs)
+    $reason = if ($Stopping) { $null } elseif ($Ended) { 'Ended' } elseif ($silence -gt $timings.HungMs) { 'Hung' } else { $null }
     if (-not $reason) {
         return [pscustomobject]@{ Action = 'None'; Reason = $null; Failures = $Failures; DelayMs = 0 }
     }
@@ -271,9 +277,16 @@ function Enter-AppInstance {
             $mutex.Dispose()
         }
         $existing = $null
-        if ([System.Threading.EventWaitHandle]::TryOpenExisting($showName, [ref]$existing)) {
-            [void]$existing.Set()
-            $existing.Dispose()
+        try {
+            if ([System.Threading.EventWaitHandle]::TryOpenExisting($showName, [ref]$existing)) {
+                [void]$existing.Set()
+                $existing.Dispose()
+            }
+        }
+        catch [System.UnauthorizedAccessException] {
+            # The running instance has administrator rights, this one doesn't: it can't be told to
+            # show its window, and this one exits all the same.
+            Write-Verbose 'The running instance has administrator rights: its window is not brought up.'
         }
         return [pscustomobject]@{ Owned = $false; Mutex = $null; ShowEvent = $null }
     }

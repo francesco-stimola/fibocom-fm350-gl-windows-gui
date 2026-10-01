@@ -19,7 +19,7 @@ function Resolve-RadioStatus {
         fields, which it fills on an idle LTE anchor cell with no NR leg (AT-COMMANDS section 3):
         '5G SA' (an NR serving cell and no LTE one), '5G NSA' (an LTE serving cell with an NR
         serving cell: the NR leg in use), 'LTE-A' (an LTE serving cell with an active secondary
-        carrier), 'LTE' (an LTE serving cell, or an operator without cells reported), or $null.
+        carrier), 'LTE' (an LTE serving cell), or $null when no serving cell is reported.
         NrAvailable: NR measured (+CESQ) while no NR leg is in use - 5G the modem could add
         (decided 2026-10-01: the app says '5G' only for the leg in use).
 
@@ -64,7 +64,7 @@ function Resolve-RadioStatus {
     elseif ($lte -and $secondary) {
         'LTE-A'
     }
-    elseif ($lte -or $operatorName) {
+    elseif ($lte) {
         'LTE'
     }
     else {
@@ -101,9 +101,12 @@ function Get-ModemRadioStatus {
     .SYNOPSIS
         Reads the radio's status for display on an open AT channel.
     .DESCRIPTION
-        Reads AT+CESQ, AT+COPS? and AT+GTCCINFO?;+GTCAINFO?, and sums them up with
+        Reads AT+CESQ, AT+GTCCINFO?;+GTCAINFO? and AT+COPS?, and sums them up with
         Resolve-RadioStatus. Changes nothing on the modem. A read that fails leaves its part
-        empty.
+        empty; one that gets no answer - a timeout, a lost port - ends the reads there, so a modem
+        that stopped answering costs one command's timeout, never AT+COPS's three minutes.
+
+        Returns Resolve-RadioStatus's object, with Answered: $false when a read got no answer.
     .EXAMPLE
         Get-ModemRadioStatus -Channel $channel
     #>
@@ -114,8 +117,22 @@ function Get-ModemRadioStatus {
         [AtChannel] $Channel
     )
 
-    $signal = ConvertFrom-AtSignalQuality -Lines (Invoke-AtCommand -Channel $Channel -Command 'AT+CESQ').Lines
-    $operator = ConvertFrom-AtOperator -Lines (Invoke-AtCommand -Channel $Channel -Command 'AT+COPS?').Lines
-    $report = (Invoke-AtCommand -Channel $Channel -Command 'AT+GTCCINFO?;+GTCAINFO?').Lines
-    Resolve-RadioStatus -Operator $operator -Signal $signal -Cell @(ConvertFrom-AtCellInfo -Lines $report) -Carrier @(ConvertFrom-AtCarrierAggregation -Lines $report)
+    $silent = 'Timeout', 'PortLost'
+    $report = [string[]]@()
+    $operator = $null
+    $answer = Invoke-AtCommand -Channel $Channel -Command 'AT+CESQ'
+    $signal = ConvertFrom-AtSignalQuality -Lines $answer.Lines
+    $answered = $answer.Status -notin $silent
+    if ($answered) {
+        $answer = Invoke-AtCommand -Channel $Channel -Command 'AT+GTCCINFO?;+GTCAINFO?'
+        $report = $answer.Lines
+        $answered = $answer.Status -notin $silent
+    }
+    if ($answered) {
+        $answer = Invoke-AtCommand -Channel $Channel -Command 'AT+COPS?'
+        $operator = ConvertFrom-AtOperator -Lines $answer.Lines
+        $answered = $answer.Status -notin $silent
+    }
+    $status = Resolve-RadioStatus -Operator $operator -Signal $signal -Cell @(ConvertFrom-AtCellInfo -Lines $report) -Carrier @(ConvertFrom-AtCarrierAggregation -Lines $report)
+    $status | Add-Member -NotePropertyName Answered -NotePropertyValue $answered -PassThru
 }

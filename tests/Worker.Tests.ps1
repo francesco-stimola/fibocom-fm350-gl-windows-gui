@@ -58,12 +58,18 @@ Describe 'Resolve-WorkerSchedule' {
         @{ Name = 'the SIM not ready: no status read'; Arguments = @{ Now = 1000; LastPass = 0; State = 'Identified'; Blocked = $true; PortOpen = $true }; Scan = $false; Pass = $false; Status = $false; Wait = 29000 }
         @{ Name = 'a pass asked for: at once, whatever the last one'; Arguments = @{ Now = 1000; LastPass = 1000; LastStatus = 1000; State = 'Online'; PortOpen = $true; PassForced = $true }; Scan = $false; Pass = $true; Status = $false; Wait = 0 }
         @{ Name = 'a port open: no scan'; Arguments = @{ Now = 100000; LastPass = 99000; LastStatus = 99000; State = 'Online'; PortOpen = $true }; Scan = $false; Pass = $false; Status = $false; Wait = 4000 }
+        @{ Name = 'no adapter found, never looked again: a look now'; Arguments = @{ Now = 10000; LastPass = 9000; LastStatus = 9000; State = 'DataActive'; Blocked = $true; PortOpen = $true; AdapterMissing = $true }; Scan = $false; Pass = $false; Status = $false; AdapterLook = $true; Wait = 0 }
+        @{ Name = 'no adapter found, looked 2 s ago: the next look in 3 s'; Arguments = @{ Now = 10000; LastPass = 9000; LastStatus = 9000; LastAdapterLook = 8000; State = 'DataActive'; Blocked = $true; PortOpen = $true; AdapterMissing = $true }; Scan = $false; Pass = $false; Status = $false; AdapterLook = $false; Wait = 3000 }
+        @{ Name = 'the adapter there: no look'; Arguments = @{ Now = 10000; LastPass = 9000; LastStatus = 9000; State = 'Online'; PortOpen = $true }; Scan = $false; Pass = $false; Status = $false; AdapterLook = $false; Wait = 4000 }
     ) {
         $schedule = Resolve-WorkerSchedule @Arguments
         $schedule.Scan | Should -Be $Scan
         $schedule.Pass | Should -Be $Pass
         $schedule.Status | Should -Be $Status
         $schedule.WaitMs | Should -Be $Wait
+        if ($null -ne $AdapterLook) {
+            $schedule.AdapterLook | Should -Be $AdapterLook
+        }
     }
 }
 
@@ -330,6 +336,43 @@ Describe 'Invoke-ModemWorkerCycle' {
         }
     }
 
+    Context 'what changes under it' {
+        It 'runs a failed pass again at the retry, not at its next interval' {
+            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario Online)
+            Mock -ModuleName FibocomFm350 Invoke-ModemConnect { throw 'The pass failed.' }
+            { Invoke-ModemWorkerCycle -Worker $worker -ErrorAction Stop } | Should -Throw '*pass failed*'
+            $worker.LastPass | Should -BeNullOrEmpty
+            $worker.PassForced | Should -BeTrue
+            (Resolve-WorkerSchedule -Now $script:now -LastPass $worker.LastPass -PortOpen -State 'Online').Pass | Should -BeTrue
+        }
+
+        It 'forgets the signal once the state drops below a ready SIM' {
+            $device = New-SimulatedDevice -Scenario Online
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            $script:link['Snapshot'].Radio | Should -Not -BeNullOrEmpty
+            # The modem restarted and its SIM now waits for its PIN.
+            $device.Modem.SetAnswer('AT+CPIN?', @('+CPIN: SIM PIN', 'OK'))
+            [void](Invoke-TestCommand -Worker $worker -Kind ConnectNow)
+            $snapshot = $script:link['Snapshot']
+            $snapshot.Reason | Should -Be 'NoPin'
+            $snapshot.Radio | Should -BeNullOrEmpty
+        }
+
+        It 'brings the pass forward when the modem stops answering the status read' {
+            $device = New-SimulatedDevice -Scenario Online
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            $script:now += 5000
+            $device.Modem.Script('AT+CESQ', @{ NoFinal = $true })
+            Invoke-ModemWorkerCycle -Worker $worker
+            $script:link['Snapshot'].Radio.Answered | Should -BeFalse
+            $worker.PassForced | Should -BeTrue
+            $worker.WaitMs | Should -Be 0
+            @($device.Modem.Received | Where-Object { $_ -eq 'AT+CLCK="SC",2' }).Count | Should -Be 1 -Because 'nothing more is asked of a modem that doesn''t answer'
+        }
+    }
+
     Context 'unsolicited codes' {
         It 'brings the next pass forward when the modem reports a context change' {
             $device = New-SimulatedDevice -Scenario Online
@@ -407,6 +450,19 @@ Describe 'The worker and the AT port' {
         @(Get-TestLog | Where-Object { $_ -match "can't be opened" }).Count | Should -Be 1 -Because 'the same failure is logged once'
     }
 
+    It 'finds the network adapter a PnP read missed, without closing the port' {
+        # The network function missed at the look that opened the port.
+        $script:records = @(Get-TestRecord -PortName 'COM14' | Where-Object PortName)
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:link['Snapshot'].Reason | Should -Be 'NoAdapter'
+        $script:records = @(Get-TestRecord -PortName 'COM14')
+        $script:now += 5000
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:link['Snapshot'].State | Should -Be 'Online'
+        Should -Invoke -ModuleName FibocomFm350 Open-SerialAtTransport -Times 1 -Exactly
+        $script:modems['COM14'].Closed | Should -BeFalse
+    }
+
     It 'looks for the modem again only at the scan interval' {
         $script:records = @()
         Invoke-ModemWorkerCycle -Worker $script:worker
@@ -478,7 +534,40 @@ Describe 'Invoke-ModemWorker' {
             }
             $link['Snapshot'].State | Should -Be 'Online'
             $log = @(Get-ChildItem (Join-Path $folder 'logs') | Get-Content)
-            $log -match 'ERROR\s+Cycle failed \(1 in a row\): .*PnP is busy' | Should -Not -BeNullOrEmpty
+            $failed = @($log -match 'ERROR\s+Cycle failed \(1 in a row\): .*PnP is busy')[0]
+            $opened = @($log -match 'AT port SIMULATED open')[0]
+            $failed | Should -Not -BeNullOrEmpty
+            # The look that failed is the one run again, a second later - not at the next scan.
+            $at = { param($line) [DateTimeOffset]::Parse($line.Substring(0, 29), [cultureinfo]::InvariantCulture) }
+            ((& $at $opened) - (& $at $failed)).TotalMilliseconds | Should -BeLessThan 3000
+        }
+        finally {
+            $link['Stop'] = $true
+            [void]$link['Wake'].Set()
+            $job | Wait-Job -Timeout 15 | Out-Null
+            $job | Remove-Job -Force
+            Close-ModemWorkerLink -Link $link
+        }
+    }
+
+    It 'ends after three failed cycles in a row, with the error' {
+        $folder = Join-Path $TestDrive ([guid]::NewGuid())
+        $link = New-ModemWorkerLink
+        $job = Start-ThreadJob -ScriptBlock {
+            Import-Module $using:modulePath
+            $broken = [pscustomobject]@{ Scenario = 'Online' }
+            $broken | Add-Member -MemberType ScriptMethod -Name Find -Value { throw 'PnP is broken.' }
+            Invoke-ModemWorker -Link $using:link -Simulation $broken -DataFolder $using:folder
+        }
+        try {
+            $job | Wait-Job -Timeout 20 | Out-Null
+            $job.State | Should -Be 'Failed'
+            $failures = $null
+            $job | Receive-Job -ErrorAction SilentlyContinue -ErrorVariable failures | Out-Null
+            ($failures | ForEach-Object { $_.ToString() }) -join ' ' | Should -Match 'PnP is broken'
+            $log = @(Get-ChildItem (Join-Path $folder 'logs') | Get-Content)
+            $log -match 'Cycle failed \(3 in a row\)' | Should -Not -BeNullOrEmpty
+            $log -match 'Worker 1 stopped' | Should -Not -BeNullOrEmpty
         }
         finally {
             $link['Stop'] = $true

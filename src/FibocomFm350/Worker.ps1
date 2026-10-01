@@ -200,6 +200,8 @@ function Resolve-WorkerSchedule {
         - Pass: a port open, and a pass asked for, or the last one older than the interval for
           the state: online, on its way, or waiting for the user.
         - Status: a port open, the SIM ready, and the last status read older than its interval.
+        - AdapterLook: a port open, the last pass found no network adapter (-AdapterMissing),
+          and the last look for it by PnP older than the scan interval.
         - WaitMs: until the next of those falls due; 0 when one is due now.
     .EXAMPLE
         Resolve-WorkerSchedule -Now 60000 -LastPass 25000 -State Online -PortOpen
@@ -216,13 +218,17 @@ function Resolve-WorkerSchedule {
 
         [Nullable[long]] $LastStatus,
 
+        [Nullable[long]] $LastAdapterLook,
+
         [string] $State,
 
         [switch] $Blocked,
 
         [switch] $PortOpen,
 
-        [switch] $PassForced
+        [switch] $PassForced,
+
+        [switch] $AdapterMissing
     )
 
     $intervals = $script:WorkerIntervals
@@ -233,6 +239,7 @@ function Resolve-WorkerSchedule {
     $scan = $false
     $pass = $false
     $status = $false
+    $adapterLook = $false
     if (-not $PortOpen) {
         $wait = Get-WorkerDueTime -Now $Now -Last $LastScan -Interval $intervals.Scan
         $scan = $wait -eq 0
@@ -247,12 +254,18 @@ function Resolve-WorkerSchedule {
             $status = $wait -eq 0
             $waits.Add($wait)
         }
+        if ($AdapterMissing) {
+            $wait = Get-WorkerDueTime -Now $Now -Last $LastAdapterLook -Interval $intervals.Scan
+            $adapterLook = $wait -eq 0
+            $waits.Add($wait)
+        }
     }
     [pscustomobject]@{
-        Scan   = $scan
-        Pass   = $pass
-        Status = $status
-        WaitMs = [int]($waits | Measure-Object -Minimum).Minimum
+        Scan        = $scan
+        Pass        = $pass
+        Status      = $status
+        AdapterLook = $adapterLook
+        WaitMs      = [int]($waits | Measure-Object -Minimum).Minimum
     }
 }
 
@@ -413,6 +426,7 @@ function New-ModemWorker {
         LastScan          = $null
         LastPass          = $null
         LastStatus        = $null
+        LastAdapterLook   = $null
         PassForced        = $true
         Version           = if ($Previous) { [long]$Previous.Version } else { [long]0 }
         WaitMs            = 0
@@ -463,22 +477,30 @@ function Close-WorkerChannel {
     $Worker.Radio = $null
     $Worker.PinRequestOn = $null
     $Worker.LastScan = $null
+    $Worker.LastAdapterLook = $null
     if ($Why) {
         Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "AT port $($Worker.PortName) $Why$(if ($reason) { ": $reason" })"
     }
 }
 
-function Find-WorkerModem {
-    # Looks for the modem by PnP - or asks the simulated device - and opens its AT port when it
-    # is there. Every look starts from nothing: the COM number may have changed.
+function Get-WorkerPresence {
+    # The modem as PnP reports it now - or as the simulated device does.
     param([hashtable] $Worker)
 
-    $presence = if ($Worker.Simulation) {
+    if ($Worker.Simulation) {
         $Worker.Simulation.Find()
     }
     else {
         Resolve-ModemPresence -Modem @(Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord))
     }
+}
+
+function Find-WorkerModem {
+    # Looks for the modem and opens its AT port when it is there. Every look starts from nothing:
+    # the COM number may have changed.
+    param([hashtable] $Worker)
+
+    $presence = Get-WorkerPresence -Worker $Worker
     $before = if ($Worker.Presence) { $Worker.Presence.Device } else { $null }
     if ($presence.Device -ne $before) {
         Write-WorkerLog -Worker $Worker -Level 'Info' -Message "Modem: $($presence.Device)$(if ($presence.PortName) { ", AT port $($presence.PortName)" })"
@@ -641,7 +663,8 @@ function Invoke-ModemWorkerCycle {
     $due = {
         $decision = $Worker.Decision
         Resolve-WorkerSchedule -Now (& $Worker.Clock) -LastScan $Worker.LastScan -LastPass $Worker.LastPass -LastStatus $Worker.LastStatus `
-            -State $Worker.State -Blocked:($decision -and $decision.Blocked) -PortOpen:([bool]$Worker.Channel) -PassForced:$Worker.PassForced
+            -LastAdapterLook $Worker.LastAdapterLook -State $Worker.State -Blocked:($decision -and $decision.Blocked) `
+            -PortOpen:([bool]$Worker.Channel) -PassForced:$Worker.PassForced -AdapterMissing:($decision -and $decision.Reason -eq 'NoAdapter')
     }
     $lost = {
         if ($Worker.Channel -and $Worker.Channel.State -ne 'Open') {
@@ -679,11 +702,13 @@ function Invoke-ModemWorkerCycle {
         $Worker.PinStored = [bool](Get-SimPin -Path $Worker.Paths.SimPin)
     }
 
-    # The modem's port.
+    # The modem's port. What is due is marked done only once it has run: a part that fails is due
+    # again at the retry, and fails the next cycle too.
     & $lost
     if ((& $due).Scan) {
-        $Worker.LastScan = & $Worker.Clock
+        $started = & $Worker.Clock
         Find-WorkerModem -Worker $Worker
+        $Worker.LastScan = $started
         if (-not $Worker.Channel) {
             $observation = @{ Device = $Worker.Presence.Device; PortOpen = $false; PortError = $Worker.PortError }
             $previous = if ($Worker.State) { @{ Previous = $Worker.State } } else { @{} }
@@ -692,10 +717,22 @@ function Invoke-ModemWorkerCycle {
         $published = $true
     }
 
+    # The modem's network adapter, looked for again while a pass finds none: a PnP read can miss
+    # it, and the port stays open meanwhile.
+    if ((& $due).AdapterLook) {
+        $started = & $Worker.Clock
+        $presence = Get-WorkerPresence -Worker $Worker
+        $Worker.LastAdapterLook = $started
+        if ($presence.Device -eq 'Present' -and $presence.PortName -eq $Worker.PortName -and $presence.AdapterInstanceId -and $presence.AdapterInstanceId -ne $Worker.AdapterInstanceId) {
+            $Worker.AdapterInstanceId = $presence.AdapterInstanceId
+            $Worker.PassForced = $true
+            Write-WorkerLog -Worker $Worker -Level 'Info' -Message 'The modem''s network adapter is found'
+        }
+    }
+
     # A connect pass.
     if ((& $due).Pass) {
-        $Worker.LastPass = & $Worker.Clock
-        $Worker.PassForced = $false
+        $started = & $Worker.Clock
         $options = @{}
         if ($Worker.State) {
             $options['Previous'] = $Worker.State
@@ -706,6 +743,8 @@ function Invoke-ModemWorkerCycle {
         $pass = Invoke-ModemConnect -Channel $Worker.Channel -Settings $Worker.Settings -AdapterInstanceId $Worker.AdapterInstanceId `
             -SimPinPath $Worker.Paths.SimPin -ApnSecretPath $Worker.Paths.ApnSecret -LogFolder $Worker.Paths.Log `
             -WhatIf:$Worker.ObserveOnly -Confirm:$false @options
+        $Worker.LastPass = $started
+        $Worker.PassForced = $false
         Register-WorkerDecision -Worker $Worker -Decision $pass -Logged
         $Worker.Facts = $pass.Observation
         if (@($pass.Steps | Where-Object Result -EQ 'PinRejected').Count -gt 0) {
@@ -715,18 +754,27 @@ function Invoke-ModemWorkerCycle {
         if ($Worker.Facts.SimState -ne 'Ready') {
             $Worker.PinRequestOn = $null
         }
+        # Below a ready SIM the radio is not read: what was read before is no longer shown.
+        if ($script:ConnectionStates.IndexOf($Worker.State) -lt $script:ConnectionStates.IndexOf('SimReady')) {
+            $Worker.Radio = $null
+        }
         $published = $true
         & $lost
     }
 
     # The radio, for display.
     if ((& $due).Status) {
-        $Worker.LastStatus = & $Worker.Clock
+        $started = & $Worker.Clock
         $Worker.Radio = Get-ModemRadioStatus -Channel $Worker.Channel
-        if ($null -eq $Worker.PinRequestOn -and $Worker.Facts -and $Worker.Facts.SimState -eq 'Ready') {
-            $Worker.PinRequestOn = ConvertFrom-AtFacilityLock -Lines (Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+CLCK="SC",2').Lines
+        $Worker.LastStatus = $started
+        if (-not $Worker.Radio.Answered) {
+            # The modem stopped answering: the pass says what that means, now.
+            $Worker.PassForced = $true
         }
-        if ($Worker.Channel.State -eq 'Open') {
+        elseif ($Worker.Channel.State -eq 'Open') {
+            if ($null -eq $Worker.PinRequestOn -and $Worker.Facts -and $Worker.Facts.SimState -eq 'Ready') {
+                $Worker.PinRequestOn = ConvertFrom-AtFacilityLock -Lines (Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+CLCK="SC",2').Lines
+            }
             foreach ($code in @(Receive-AtUrc -Channel $Worker.Channel)) {
                 if ($code -match $script:WorkerPassUrcPattern) {
                     $Worker.PassForced = $true

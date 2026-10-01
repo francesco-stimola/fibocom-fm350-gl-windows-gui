@@ -1,0 +1,4 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06, SIM in, automatic mode, registered on an LTE cell, idle (+CSCON mode 0), no context active but the attach one; +GTCCINFO lists LTE cells only, yet the NR fields are filled.
+AT+CESQ
++CESQ: 27,99,255,255,18,45,89,54,83
+OK

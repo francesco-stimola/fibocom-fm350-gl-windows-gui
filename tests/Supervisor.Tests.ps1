@@ -50,6 +50,9 @@ Describe 'Resolve-SupervisorAction' {
         @{ Name = 'ended after running for long: the count starts over'; Arguments = @{ Ended = $true; UptimeMs = 600000; Failures = 5 }; Action = 'Restart'; Reason = 'Ended'; Failures = 1; DelayMs = 5000 }
         @{ Name = 'ended while the app exits'; Arguments = @{ Ended = $true; UptimeMs = 1000; Failures = 0; Stopping = $true }; Action = 'None'; Reason = $null; Failures = 0; DelayMs = 0 }
         @{ Name = 'silent while the app exits'; Arguments = @{ HeartbeatAgeMs = 90000; UptimeMs = 120000; Failures = 0; Stopping = $true }; Action = 'None'; Reason = $null; Failures = 0; DelayMs = 0 }
+        @{ Name = 'silent across a sleep, resumed a moment ago'; Arguments = @{ HeartbeatAgeMs = 3600000; UptimeMs = 4000000; Failures = 0; SinceResumeMs = 600 }; Action = 'None'; Reason = $null; Failures = 0; DelayMs = 0 }
+        @{ Name = 'silent since well after the resume'; Arguments = @{ HeartbeatAgeMs = 3600000; UptimeMs = 4000000; Failures = 0; SinceResumeMs = 61000 }; Action = 'Replace'; Reason = 'Hung'; Failures = 1; DelayMs = 5000 }
+        @{ Name = 'ended right after a resume'; Arguments = @{ Ended = $true; UptimeMs = 30000; Failures = 0; SinceResumeMs = 600 }; Action = 'Restart'; Reason = 'Ended'; Failures = 1; DelayMs = 5000 }
     ) {
         $decision = Resolve-SupervisorAction @Arguments
         $decision.Action | Should -Be $Action
@@ -175,6 +178,36 @@ Describe 'The single instance' {
         }
         finally {
             Exit-AppInstance -Instance $first
+        }
+    }
+
+    It 'lets a second launch without the first one''s rights exit quietly' {
+        # The first instance, as if elevated: its mutex held on another thread, its show event
+        # open to waiting only - signalling it is denied.
+        $ready = Join-Path $TestDrive "$script:name.ready"
+        $finish = Join-Path $TestDrive "$script:name.finish"
+        $mutexName = "Global\$script:name"
+        $holder = Start-ThreadJob -ScriptBlock {
+            $mutex = [System.Threading.Mutex]::new($true, $using:mutexName)
+            New-Item -Path $using:ready | Out-Null
+            while (-not (Test-Path $using:finish)) { Start-Sleep -Milliseconds 50 }
+            $mutex.ReleaseMutex()
+            $mutex.Dispose()
+        }
+        $security = [System.Security.AccessControl.EventWaitHandleSecurity]::new()
+        $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+        $security.AddAccessRule([System.Security.AccessControl.EventWaitHandleAccessRule]::new($user, 'Synchronize', 'Allow'))
+        $created = $false
+        $show = [System.Threading.EventWaitHandleAcl]::Create($false, 'AutoReset', "Local\$script:name-show", [ref]$created, $security)
+        try {
+            Wait-Until { Test-Path $ready } | Should -BeTrue
+            $instance = Enter-AppInstance -Name $script:name -ErrorAction Stop
+            $instance.Owned | Should -BeFalse
+        }
+        finally {
+            New-Item -Path $finish | Out-Null
+            $holder | Wait-Job -Timeout 10 | Remove-Job -Force
+            $show.Dispose()
         }
     }
 

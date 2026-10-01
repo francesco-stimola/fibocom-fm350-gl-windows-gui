@@ -6,6 +6,10 @@
 # launch's signal.
 $script:UiTickMs = 500
 
+# A gap this long between two ticks is a pause - the computer slept: the worker's silence is
+# counted from the resume, never across the pause.
+$script:UiPauseMs = 5000
+
 # A worker silent this long is shown as not responding; the supervisor replaces it later
 # (SupervisorTimings.HungMs).
 $script:WorkerStaleMs = 15000
@@ -66,7 +70,9 @@ function Get-AppWorkerState {
     if (-not $worker) {
         return 'Restarting'
     }
-    if ([Environment]::TickCount64 - $worker.Link['Heartbeat'] -gt $script:WorkerStaleMs) {
+    # Silence is counted from the later of its last beat and the end of a pause (a sleep).
+    $since = [Math]::Max([long]$worker.Link['Heartbeat'], [long]$script:App.ResumedAt)
+    if ([Environment]::TickCount64 - $since -gt $script:WorkerStaleMs) {
         return 'NotResponding'
     }
     'Running'
@@ -142,6 +148,12 @@ function Update-App {
 
     $app = $script:App
     $now = [Environment]::TickCount64
+    if ($app.LastTick -and $now - $app.LastTick -gt $script:UiPauseMs) {
+        $app.ResumedAt = $now
+        $pause = (($now - $app.LastTick) / 1000).ToString('0', [cultureinfo]::InvariantCulture)
+        Write-UiLog -Level 'Info' -Message "Resumed after a pause of $pause s (the computer slept?)."
+    }
+    $app.LastTick = $now
 
     foreach ($old in @($app.Retiring)) {
         if (Complete-WorkerRunspace -Worker $old) {
@@ -160,7 +172,7 @@ function Update-App {
             $app.LastSnapshot = $snapshot
         }
         $decision = Resolve-SupervisorAction -Ended:$current.Handle.IsCompleted -HeartbeatAgeMs ($now - $current.Link['Heartbeat']) `
-            -UptimeMs ($now - $current.Started) -Failures $app.Failures -Stopping:$app.Exiting
+            -UptimeMs ($now - $current.Started) -Failures $app.Failures -Stopping:$app.Exiting -SinceResumeMs ($now - $app.ResumedAt)
         if ($decision.Action -ne 'None') {
             $app.Worker = $null
             $app.Failures = $decision.Failures
@@ -281,6 +293,8 @@ function Start-Fm350App {
         TrayState     = @{}
         ShownVersion  = $null
         ShownWorker   = $null
+        LastTick      = $null
+        ResumedAt     = [Environment]::TickCount64
     }
     $timer = $null
     Write-UiLog -Level 'Info' -Message "App started$(if ($Simulated) { " - simulated, scenario $Scenario" })$(if ($ObserveOnly) { ' - observe only' })"

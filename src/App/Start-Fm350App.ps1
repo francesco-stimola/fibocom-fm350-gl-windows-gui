@@ -26,5 +26,15 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath 'FibocomFm350.App.psd1')
-Start-Fm350App @PSBoundParameters
+$code = 0
+try {
+    Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath 'FibocomFm350.App.psd1')
+    Start-Fm350App @PSBoundParameters
+}
+catch {
+    $code = 1
+    Write-Error -ErrorRecord $_ -ErrorAction Continue
+}
+# A worker stuck in a call that never returns keeps its thread - and the process, with the AT port
+# - alive after the app has closed everything else. The process ends here, whatever is left.
+[Environment]::Exit($code)
