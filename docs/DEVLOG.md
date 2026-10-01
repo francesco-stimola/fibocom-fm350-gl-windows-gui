@@ -4,6 +4,14 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-01 — The adapter plan converges on the device
+
+The per-family DNS comparison, written after the review, checked on the real adapter: the app's
+own pass, as administrator, defined and activated the context and configured the adapter
+(`Online`, data through the modem); a second pass changed nothing. Windows lists three `fec0`
+IPv6 DNS servers on an unconfigured adapter and drops them once IPv4 servers are set, so here the
+whole-list comparison would have matched too; the per-family one holds either way.
+
 ## 2026-10-01 — Decided: an unreadable APN password, a disabled adapter
 
 The two decisions the M2 review left open, taken by the maintainer:
@@ -29,8 +37,9 @@ test that fails without the fix:
   `+CGDCONT?`, registered or not — and a modem error on `+CPIN?` other than the SIM codes is an
   unknown SIM state, not a blocked one.
 - **DNS servers are compared per family.** Windows reads IPv4 servers first and lists IPv6 ones
-  nobody set, so the whole-list comparison could never match: the adapter would never count as
-  configured and `SetDns` would run at every pass.
+  nobody set, so the whole-list comparison could fail to match for good (an IPv6-first override, IPv6
+  servers left on the adapter): it would never count as configured and `SetDns` would run at
+  every pass.
 - **The PIN attempt is read back before the PIN goes out**: a file that can't be written no longer
   lets an unrecorded PIN through (`Write-AppFile` now throws whatever the caller's error
   preference, and leaves no temporary file). A pending attempt is cleared only by its own SIM.
@@ -71,9 +80,10 @@ where the modem differs from its documents:
   documented error tolerated (the maintainer's decision; the open decision is closed). Our module
   took the mode write with no challenge-response; other sources pass the challenge first, so some
   modules may refuse it.
-- **COM numbers change.** Removing or inserting the SIM can make the modem re-enumerate, and it
-  can come back as a new device instance with other COM numbers: the worker (M3) finds the port
-  and the adapter by PnP every time it opens them.
+- **COM numbers change.** After a re-enumeration the modem can come back as a new device instance
+  with other COM numbers: the worker (M3) finds the port and the adapter by PnP every time it
+  opens them. (Two re-enumerations happened while the SIM was swapped; two later swaps caused
+  none, so a loose USB contact is the likelier cause — `AT-COMMANDS.md` §3.)
 
 ## 2026-10-01 — M2 code-complete: the connection, proven on the simulated modem
 

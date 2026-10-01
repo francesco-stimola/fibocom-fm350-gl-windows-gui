@@ -343,8 +343,9 @@ Everything goes through `AT+GTACT` (spec: [`AT-COMMANDS.md` §5](AT-COMMANDS.md#
 - **DNS: the operator's by default** — from `+CGCONTRDP`, else `+GTDNS`. The DNS override is a
   setting, empty by default. Servers are compared per family, and a family only when servers of
   it are wanted: Windows reads IPv4 servers before IPv6 ones and lists IPv6 servers nobody set
-  (`fec0:0:0:ffff::1`–`3`, or router advertisements'), so a list compared whole would never match
-  and the adapter would never count as configured.
+  (`fec0:0:0:ffff::1`–`3`, or router advertisements'), so a list compared whole could fail to match
+  for good — an IPv6-first override, IPv6 servers left by an earlier context — and the adapter would
+  never count as configured.
 - **A disabled adapter is the user's choice**: the pass stops there (`AdapterDisabled`, blocked)
   and changes nothing on it; the window offers to enable it again (administrator rights), never
   the app by itself (decided 2026-10-01).

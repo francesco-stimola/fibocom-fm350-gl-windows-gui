@@ -71,7 +71,7 @@ Everything needed to talk to the modem and understand its answers — no connect
 <a id="m3"></a>
 ## M3 — Tray app
 
-- [ ] Worker runspace + immutable state snapshots + command queue. After a lost port the worker finds the AT port and the adapter again by PnP: the modem can come back as a new device instance under other COM numbers — a SIM removed or inserted can make it re-enumerate (`AT-COMMANDS.md` §1, §3).
+- [ ] Worker runspace + immutable state snapshots + command queue. After a lost port the worker finds the AT port and the adapter again by PnP: after a re-enumeration the modem can come back as a new device instance under other COM numbers (`AT-COMMANDS.md` §1).
 - [ ] Supervisor: heartbeat, worker restart that attaches instead of re-dialing.
 - [ ] Single instance (mutex; a second launch shows the first window).
 - [ ] Tray icon rendering with handle disposal; tooltip; menu.
