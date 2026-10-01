@@ -238,7 +238,9 @@ whether it is safe to install.
    with everything built in. For the same reason the network adapter is found by its own instance
    ID (the adapter's `PnPDeviceID`). Instance IDs are not remembered across runs: the FM350's is
    generated from the USB port it sits in. The classification is a pure function
-   (`Resolve-ModemUsbDevice`) over the PnP records; reading them is the thin part around it.
+   (`Resolve-ModemUsbDevice`) over the PnP records; reading them is the thin part around it, in
+   the worker: one `Get-PnpDeviceProperty` call per device with every key, since each call costs
+   about a second whatever it reads, plus the COM port name from the device's registry parameters.
 2. **Guide.** A dialog explains that the project does not distribute the driver, shows where a
    known copy is published — a page pinned to a fixed commit, taken from the known-fingerprints
    manifest — and says plainly that it is a third party's copy of MediaTek's driver. Two actions:
@@ -258,8 +260,7 @@ whether it is safe to install.
 5. **Install** with `pnputil /add-driver <inf> /install`, which re-validates the catalog and refuses
    a tampered package; uninstall by locating the published `oemNN.inf`.
 
-Still to verify on a device: whether `usb2ser_tm` 3.22.43.1 loads with Memory Integrity (core
-isolation) on.
+`usb2ser_tm` 3.22.43.1 loads with Memory Integrity (core isolation) on (`AT-COMMANDS.md` §1).
 
 ## eSIM (M8)
 

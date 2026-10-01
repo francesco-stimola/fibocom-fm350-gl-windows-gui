@@ -53,8 +53,10 @@ When a source is added, record its exact version or commit here.
 | Fact | Status | Source |
 |---|---|---|
 | USB vendor ID `0E8D` (MediaTek). | 📄 | `[INF]` |
-| Two USB compositions, product IDs `7126` and `7127`. | 📄 | `[INF]` |
-| The modem AT port ("MD AT") is interface `MI_04` on `7126` and `MI_06` on `7127`. | 📄 | `[INF]` |
+| Two USB compositions, product IDs `7126` and `7127`. The INF also lists `7128` (MD AT on `MI_05`) and `7129` (on `MI_06`), which no FM350 document names: the app does not treat them as an FM350. | 📄 | `[INF]` |
+| The modem AT port ("MD AT") is interface `MI_04` on `7126` and `MI_06` on `7127`. | ✅ 7127 · 📄 7126 | `[INF]`; `[DEVICE]` `pnp.7127.driver.json` |
+| With the driver, each serial function of `7127` is a COM port named by the INF: `MI_02` "USB AP Log Port", `MI_03` "USB AP GNSS Port", `MI_04` "USB AP META Port", `MI_06` **"USB MD AT Port"**, `MI_07` "USB MD META Port", `MI_08` "USB NPT Port", `MI_09` "USB Debug Port". Windows numbers the COM ports when the driver is installed (here `COM3`–`COM9`, AT on `COM9`); the number is read from the device (`Device Parameters\PortName`), never assumed. | ✅ | `[DEVICE]` `pnp.7127.driver.json` |
+| `usb2ser_tm` 3.22.43.1 installs with `pnputil /add-driver <inf> /install` and loads with **Memory Integrity** (HVCI) on: every serial function starts, problem code 0. | ✅ | `[DEVICE]` `pnp.7127.driver.json` (Windows 11 build 26300) |
 | The serial-port driver package covers **only** the serial functions (INF class `Ports`); the network function is served by a different driver. | 📄 | `[INF]` |
 | `7126` (mode 40) has 8 interfaces: `0` RNDIS control (class `02/02/ff`), `1` RNDIS data (`0a/00/00`), `2` and `4`–`7` vendor-class serial (`ff/00/00`), `3` vendor `ff/42/01` with no Linux driver. `7127` (mode 41) has 10, with serial interfaces up to `9`. | 📄 | `[LINUX-OPTION]` |
 | On `7127` Windows enumerates **nine functions** under the composite device (`usbccgp`, reported name `FM350-GL`): `MI_00` RNDIS (interfaces 0–1 as one function, compatible class `e0/01/03`); `MI_02`–`MI_04` and `MI_06`–`MI_09` "USB COM Port", class `ff/00/00`; `MI_05` "ADB Interface", class `ff/42/01`, which Windows' own WinUSB driver serves (`winusb.inf`). | ✅ | `[DEVICE]` `pnp.7127.nodriver.json` |
@@ -301,7 +303,7 @@ Collected here so one session with the modem answers all of them. Each answer be
 and flips a row above to ✅.
 
 1. `AT+CLAC` — which commands this firmware accepts, in particular `+CGAUTH`, `+C5GREG`, `+CCHO`/`+CGLA`/`+CCHC`, and any undocumented traffic-statistics command. Then `ATI`, `+CGMM?`, `+CGMR`, `+GTPKGVER?` — which exact model and firmware.
-2. Which USB composition (`7126`/`7127`), which COM port is "MD AT", which driver serves the network adapter, and whether it shares a container ID with the AT port. *Answered (§1) except the COM port, which needs the serial driver.*
+2. Which USB composition (`7126`/`7127`), which COM port is "MD AT", which driver serves the network adapter, and whether it shares a container ID with the AT port. *Answered in §1.*
 3. `+COPS?` on LTE, on 5G NSA and on 5G SA — does `<AcT>` follow `[27.007]` or the vendor table (§3)? Compare with `+ERAT?`.
 4. `+CESQ` on LTE, NSA and SA — confirm the documented NR fields.
 5. `+CGCONTRDP=1` — confirm the documented layout (address and mask in one string, gateway, DNS).

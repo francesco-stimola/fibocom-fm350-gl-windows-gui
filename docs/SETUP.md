@@ -65,7 +65,7 @@ same two commands on every push to `main` and every pull request.
 | `tests/Parsers.Tests.ps1` | Identity, SIM state, registration (read answers and URCs, every domain, reject causes), operator and technology, signal quality, temperature — on documented fixtures played through the channel. |
 | `tests/Cells.Tests.ps1` | `+GTCCINFO` serving and neighbour layouts on LTE, EN-DC and SA; `+GTCAINFO` primary and secondary carriers, older shorter lines, malformed fields. |
 | `tests/Arfcn.Tests.ps1` | EARFCN and NR-ARFCN against values worked out by hand from the 3GPP formulas, including the table rows that needed repair when transcribed. |
-| `tests/Devices.Tests.ps1` | The modem's USB functions on a captured PnP snapshot (AT port without its driver, RNDIS working), the AT port of each composition, problem codes → driver state, leftover devices and other MediaTek devices skipped, two modems told apart. |
+| `tests/Devices.Tests.ps1` | The modem's USB functions on captured PnP snapshots — before the serial driver (AT port without it, RNDIS working) and after (AT port working on its COM port) — the AT port of each composition, problem codes → driver state, leftover devices and other MediaTek devices skipped, two modems told apart. |
 
 ## Fixtures
 

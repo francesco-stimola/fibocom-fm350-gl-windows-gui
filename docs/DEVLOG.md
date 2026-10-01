@@ -4,6 +4,23 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-01 — The AT-port driver installed the way M6 will install it
+
+The guided path of ARCHITECTURE → *Drivers*, walked by hand once: the package (the commit-pinned
+zip) matched its known fingerprints — zip, `.cat`, `.inf` and both `.sys` — the catalog carried a
+valid *Microsoft Windows Hardware Compatibility Publisher* signature, the INF listed the modem's
+hardware IDs, and nothing in the package was executed. `pnputil /add-driver <inf> /install`, the
+only elevated step, bound `usb2ser_tm` to all seven serial functions.
+- **The driver loads with Memory Integrity on**, which closes the last open point of the driver
+  design.
+- **MD AT is `MI_06` on `7127`**, as the INF says, and Windows numbered the ports at install time:
+  the app reads the AT port's COM name from the device (`Device Parameters\PortName`, the same in
+  every Windows language, unlike the friendly name). `Resolve-ModemUsbDevice` now returns it.
+- **Reading PnP properties is slow**: each `Get-PnpDeviceProperty` call costs about a second
+  whatever it reads, so the reader fetches every key of a device in one call.
+- The INF also covers product IDs `7128` and `7129`, which no FM350 document names; they stay
+  outside the detection.
+
 ## 2026-10-01 — First device capture: the modem's USB functions on Windows; detection as a pure function
 
 The first look at a real FM350-GL, before any driver is installed, answers most of the open rows
