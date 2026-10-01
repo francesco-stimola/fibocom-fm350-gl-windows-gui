@@ -4,6 +4,83 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-01 — M3 complete: the tray app
+
+The app now runs as designed in ARCHITECTURE → *Process model*: a worker in a runspace of its own
+owns the modem, the UI thread shows the tray icon and the main window and supervises the worker.
+The decisions taken while building it:
+- **One link per worker, nothing else shared.** A synchronized hashtable carries the command
+  queue, a wake event, the latest snapshot, the heartbeat and the stop request. A new worker gets
+  a new link, so one that hung and comes back to life can't write over its successor's state.
+  Snapshots are new objects at every publication and are never changed; a test serializes one,
+  runs more cycles that change everything, and compares.
+- **The heartbeat never waits on the modem.** The worker wraps its transport and reads at most a
+  second at a time, the channel reading again until the command's own timeout: a 3-minute
+  `AT+COPS` keeps beating, so the hang limit can be a minute instead of longer than the slowest
+  command. Only a call that never returns — PnP, the network stack — stops the heartbeat.
+- **An error stops the cycle, not the worker.** PowerShell's default would carry on with the
+  next statement after an error, half a cycle done on a state the error left behind; the worker
+  runs with errors as stops, logs the failed cycle and tries again a second later. Three failed
+  cycles in a row end it, and the supervisor's backoff takes over: a failure that every cycle hits
+  restarts the worker, one that a single phase hits (a PnP read) is retried on its own cadence.
+  A log that can't be written never stops the worker or a pass: monitoring matters more than its
+  record.
+- **The AT port is found by PnP at every look**, never remembered: after a re-enumeration the
+  modem can come back under other COM numbers. Proven with PnP and the serial port mocked around
+  the simulated modem: lost on COM14, found on COM15 as a new instance, attached without a write.
+- **Without administrator rights** the state machine stops before configuring the adapter
+  (`NotElevated`, blocked), instead of a step that fails at every pass. A port another program
+  holds is said (`PortInUse`), not blocked: it can be released.
+- **The UI never waits.** Buttons queue commands; outcomes come back in snapshots. The texts and
+  icon states are pure functions of a snapshot, with a matrix of tests; the window and the tray
+  only show them. Hundreds of icon redraws leave the process's GDI and USER object counts flat.
+- **Development mode** drives the worker on a simulated modem and adapter with eight scenarios
+  (one per state the window has to show), in a data folder of its own; the same scenarios feed
+  the tests. **Observe-only** reads and never writes — what made the first device run safe.
+- **5G is the NR leg in use.** On the device an idle LTE anchor cell fills `+CESQ`'s NR fields
+  with no NR cell listed (`AT-COMMANDS.md` §3), so "NR measured" no longer means 5G: the
+  technology comes from the serving cells, and NR measured without a leg is "5G available".
+
+On the device: observing only, the worker and the tray found the modem by PnP, read it every
+5 s and released the port on *Exit*; a second launch brought the window back. Elevated, with an
+APN: online from nothing in about 3.5 s (context defined and activated, adapter configured), data
+through the modem only, still online after *Exit*, and the next start attached without a step.
+
+The lite review of M3 found six defects in the product; all six are fixed, each with a test that
+fails without the fix:
+- **A modem that stops answering cost the status read three minutes** — `AT+COPS?` carries its
+  3-minute timeout — with the window still saying online and commands waiting. The status read now
+  stops at the first read without an answer and brings the pass forward, which says what it means.
+- **A failed part of a cycle wasn't the one retried**: the look, the pass and the status read were
+  marked done before they ran, so the retry a second later found nothing due, and three failures
+  in a row could never add up. They are marked done once they have run.
+- **After the computer slept, a healthy worker looked hung**: the clock runs on during sleep while
+  the worker's waits and the UI's timer don't. Silence is now counted from the resume.
+- **One PnP read that missed the network function** left the connection blocked on `NoAdapter` for
+  as long as the port stayed open. PnP is read again for it at the scan cadence, the port left open.
+- **A second launch without the running instance's administrator rights failed** instead of
+  exiting: opening the instance's event is denied, and is now taken as "running".
+- **The last signal stayed on screen** when the state fell below a ready SIM without losing the
+  port; it is dropped with the readings that stop.
+And one found while checking the exit path: a runspace stuck in a call that never returns keeps
+the `pwsh` process — and the AT port — alive after the app has closed everything else, so the start
+script ends the process itself. The operator alone no longer names the technology "LTE": no
+document says so, and no serving cell means no technology to show.
+
+## 2026-10-01 — Decided: the worker's cadence, the supervisor's timings, the icon, 5G
+
+Taken by the maintainer, as proposed:
+- **Cadence**: a connect pass every 30 s online, 10 s on its way, 30 s while waiting for the
+  user (whose command runs one at once); the radio every 5 s; PnP every 5 s without a port.
+- **Supervisor**: hung after 60 s without a heartbeat; a new worker 5 s after a failure, doubling
+  up to 5 min, the count reset by 10 min of good running; a failed cycle retried after 1 s, three
+  in a row end the worker.
+- **Icon and texts**: green online, amber on its way, red when the user must act, grey without a
+  modem or a worker; bars from −115/−105/−95/−85 dBm; the 5G/4G label from 24 pixels up; menu
+  *Open*, *Check now*, *Exit*; English texts, like the rest of the project.
+- **5G only for the NR leg in use**; NR measured on an idle anchor is "LTE, 5G available".
+  Rejected: 5G whenever NR is measured, which the icon would show almost always.
+
 ## 2026-10-01 — The adapter plan converges on the device
 
 The per-family DNS comparison, written after the review, checked on the real adapter: the app's

@@ -43,14 +43,66 @@ user reopens it and monitoring resumes.
 
 ### Threads
 - **UI thread** (STA): the tray icon (WinForms `NotifyIcon`), the main window (WPF), and a
-  **supervisor**. It only reads snapshots and enqueues commands — it never does I/O.
+  **supervisor**. It only reads snapshots and enqueues commands — it never does I/O on the modem,
+  the network or PnP. A dispatcher timer ticks every 500 ms: it takes the worker's latest
+  snapshot, supervises the worker, and redraws the tray icon, its tooltip and the window only when
+  the snapshot or the worker's state changed (`Update-App`).
 - **Worker runspace**: owns the COM port, the state machine, health checks, recovery, network
-  configuration. It publishes an **immutable snapshot** of its state after every change (the UI
-  reads the latest reference; no locks shared with the UI) and consumes commands from a
-  `ConcurrentQueue` (connect, disconnect, apply bands, …).
-- **Supervisor**: the worker writes a heartbeat timestamp; if it stops (crash, hang), the UI
-  thread disposes the runspace and starts a new one. A new worker **attaches** to whatever state
-  the modem is in (see *Startup reconciliation*) — a worker restart is not a re-dial.
+  configuration (`Invoke-ModemWorker`). It publishes an **immutable snapshot** of its state after
+  every change and consumes the UI's commands from a queue.
+- **Supervisor**: the worker writes a heartbeat; if it ends (an error) or stops beating (a hang),
+  the UI thread replaces it (`Resolve-SupervisorAction`). A new worker **attaches** to whatever
+  state the modem is in (see *Startup reconciliation*) — a worker restart is not a re-dial.
+
+### The worker (M3)
+- **One link per worker** (`New-ModemWorkerLink`): a synchronized hashtable, the only object both
+  threads touch — the command queue (`ConcurrentQueue`), an event that wakes the worker at once,
+  the latest snapshot, the heartbeat, the stop request. No lock is held across I/O. A worker that
+  hung and comes back to life later writes only to its own link, never to its successor's.
+- **Snapshots are immutable by construction** (`New-ModemSnapshot`): a new object every time,
+  which nobody changes afterwards; the UI reads whichever is the latest. They carry no secret —
+  the stored PIN and APN password only as "stored or not" — and no identifier: no ICCID, and
+  cells without MCC, MNC, TAC or cell identity. Their version grows across worker restarts.
+- **Commands** (`Send-ModemCommand`): check now (a connect pass, which never breaks a connection
+  that works), save settings and the APN password, store or forget the SIM PIN, remove the PIN
+  from the SIM, lift the FCC lock, enable the adapter. Secrets travel as `SecureString`s and stay
+  in the process. Each command's outcome comes back in the next snapshots (the last ten).
+- **Cadence** (`Resolve-WorkerSchedule`, pure; decided 2026-10-01): a connect pass every 30 s
+  online, every 10 s while the connection is on its way, every 30 s while it waits for the user
+  (whose command runs one at once); the radio for display every 5 s once the SIM is ready; a look
+  for the modem by PnP every 5 s while no port is open. A registration or context code from the
+  modem brings the next pass forward — a hint, never the only source.
+- **The port is found again at every look**: by PnP (`Resolve-ModemPresence`), never remembered —
+  after a re-enumeration the modem can come back as a new device instance under other COM numbers
+  (`AT-COMMANDS.md` §1). A lost port is closed at once; the next look finds the device again. While
+  a pass finds no network adapter, PnP is read again for it at the scan cadence, the port left
+  open: one PnP read that missed it must not leave the connection blocked.
+- **What is shown is what was read**: below a ready SIM the radio is not read, and the last
+  reading is dropped with it — no old bars over a SIM that waits for its PIN.
+- **The heartbeat never waits on the modem**: the worker's transport wraps the real one and reads
+  at most a second at a time (`WorkerTransport`), the channel reading again until the command's
+  own timeout. A command that legitimately takes minutes (`AT+COPS`) never looks like a hang;
+  only a call that never returns (PnP, the network stack) stops the heartbeat.
+- **Errors stop the cycle, not the worker.** The worker runs with `$ErrorActionPreference = 'Stop'`:
+  any error stops the cycle where it happened — never half a cycle carried on — and is logged; the
+  cycle is tried again a second later. A look, a pass or a status read is marked done only once it
+  has run, so the part that failed is the part tried again. Three failed cycles in a row end the
+  worker with that error, and the supervisor starts a new one. A log that can't be written never
+  stops anything.
+- **Supervisor timings** (decided 2026-10-01): a worker silent for 60 s is hung — abandoned (its
+  pipeline asked to stop, released whenever its stuck call returns) and replaced; a new worker
+  starts 5 s after a failure, the wait doubling at every failure in a row up to 5 min, and a worker
+  that ran 10 min before failing starts the count over. **Only silence the UI has watched counts**:
+  a computer that sleeps stops the worker's waits and the UI's timer alike while the clock runs on,
+  so after a gap of more than 5 s between two ticks the silence is counted from the resume. Errors
+  and warnings the worker writes are taken and logged at every tick, so they never pile up.
+- **Development mode** (`Start-Fm350App -Simulated -Scenario …`): the worker drives a simulated
+  modem and adapter (`New-SimulatedDevice`, scenarios in `Data/Simulation.psd1`: online, connect,
+  an APN needed, a PIN required, an FCC lock and its unlock, a disabled adapter, no modem, no
+  driver) — no device, no administrator rights, nothing changed on the system. Its settings,
+  secrets and log live in a folder of their own, and it runs beside the real app.
+- **Observe only** (`-ObserveOnly`): the worker reads and never writes — no step, no command that
+  changes the modem or the system. The window says which step it withholds.
 
 ### Startup, elevation, single instance
 - The app needs admin rights (adapter configuration, device restart, drivers). To avoid a UAC
@@ -64,13 +116,20 @@ user reopens it and monitoring resumes.
   `pwsh -NoProfile` and a module path limited to admin-only folders: the user's profile script and
   per-user modules are user-writable too. For the same reason no setting names an executable or a
   script to run: lpac is found next to the app.
-- A named **mutex** enforces one instance. A second launch signals the first to show its window
-  and exits: two instances would fight over the COM port.
+- A named **mutex** enforces one instance (`Enter-AppInstance`): machine-wide, since the COM port
+  is. A second launch signals the first to show its window — through an event of its Windows
+  session — and exits: two instances would fight over the COM port. A mutex left by an instance
+  that died is taken over. A launch without the running instance's administrator rights can't
+  signal it, and exits quietly. Development mode has a mutex of its own.
+- **Without administrator rights** the app runs, reads and connects, and stops before configuring
+  the adapter (`NotElevated`, blocked): it says so instead of failing at every pass.
 
 ### Closing and reopening
 Closing the app stops **monitoring and recovery only**. The modem stays registered, the data
 context stays active, the adapter keeps its address. On reopen, the app reads that state and
-carries on.
+carries on. *Exit* asks the worker to close the AT port and waits for it up to 5 s; then the
+process ends whatever is left — a worker stuck in a call that never returns would otherwise keep
+the process, and the port, alive.
 
 ### Updates (M7)
 The zip on GitHub Releases is the only distribution channel. Once per app start, when the
@@ -132,7 +191,9 @@ Everything the worker says to the modem goes through one **AT channel** per port
   command's worst-case duration as documented by the vendor manual, never less than 3 s (margin
   for USB latency and a busy modem); a compound line gets the sum of its commands'. A stuck modem
   is noticed at most that long after the command — 3 min only for `AT+COPS`, which the connect
-  sequence reads only while the modem is not registered.
+  sequence reads only while the modem is not registered, and the worker's status read only after
+  two quicker reads were answered: a read without an answer ends the status read there and brings
+  the next pass forward.
 
 ## Connection state machine (M2)
 
@@ -149,10 +210,10 @@ Everything the worker says to the modem goes through one **AT channel** per port
   the action is the first missing step: open the port, initialize the channel, enter the SIM PIN,
   turn the radio on, select the operator automatically, define the app's context, activate it,
   configure the adapter. With no step to take, a **reason** says why — searching, SIM busy, a PIN
-  the user must give, an FCC lock — and **blocked** says whether it is out of the app's reach: no
-  device or driver, a SIM waiting for the user, an FCC lock, an APN the user must give, a network
-  adapter missing or disabled by the user. No recovery step changes those, so none is escalated
-  (M4).
+  the user must give, an FCC lock, a port another program holds — and **blocked** says whether it
+  is out of the app's reach: no device or driver, a SIM waiting for the user, an FCC lock, an APN
+  the user must give, a network adapter missing or disabled by the user, no administrator rights
+  to configure it. No recovery step changes those, so none is escalated (M4).
 - **What couldn't be read is unknown, never "no".** A read that fails leaves its fact `$null`, and
   the state machine takes no step on it: a context whose activation or parameters couldn't be read
   is neither activated nor deactivated (`ContextUnknown`, not blocked — the next pass reads it
@@ -353,14 +414,46 @@ Everything goes through `AT+GTACT` (spec: [`AT-COMMANDS.md` §5](AT-COMMANDS.md#
 
 ## Tray icon (M3)
 
-- Drawn at runtime with `System.Drawing` at the size the current DPI asks for: signal bars, a
-  color for the state (connected / recovering / offline), and the technology (4G/5G) if legible
-  at that size.
+What it shows is decided by pure functions of the snapshot (`Resolve-TrayIcon`,
+`ConvertTo-TrayText`); icon states and texts decided 2026-10-01.
+- Drawn at runtime with `System.Drawing` at the size Windows asks for: four signal bars, a color
+  for the state, and the technology label (`5G`, `4G`) where it is legible — 24 pixels and up; at
+  16 pixels (100 % scaling) the bars alone.
+- **Tones**: green online; amber on its way; red when the user must act (a PIN, an APN, an FCC
+  lock, a disabled adapter, no driver…); grey with no modem, or while the worker restarts or
+  doesn't answer (a restart touches no connection). M4 adds recovering.
+- **Bars** from the serving RSRP (the LTE anchor's; the NR cell's on 5G SA): from −115, −105, −95
+  and −85 dBm up, one to four; all empty when nothing is measured.
+- **5G is the NR leg in use**: an NR serving cell in `+GTCCINFO`. Idle on an LTE anchor the modem
+  measures NR all the same (`AT-COMMANDS.md` §3): that is "LTE, 5G available" in the window and
+  4G in the tray.
 - **Redrawn only when what it shows changes**, and the previous icon's handle is released with
   `DestroyIcon` once the new one is set. Without that, a GDI handle leaks at every refresh and the
-  process dies after days.
-- Tooltip: operator, technology, key quality values, band. Menu: open, reconnect, quick mode
-  switch (4G + 5G / 4G only), exit.
+  process dies after days; a test counts the process's GDI and USER objects over hundreds of
+  redraws.
+- Tooltip, 127 characters at most: online, the technology, the operator, the RSRP; otherwise why
+  not, in a few words. Menu: *Open*, *Check now* (a connect pass now), *Exit*. The quick mode
+  switch comes with M5. A left click opens the window.
+
+## Main window (M3)
+
+A WPF window (`MainWindow.xaml`), filled from a pure view of the snapshot (`ConvertTo-WindowView`);
+closing it hides it — the app stays in the tray. Its buttons only queue commands: the outcome
+comes back in a later snapshot, so the window never waits on the modem or the system.
+- **The connection**, always in view: the state in words, the technology and the operator, and
+  what is unusual — development mode, observe-only, settings that apply at the next connection.
+- **What blocks it, with the action that unblocks it**: an APN to give (`ApnNeeded`), the APN
+  password to give again (`ApnPasswordUnreadable`), the PIN (`NoPin` and the like), *Enable
+  adapter* for an adapter the user disabled (administrator rights; never done by the app on its
+  own), *Unlock…* for an FCC-locked modem. What the app can't act on — a PUK, no SIM, the last PIN
+  attempt, no driver — is said, with nothing to click.
+- **Two actions change something outside the app, and each asks first**: the FCC unlock (it
+  writes the modem's non-volatile memory and lifts the laptop maker's restriction) and removing
+  the PIN from the SIM (it changes the SIM, in any phone too).
+- **Tabs**: *Signal* — LTE and NR quality, serving and neighbour cells, carrier aggregation
+  (uplink values only for a carrier that carries uplink); *SIM* — its state and attempts left, the
+  stored PIN (store, forget), removing the PIN from the SIM; *Connection* — the settings, checked
+  as typed with the same validation the worker applies.
 
 ## Drivers (M6)
 
@@ -507,7 +600,8 @@ values of the same shape in fixtures.
   way in** (`ConvertTo-RedactedText`): no IMEI, IMSI, ICCID, EID, MSISDN or other phone numbers,
   serials, cell identity + TAC, message text, USSD replies — and no secret: the PIN of `AT+CPIN=`
   and `AT+CLCK=`, the credentials of `+CGAUTH`. The file is opened for each line: the log holds no
-  handle.
+  handle. The worker writes it; the UI thread only for rare events (start, a worker replaced,
+  exit). A log that can't be written (a full disk) never stops the worker or a pass.
 - Data usage totals (M9): a JSON file under `%LOCALAPPDATA%\fibocom-fm350-gl-windows-gui\`.
 
 ## Module layout
@@ -534,10 +628,21 @@ src/
     Connection.ps1       state machine (pure), observation and connect pass (M2)
     Network.ps1          modem adapter: configuration plan (pure), read and apply (M2)
     Log.ps1              redaction (pure), rolling log (M2)
-    Devices.ps1          the modem's USB functions: classification (M6, pure), PnP reader (M2)
-    Data/                3GPP band tables, transcribed (EutraBands.psd1, NrBands.psd1)
+    Devices.ps1          the modem's USB functions: classification (M6, pure), PnP reader (M2),
+                         which modem to open (M3, pure)
+    Radio.ps1            technology, bars, cells for display (M3, pure), and their reads
+    Simulation.ps1       development mode: the simulated device and adapter (M3)
+    Worker.ps1           the worker: link, cadence (pure), snapshots (pure), commands, loop (M3)
+    Data/                3GPP band tables, transcribed (EutraBands.psd1, NrBands.psd1); the
+                         simulated modem's answers (Simulation.psd1)
     …                    recovery, drivers (M4–M6)
-  App/                   tray app: UI thread, worker runspace, supervisor (M3)
+  App/                   tray app (M3): its own module, FibocomFm350.App
+    View.ps1             what the tray and the window show, from a snapshot (pure)
+    TrayIcon.ps1         the icon: drawn, swapped, every handle destroyed
+    MainWindow.xaml/.ps1 the main window and its buttons
+    Supervisor.ps1       worker runspaces, when to replace one (pure), the single instance
+    App.ps1              the UI thread's loop, start and exit
+    Start-Fm350App.ps1   the script that starts the app
 tests/
   *.Tests.ps1            Pester
   fixtures/

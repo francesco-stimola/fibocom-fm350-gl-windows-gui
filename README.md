@@ -23,8 +23,9 @@ System tray app · PowerShell 7 · recovery ladder · band lock · driver instal
 
 ---
 
-> **Status: early development.** There is nothing to install yet. Progress is tracked in
-> [`docs/ROADMAP.md`](docs/ROADMAP.md); the first release will be `v1.0.0`.
+> **Status: early development.** There is no installer yet: the tray app runs from source
+> ([`docs/SETUP.md`](docs/SETUP.md)). Progress is tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md);
+> the first release will be `v1.0.0`.
 
 ## The problem
 

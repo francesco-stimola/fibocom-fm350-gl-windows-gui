@@ -21,3 +21,11 @@ All notable changes to this project are documented here. The format follows
   `ConvertFrom-AtCellInfo`, `ConvertFrom-AtCarrierAggregation`.
 - Measurements and channels: `ConvertFrom-MeasurementIndex`, `ConvertFrom-Earfcn`,
   `ConvertFrom-NrArfcn`, with the 3GPP band tables as data.
+- Connection: the state machine and the connect pass (attach without re-dialing), the SIM PIN
+  rules, the FCC lock diagnosis and unlock, the modem adapter's configuration, settings, the
+  redacted rolling log.
+- Tray app (`src/App/Start-Fm350App.ps1`): a worker that owns the modem and keeps the connection
+  up, supervised and restarted without re-dialing; one instance; a tray icon with signal bars,
+  state and technology; a main window with status, signal, cells, carrier aggregation, what blocks
+  the connection and how to unblock it, the SIM PIN and the connection settings; a development
+  mode on a simulated modem and an observe-only mode.
