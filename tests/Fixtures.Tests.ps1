@@ -2,8 +2,8 @@
 # documented fakes (tests/fixtures/fakes.psd1; rules in docs/SETUP.md -> Fixtures).
 
 BeforeDiscovery {
-    $script:fixtureCases = Get-ChildItem -Path "$PSScriptRoot/fixtures" -Recurse -Filter '*.txt' | ForEach-Object {
-        @{ Name = [System.IO.Path]::GetRelativePath("$PSScriptRoot/fixtures", $_.FullName); Path = $_.FullName }
+    $script:fixtureCases = Get-ChildItem -Path "$PSScriptRoot/fixtures" -Recurse -File | Where-Object Extension -In '.txt', '.json' | ForEach-Object {
+        @{ Name = [System.IO.Path]::GetRelativePath("$PSScriptRoot/fixtures", $_.FullName); Path = $_.FullName; Json = $_.Extension -eq '.json' }
     }
 }
 
@@ -48,6 +48,18 @@ BeforeAll {
                 }
             }
         }
+        # PnP instance IDs, with the backslashes JSON doubles: the part after the device ID.
+        foreach ($match in [regex]::Matches($Line, 'USB\\{1,2}[^\\"]+\\{1,2}([^\\",\s]+)')) {
+            $instance = $match.Groups[1].Value
+            if ($instance -notin $script:fakes.SerialNumbers -and $instance -notmatch "^\d+&$($script:fakes.InstanceIdHash)&\d+&[0-9A-Fa-f]+$") {
+                "PnP instance '$instance'"
+            }
+        }
+        foreach ($match in [regex]::Matches($Line, '[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}')) {
+            if ("{$($match.Value)}" -notin $script:fakes.ContainerIds) {
+                "GUID '$($match.Value)'"
+            }
+        }
     }
 }
 
@@ -57,8 +69,16 @@ AfterAll {
 
 Describe 'Fixture <Name>' -ForEach $script:fixtureCases {
     It 'follows the fixture format and names its source' {
-        $fixture = Import-AtFixture -Path $Path -ErrorAction Stop
-        ($fixture.Notes -join ' ') | Should -Match '\[[0-9A-Z.-]+\]|captured' -Because 'a fixture says where its content comes from'
+        if ($Json) {
+            # PnP device records: { "Source": ..., "Devices": [ ... ] }
+            $fixture = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -ErrorAction Stop
+            $source = $fixture.Source
+            @($fixture.Devices).Count | Should -BeGreaterThan 0
+        }
+        else {
+            $source = (Import-AtFixture -Path $Path -ErrorAction Stop).Notes -join ' '
+        }
+        $source | Should -Match '\[[0-9A-Z.-]+\]|captured' -Because 'a fixture says where its content comes from'
     }
 
     It 'carries no identifier other than the documented fakes' {
@@ -80,6 +100,9 @@ Describe 'The identifier check itself' {
         @{ Name = 'a module serial number'; Line = '+CFSN: "AB12CD34EF"' }
         @{ Name = 'a real TAC in +CEREG'; Line = '+CEREG: 2,1,"5A1F","0ABCDEF0",7' }
         @{ Name = 'a real cell identity in +GTCCINFO'; Line = '1,4,001,01,ABCD,1C2D3E4F,1300,123,103,100,40,60,50,20' }
+        @{ Name = 'a generated PnP instance'; Line = '"InstanceId": "USB\\VID_0E8D&PID_7127\\7&2a3b4c5d&0&1",' }
+        @{ Name = 'a USB serial number in a PnP instance'; Line = '"Parent": "USB\\VID_0E8D&PID_7127\\A1B2C3D4E5",' }
+        @{ Name = 'a real container ID'; Line = '"ContainerId": "{3f2504e0-4f89-11d3-9a0c-0305e82c3301}",' }
     ) {
         Find-UnredactedValue -Line $Line | Should -Not -BeNullOrEmpty
     }
@@ -90,6 +113,9 @@ Describe 'The identifier check itself' {
         @{ Name = 'fake location in +CEREG'; Line = '+CEREG: 2,1,"ABCD","0ABCDEF0",7' }
         @{ Name = 'fake location in +GTCCINFO'; Line = '1,4,001,01,ABCD,0ABCDEF0,1300,123,103,100,40,60,50,20' }
         @{ Name = 'ordinary numbers'; Line = '+CSQ: 20,99' }
+        @{ Name = 'a fake PnP instance'; Line = '"InstanceId": "USB\\VID_0E8D&PID_7127&MI_06\\8&00000000&0&0006",' }
+        @{ Name = 'a hardware ID'; Line = '"USB\\VID_0E8D&PID_7127&REV_0001&MI_06",' }
+        @{ Name = 'a fake container ID'; Line = '"ContainerId": "{00000000-0000-0000-0000-000000000001}",' }
     ) {
         Find-UnredactedValue -Line $Line | Should -BeNullOrEmpty
     }

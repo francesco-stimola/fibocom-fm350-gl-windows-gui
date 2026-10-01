@@ -1,0 +1,89 @@
+# The modem's USB functions as Windows sees them: which one is the AT port, which one the network
+# adapter, and whether each has its driver. Facts and sources: docs/AT-COMMANDS.md section 1;
+# design: docs/ARCHITECTURE.md -> Drivers.
+
+# The "MD AT" interface of each USB composition, by product ID.
+$script:AtPortInterfaces = @{ '7126' = 4; '7127' = 6 }
+
+# The RNDIS network function, in both compositions.
+$script:NetworkInterface = 0
+
+# Windows problem codes that mean "no driver": 1 not configured, 28 drivers not installed.
+$script:NoDriverProblemCodes = @(1, 28)
+
+function Resolve-ModemUsbDevice {
+    <#
+    .SYNOPSIS
+        Groups the PnP devices of FM350 modems by modem, and tells the AT port and the network
+        adapter apart, each with its driver state.
+    .DESCRIPTION
+        Takes device records as read from PnP, each with InstanceId, Present, ProblemCode,
+        Service and Parent; other properties are ignored. Only present USB functions of the FM350
+        compositions (USB\VID_0E8D&PID_7126 and 7127, interface MI_xx) count: devices left over
+        from an earlier plug-in, the composite device itself and other MediaTek devices are
+        skipped. A modem is the composite device its functions hang from.
+
+        Returns one object per modem: InstanceId (of the composite device), ProductId, AtPort,
+        Network and Functions (every function, by interface number). Each function has
+        InstanceId, Interface, Role ('AtPort', 'Network' or 'Other'), State, ProblemCode and
+        Service. State is 'Working', 'NoDriver' (problem code 1 or 28) or 'Problem' (any other
+        problem code: disabled, failed to start...). AtPort or Network is $null when that function
+        is not present.
+    .EXAMPLE
+        Resolve-ModemUsbDevice -Device $records | Where-Object { $_.AtPort.State -eq 'NoDriver' }
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]] $Device
+    )
+
+    $functions = foreach ($record in $Device) {
+        if ($record.Present -and $record.InstanceId -match '^USB\\VID_0E8D&PID_(7126|7127)&MI_([0-9A-F]{2})\\') {
+            $productId = $Matches[1]
+            $interface = [Convert]::ToInt32($Matches[2], 16)
+            $role = if ($interface -eq $script:AtPortInterfaces[$productId]) {
+                'AtPort'
+            }
+            elseif ($interface -eq $script:NetworkInterface) {
+                'Network'
+            }
+            else {
+                'Other'
+            }
+            $problemCode = [int]$record.ProblemCode
+            $state = if ($problemCode -eq 0) {
+                'Working'
+            }
+            elseif ($problemCode -in $script:NoDriverProblemCodes) {
+                'NoDriver'
+            }
+            else {
+                'Problem'
+            }
+            [pscustomobject]@{
+                Parent      = [string]$record.Parent
+                ProductId   = $productId
+                InstanceId  = [string]$record.InstanceId
+                Interface   = $interface
+                Role        = $role
+                State       = $state
+                ProblemCode = $problemCode
+                Service     = if ($record.Service) { [string]$record.Service } else { $null }
+            }
+        }
+    }
+
+    foreach ($group in @(@($functions) | Group-Object -Property Parent)) {
+        $members = @($group.Group | Sort-Object -Property Interface)
+        [pscustomobject]@{
+            InstanceId = $members[0].Parent
+            ProductId  = $members[0].ProductId
+            AtPort     = $members | Where-Object Role -EQ 'AtPort' | Select-Object -First 1 -ExcludeProperty Parent, ProductId
+            Network    = $members | Where-Object Role -EQ 'Network' | Select-Object -First 1 -ExcludeProperty Parent, ProductId
+            Functions  = @($members | Select-Object -ExcludeProperty Parent, ProductId)
+        }
+    }
+}

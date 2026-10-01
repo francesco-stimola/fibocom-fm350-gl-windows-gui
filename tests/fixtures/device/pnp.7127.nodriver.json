@@ -1,0 +1,236 @@
+{
+  "Source": "captured 2026-10-01: FM350-GL over USB, Windows 11 build 26300, no AT-port driver installed; Get-PnpDevice and Get-PnpDeviceProperty, present devices with instance ID USB\\VID_0E8D*; instance-ID tails and container ID replaced by fakes",
+  "Devices": [
+    {
+      "InstanceId": "USB\\VID_0E8D&PID_7127\\7&00000000&0&1",
+      "Present": true,
+      "ProblemCode": 0,
+      "Class": "USB",
+      "Service": "usbccgp",
+      "DriverInfPath": "usb.inf",
+      "BusReportedDeviceDesc": "FM350-GL",
+      "HardwareIds": [
+        "USB\\VID_0E8D&PID_7127&REV_0001",
+        "USB\\VID_0E8D&PID_7127"
+      ],
+      "CompatibleIds": [
+        "USB\\COMPAT_VID_0E8D&DevClass_00&SubClass_00&Prot00",
+        "USB\\COMPAT_VID_0E8D&DevClass_00&SubClass_00",
+        "USB\\COMPAT_VID_0E8D&DevClass_00",
+        "USB\\DevClass_00&SubClass_00&Prot_00",
+        "USB\\DevClass_00&SubClass_00",
+        "USB\\DevClass_00",
+        "USB\\COMPOSITE"
+      ],
+      "ContainerId": "{00000000-0000-0000-0000-000000000001}",
+      "Parent": "USB\\ROOT_HUB30\\6&00000000&1&0"
+    },
+    {
+      "InstanceId": "USB\\VID_0E8D&PID_7127&MI_00\\8&00000000&0&0000",
+      "Present": true,
+      "ProblemCode": 0,
+      "Class": "Net",
+      "Service": "usbrndis6",
+      "DriverInfPath": "wceisvista.inf",
+      "BusReportedDeviceDesc": "REMOTE NDIS Device",
+      "HardwareIds": [
+        "USB\\VID_0E8D&PID_7127&REV_0001&MI_00",
+        "USB\\VID_0E8D&PID_7127&MI_00"
+      ],
+      "CompatibleIds": [
+        "USB\\COMPAT_VID_0e8d&Class_e0&SubClass_01&Prot_03",
+        "USB\\COMPAT_VID_0e8d&Class_e0&SubClass_01",
+        "USB\\COMPAT_VID_0e8d&Class_e0",
+        "USB\\Class_e0&SubClass_01&Prot_03",
+        "USB\\Class_e0&SubClass_01",
+        "USB\\Class_e0"
+      ],
+      "ContainerId": "{00000000-0000-0000-0000-000000000001}",
+      "Parent": "USB\\VID_0E8D&PID_7127\\7&00000000&0&1"
+    },
+    {
+      "InstanceId": "USB\\VID_0E8D&PID_7127&MI_02\\8&00000000&0&0002",
+      "Present": true,
+      "ProblemCode": 28,
+      "Class": null,
+      "Service": null,
+      "DriverInfPath": null,
+      "BusReportedDeviceDesc": "USB COM Port",
+      "HardwareIds": [
+        "USB\\VID_0E8D&PID_7127&REV_0001&MI_02",
+        "USB\\VID_0E8D&PID_7127&MI_02"
+      ],
+      "CompatibleIds": [
+        "USB\\COMPAT_VID_0e8d&Class_ff&SubClass_00&Prot_00",
+        "USB\\COMPAT_VID_0e8d&Class_ff&SubClass_00",
+        "USB\\COMPAT_VID_0e8d&Class_ff",
+        "USB\\Class_ff&SubClass_00&Prot_00",
+        "USB\\Class_ff&SubClass_00",
+        "USB\\Class_ff"
+      ],
+      "ContainerId": "{00000000-0000-0000-0000-000000000001}",
+      "Parent": "USB\\VID_0E8D&PID_7127\\7&00000000&0&1"
+    },
+    {
+      "InstanceId": "USB\\VID_0E8D&PID_7127&MI_03\\8&00000000&0&0003",
+      "Present": true,
+      "ProblemCode": 28,
+      "Class": null,
+      "Service": null,
+      "DriverInfPath": null,
+      "BusReportedDeviceDesc": "USB COM Port",
+      "HardwareIds": [
+        "USB\\VID_0E8D&PID_7127&REV_0001&MI_03",
+        "USB\\VID_0E8D&PID_7127&MI_03"
+      ],
+      "CompatibleIds": [
+        "USB\\COMPAT_VID_0e8d&Class_ff&SubClass_00&Prot_00",
+        "USB\\COMPAT_VID_0e8d&Class_ff&SubClass_00",
+        "USB\\COMPAT_VID_0e8d&Class_ff",
+        "USB\\Class_ff&SubClass_00&Prot_00",
+        "USB\\Class_ff&SubClass_00",
+        "USB\\Class_ff"
+      ],
+      "ContainerId": "{00000000-0000-0000-0000-000000000001}",
+      "Parent": "USB\\VID_0E8D&PID_7127\\7&00000000&0&1"
+    },
+    {
+      "InstanceId": "USB\\VID_0E8D&PID_7127&MI_04\\8&00000000&0&0004",
+      "Present": true,
+      "ProblemCode": 28,
+      "Class": null,
+      "Service": null,
+      "DriverInfPath": null,
+      "BusReportedDeviceDesc": "USB COM Port",
+      "HardwareIds": [
+        "USB\\VID_0E8D&PID_7127&REV_0001&MI_04",
+        "USB\\VID_0E8D&PID_7127&MI_04"
+      ],
+      "CompatibleIds": [
+        "USB\\COMPAT_VID_0e8d&Class_ff&SubClass_00&Prot_00",
+        "USB\\COMPAT_VID_0e8d&Class_ff&SubClass_00",
+        "USB\\COMPAT_VID_0e8d&Class_ff",
+        "USB\\Class_ff&SubClass_00&Prot_00",
+        "USB\\Class_ff&SubClass_00",
+        "USB\\Class_ff"
+      ],
+      "ContainerId": "{00000000-0000-0000-0000-000000000001}",
+      "Parent": "USB\\VID_0E8D&PID_7127\\7&00000000&0&1"
+    },
+    {
+      "InstanceId": "USB\\VID_0E8D&PID_7127&MI_05\\8&00000000&0&0005",
+      "Present": true,
+      "ProblemCode": 0,
+      "Class": "USBDevice",
+      "Service": "WINUSB",
+      "DriverInfPath": "winusb.inf",
+      "BusReportedDeviceDesc": "ADB Interface",
+      "HardwareIds": [
+        "USB\\VID_0E8D&PID_7127&REV_0001&MI_05",
+        "USB\\VID_0E8D&PID_7127&MI_05"
+      ],
+      "CompatibleIds": [
+        "USB\\COMPAT_VID_0e8d&Class_ff&SubClass_42&Prot_01",
+        "USB\\COMPAT_VID_0e8d&Class_ff&SubClass_42",
+        "USB\\COMPAT_VID_0e8d&Class_ff",
+        "USB\\Class_ff&SubClass_42&Prot_01",
+        "USB\\Class_ff&SubClass_42",
+        "USB\\Class_ff"
+      ],
+      "ContainerId": "{00000000-0000-0000-0000-000000000001}",
+      "Parent": "USB\\VID_0E8D&PID_7127\\7&00000000&0&1"
+    },
+    {
+      "InstanceId": "USB\\VID_0E8D&PID_7127&MI_06\\8&00000000&0&0006",
+      "Present": true,
+      "ProblemCode": 28,
+      "Class": null,
+      "Service": null,
+      "DriverInfPath": null,
+      "BusReportedDeviceDesc": "USB COM Port",
+      "HardwareIds": [
+        "USB\\VID_0E8D&PID_7127&REV_0001&MI_06",
+        "USB\\VID_0E8D&PID_7127&MI_06"
+      ],
+      "CompatibleIds": [
+        "USB\\COMPAT_VID_0e8d&Class_ff&SubClass_00&Prot_00",
+        "USB\\COMPAT_VID_0e8d&Class_ff&SubClass_00",
+        "USB\\COMPAT_VID_0e8d&Class_ff",
+        "USB\\Class_ff&SubClass_00&Prot_00",
+        "USB\\Class_ff&SubClass_00",
+        "USB\\Class_ff"
+      ],
+      "ContainerId": "{00000000-0000-0000-0000-000000000001}",
+      "Parent": "USB\\VID_0E8D&PID_7127\\7&00000000&0&1"
+    },
+    {
+      "InstanceId": "USB\\VID_0E8D&PID_7127&MI_07\\8&00000000&0&0007",
+      "Present": true,
+      "ProblemCode": 28,
+      "Class": null,
+      "Service": null,
+      "DriverInfPath": null,
+      "BusReportedDeviceDesc": "USB COM Port",
+      "HardwareIds": [
+        "USB\\VID_0E8D&PID_7127&REV_0001&MI_07",
+        "USB\\VID_0E8D&PID_7127&MI_07"
+      ],
+      "CompatibleIds": [
+        "USB\\COMPAT_VID_0e8d&Class_ff&SubClass_00&Prot_00",
+        "USB\\COMPAT_VID_0e8d&Class_ff&SubClass_00",
+        "USB\\COMPAT_VID_0e8d&Class_ff",
+        "USB\\Class_ff&SubClass_00&Prot_00",
+        "USB\\Class_ff&SubClass_00",
+        "USB\\Class_ff"
+      ],
+      "ContainerId": "{00000000-0000-0000-0000-000000000001}",
+      "Parent": "USB\\VID_0E8D&PID_7127\\7&00000000&0&1"
+    },
+    {
+      "InstanceId": "USB\\VID_0E8D&PID_7127&MI_08\\8&00000000&0&0008",
+      "Present": true,
+      "ProblemCode": 28,
+      "Class": null,
+      "Service": null,
+      "DriverInfPath": null,
+      "BusReportedDeviceDesc": "USB COM Port",
+      "HardwareIds": [
+        "USB\\VID_0E8D&PID_7127&REV_0001&MI_08",
+        "USB\\VID_0E8D&PID_7127&MI_08"
+      ],
+      "CompatibleIds": [
+        "USB\\COMPAT_VID_0e8d&Class_ff&SubClass_00&Prot_00",
+        "USB\\COMPAT_VID_0e8d&Class_ff&SubClass_00",
+        "USB\\COMPAT_VID_0e8d&Class_ff",
+        "USB\\Class_ff&SubClass_00&Prot_00",
+        "USB\\Class_ff&SubClass_00",
+        "USB\\Class_ff"
+      ],
+      "ContainerId": "{00000000-0000-0000-0000-000000000001}",
+      "Parent": "USB\\VID_0E8D&PID_7127\\7&00000000&0&1"
+    },
+    {
+      "InstanceId": "USB\\VID_0E8D&PID_7127&MI_09\\8&00000000&0&0009",
+      "Present": true,
+      "ProblemCode": 28,
+      "Class": null,
+      "Service": null,
+      "DriverInfPath": null,
+      "BusReportedDeviceDesc": "USB COM Port",
+      "HardwareIds": [
+        "USB\\VID_0E8D&PID_7127&REV_0001&MI_09",
+        "USB\\VID_0E8D&PID_7127&MI_09"
+      ],
+      "CompatibleIds": [
+        "USB\\COMPAT_VID_0e8d&Class_ff&SubClass_00&Prot_00",
+        "USB\\COMPAT_VID_0e8d&Class_ff&SubClass_00",
+        "USB\\COMPAT_VID_0e8d&Class_ff",
+        "USB\\Class_ff&SubClass_00&Prot_00",
+        "USB\\Class_ff&SubClass_00",
+        "USB\\Class_ff"
+      ],
+      "ContainerId": "{00000000-0000-0000-0000-000000000001}",
+      "Parent": "USB\\VID_0E8D&PID_7127\\7&00000000&0&1"
+    }
+  ]
+}

@@ -30,6 +30,7 @@
         'Open-SerialAtTransport'
         'Receive-AtUrc'
         'Resolve-AtLine'
+        'Resolve-ModemUsbDevice'
         'Split-AtText'
     )
     CmdletsToExport      = @()

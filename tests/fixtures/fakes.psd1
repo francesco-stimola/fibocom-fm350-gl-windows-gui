@@ -23,4 +23,11 @@
     # +C5GREG) and of +GTCCINFO cell lines, in hexadecimal and in decimal.
     Tac          = @('ABCD', '43981')
     CellId       = @('0ABCDEF0', 'ABCDEF0', '180150000')
+
+    # PnP instance IDs (USB\<device ID>\<instance>): the instance part is the USB serial number,
+    # one of SerialNumbers above, or a Windows-generated '<n>&<hash>&<n>&<port>' with this hash.
+    InstanceIdHash = '00000000'
+
+    # Windows container IDs.
+    ContainerIds = @('{00000000-0000-0000-0000-000000000001}', '{00000000-0000-0000-0000-000000000002}')
 }
