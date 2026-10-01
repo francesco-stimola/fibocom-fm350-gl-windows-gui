@@ -15,7 +15,7 @@ written `(planned)`.
 |---|---|
 | [M0 — Project setup](#m0) | ✅ complete |
 | [M1 — Modem protocol](#m1) | ✅ complete |
-| [M2 — Connection](#m2) | 🔨 code-complete |
+| [M2 — Connection](#m2) | ✅ complete |
 | [M3 — Tray app](#m3) | 📋 planned |
 | [M4 — Health & recovery](#m4) | 📋 planned |
 | [M5 — Modes & bands](#m5) | 📋 planned |
@@ -158,7 +158,17 @@ data is left (design: ARCHITECTURE → *SMS, USSD and data usage*; facts: `AT-CO
 Decisions that change what happens next and are the maintainer's to take. Remove a line when it is
 decided, and record the decision in `DEVLOG.md`.
 
-*None at the moment.*
+- **APN credentials without a readable password** (ARCHITECTURE → *Connection state machine*).
+  With PAP or CHAP set and no password stored, the pass sends an empty one — what some operators
+  expect. When a password file exists but can't be decrypted (another Windows user, a damaged
+  file), it sends an empty one too, and activation then fails at every pass without a blocked
+  reason, so M4 would escalate. Options: tell the two apart and stop, blocked, when the stored
+  password can't be read, asking for it again (recommended); always require a password with PAP or
+  CHAP; leave it as it is.
+- **A network adapter disabled by the user** (ARCHITECTURE → *Network configuration*). Implemented
+  for now: the pass stops (`AdapterDisabled`, blocked) and leaves it alone. The alternatives: enable
+  it again by itself (administrator rights; it overrides the user's choice); or offer to enable it
+  in the window (M3).
 
 ---
 

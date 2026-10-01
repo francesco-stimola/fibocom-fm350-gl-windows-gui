@@ -150,8 +150,15 @@ Everything the worker says to the modem goes through one **AT channel** per port
   turn the radio on, select the operator automatically, define the app's context, activate it,
   configure the adapter. With no step to take, a **reason** says why — searching, SIM busy, a PIN
   the user must give, an FCC lock — and **blocked** says whether it is out of the app's reach: no
-  device or driver, a SIM waiting for the user, an FCC lock, an APN the user must give, no network
-  adapter. No recovery step changes those, so none is escalated (M4).
+  device or driver, a SIM waiting for the user, an FCC lock, an APN the user must give, a network
+  adapter missing or disabled by the user. No recovery step changes those, so none is escalated
+  (M4).
+- **What couldn't be read is unknown, never "no".** A read that fails leaves its fact `$null`, and
+  the state machine takes no step on it: a context whose activation or parameters couldn't be read
+  is neither activated nor deactivated (`ContextUnknown`, not blocked — the next pass reads it
+  again); a definition is written only over a context known to be inactive; a modem error on
+  `+CPIN?` other than the SIM codes is no SIM state (`SimUnknown`, not blocked). One failed read
+  must never break a working connection or send the user after a problem that isn't there.
 - **A context that carries no internet** — active without an IPv4 address, or on the IMS APN,
   told by the network identifier `ims` in `+CGCONTRDP` (`AT-COMMANDS.md` §3) — doesn't count as
   data active. With an empty APN in the settings that is the network's choice, on some networks
@@ -163,7 +170,7 @@ Everything the worker says to the modem goes through one **AT channel** per port
 - **A pass** (`Invoke-ModemConnect`) observes, takes the missing step, observes again, until no
   step is left — and never runs the same step twice in one pass: a step that didn't take waits for
   the next pass, on the worker's cadence. The observation reads only as far as the state allows
-  (no context reads before registration, no lock reads after it). The worker loop only gathers
+  (no context parameters before registration, no lock reads after it). The worker loop only gathers
   facts and executes actions.
 - **The app's data context is context 1.** Context 0 is the modem's own attach context
   (`AT-COMMANDS.md` §3).
@@ -199,12 +206,15 @@ let it lock the SIM (facts: `AT-COMMANDS.md` §3):
   three wrong PINs lock the SIM behind its PUK. When the remaining attempts can be read —
   `+CPINR`, or on the FM350, which lacks it, the first value of `+EPINC` — and only one is left,
   nothing is sent automatically. The attempt is **recorded before** `AT+CPIN` goes
-  out, and cleared once the SIM is seen ready: an answer that never arrives — a timeout, a crash —
-  is never followed by a second attempt; the user is asked instead.
+  out, and read back — a PIN whose attempt can't be recorded is not sent — and cleared once the
+  stored PIN's SIM is seen ready, identified by its ICCID: an answer that never arrives — a
+  timeout, a crash — is never followed by a second attempt, not even after another SIM was in
+  the modem meanwhile; the user is asked instead.
 - **"Remove the PIN from the SIM"** (logic M2, dialog M3): `AT+CLCK="SC",0,"<pin>"` turns the
   SIM's PIN request off for good, after a confirmation that says it changes the SIM, not the app.
-  It spends an attempt like any PIN entry and follows the same rules: only on a ready SIM whose PIN
-  request is on, never with one attempt left (`Disable-SimPin`).
+  It spends an attempt like any PIN entry and follows the same rules: only a PIN of 4 to 8 digits,
+  only on a ready SIM whose PIN request is known to be on, never with one attempt left
+  (`Disable-SimPin`).
 - The decision — SIM state, stored PIN and its SIM, attempts left, already tried → send, ask the
   user, report, continue — is a **pure function** with a matrix of tests. A locked SIM is not a
   fault the recovery ladder can fix: H3 failing for a PIN or PUK escalates nothing; the tray
@@ -331,7 +341,12 @@ Everything goes through `AT+GTACT` (spec: [`AT-COMMANDS.md` §5](AT-COMMANDS.md#
   Ethernet. A setting makes the modem preferred instead (a low metric). The metric is set for
   IPv4 and IPv6 alike.
 - **DNS: the operator's by default** — from `+CGCONTRDP`, else `+GTDNS`. The DNS override is a
-  setting, empty by default.
+  setting, empty by default. Servers are compared per family, and a family only when servers of
+  it are wanted: Windows reads IPv4 servers before IPv6 ones and lists IPv6 servers nobody set
+  (`fec0:0:0:ffff::1`–`3`, or router advertisements'), so a list compared whole would never match
+  and the adapter would never count as configured.
+- **A disabled adapter is the user's choice**: the pass stops there (`AdapterDisabled`, blocked)
+  and changes nothing on it.
 - Every change is **scoped to the modem's adapter** and idempotent.
 
 ## Tray icon (M3)

@@ -4,6 +4,30 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-01 — M2 complete: the review pass
+
+One lite review of M2's changes found nine defects in the product; seven are fixed, each with a
+test that fails without the fix:
+- **A failed read is unknown, never "no".** One error on `+CGPADDR` or `+CGCONTRDP` made a working
+  context look address-less: with other settings pending it was deactivated, with an empty APN the
+  user was asked for one. Now the context is `ContextUnknown` (no step, not blocked). Likewise a
+  definition is written only over a context known to be inactive — `+CGACT?` is read with
+  `+CGDCONT?`, registered or not — and a modem error on `+CPIN?` other than the SIM codes is an
+  unknown SIM state, not a blocked one.
+- **DNS servers are compared per family.** Windows reads IPv4 servers first and lists IPv6 ones
+  nobody set, so the whole-list comparison could never match: the adapter would never count as
+  configured and `SetDns` would run at every pass.
+- **The PIN attempt is read back before the PIN goes out**: a file that can't be written no longer
+  lets an unrecorded PIN through (`Write-AppFile` now throws whatever the caller's error
+  preference, and leaves no temporary file). A pending attempt is cleared only by its own SIM.
+- **"Remove the PIN"** refuses a PIN that isn't 4 to 8 digits, without echoing it, and sends
+  nothing when the PIN request can't be read.
+- **A disabled adapter** stops the pass, blocked, instead of failing `ConfigureAdapter` at every
+  pass.
+
+Two need the maintainer and are in ROADMAP → *Open decisions*: APN credentials whose stored
+password can't be read, and whether the app may enable a disabled adapter.
+
 ## 2026-10-01 — M2 on the device: the data context the FM350 really gives, and the SIM PIN
 
 The device session answered M2's open questions (`AT-COMMANDS.md` §1–§4, §7) and changed the code
