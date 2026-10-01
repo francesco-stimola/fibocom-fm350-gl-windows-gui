@@ -75,6 +75,15 @@ Describe 'Resolve-TrayIcon' {
         (Resolve-TrayIcon -Snapshot (Copy-Snapshot $script:online @{ Radio = $radio })).Label | Should -Be '4G'
     }
 
+    It 'says 4G on an idle anchor cell, where 5G is only available' {
+        $radio = $script:online.Radio | Select-Object -Property *
+        $radio.Technology = 'LTE'
+        $radio.NrAvailable = $true
+        $snapshot = Copy-Snapshot $script:online @{ Radio = $radio }
+        (Resolve-TrayIcon -Snapshot $snapshot).Label | Should -Be '4G'
+        (ConvertTo-WindowView -Snapshot $snapshot).Technology | Should -Be 'LTE, 5G available'
+    }
+
     It 'is grey and empty without a snapshot, or while the worker <Worker>' -ForEach @(
         @{ Worker = 'Restarting' }
         @{ Worker = 'NotResponding' }
@@ -169,6 +178,15 @@ Describe 'ConvertTo-WindowView' {
         $note | Should -Match 'next connection'
         $note | Should -Match 'Apn must be printable'
         $note | Should -Match '2 modems found'
+    }
+
+    It 'says the next step is not taken while the app only observes' {
+        $snapshot = Get-ScenarioSnapshot -Scenario Connect -Extra @{ ObserveOnly = $true }
+        $view = ConvertTo-WindowView -Snapshot $snapshot
+        $view.Title | Should -Be 'Not connected'
+        $view.Detail | Should -Be 'The app only observes, so it doesn''t take the next step: setting up the data connection.'
+        ConvertTo-TrayText -Snapshot $snapshot | Should -BeLike 'FM350-GL: Not connected - The app only observes*'
+        (Resolve-TrayIcon -Snapshot $snapshot).Tone | Should -Be 'Working'
     }
 
     It 'says the worker is restarting, without a blocker' {

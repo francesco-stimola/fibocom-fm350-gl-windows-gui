@@ -44,12 +44,22 @@ Describe 'Resolve-RadioStatus' {
 
     It 'calls an LTE anchor with an NR leg 5G NSA' {
         $report = Get-TestReport -Name 'gtccinfo.endc.txt'
-        (Resolve-RadioStatus -Operator $script:lteOperator -Signal $script:lteSignal @report).Technology | Should -Be '5G NSA'
+        $status = Resolve-RadioStatus -Operator $script:lteOperator -Signal $script:nsaSignal @report
+        $status.Technology | Should -Be '5G NSA'
+        $status.NrAvailable | Should -BeFalse -Because 'NR is in use, not only available'
     }
 
-    It 'calls an LTE cell with NR measured 5G NSA, though no NR cell is listed' {
+    It 'calls an idle LTE anchor with NR measured LTE, with 5G available' {
+        # As on the device, idle: +CESQ fills its NR fields though no NR cell is listed.
         $report = Get-TestReport -Name 'gtccinfo.lte.txt'
-        (Resolve-RadioStatus -Operator $script:lteOperator -Signal $script:nsaSignal @report).Technology | Should -Be '5G NSA'
+        $status = Resolve-RadioStatus -Operator $script:lteOperator -Signal $script:nsaSignal @report
+        $status.Technology | Should -Be 'LTE'
+        $status.NrAvailable | Should -BeTrue
+    }
+
+    It 'says no 5G is available without NR measured' {
+        $report = Get-TestReport -Name 'gtccinfo.lte.txt'
+        (Resolve-RadioStatus -Operator $script:lteOperator -Signal $script:lteSignal @report).NrAvailable | Should -BeFalse
     }
 
     It 'calls an NR cell alone 5G SA, and takes its RSRP' {

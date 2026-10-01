@@ -14,16 +14,19 @@ function Resolve-RadioStatus {
         (ConvertFrom-AtSignalQuality), -Cell (ConvertFrom-AtCellInfo) and -Carrier
         (ConvertFrom-AtCarrierAggregation).
 
-        Technology is told from what is measured, never from +COPS's access technology, which
-        the FM350 reports as EN-DC on an LTE cell with NR switched off (AT-COMMANDS section 3):
+        Technology is told from the serving cells, never from +COPS's access technology, which
+        the FM350 reports as EN-DC on an LTE cell with NR switched off, nor from +CESQ's NR
+        fields, which it fills on an idle LTE anchor cell with no NR leg (AT-COMMANDS section 3):
         '5G SA' (an NR serving cell and no LTE one), '5G NSA' (an LTE serving cell with an NR
-        serving cell or NR measurements), 'LTE-A' (an LTE serving cell with an active secondary
+        serving cell: the NR leg in use), 'LTE-A' (an LTE serving cell with an active secondary
         carrier), 'LTE' (an LTE serving cell, or an operator without cells reported), or $null.
+        NrAvailable: NR measured (+CESQ) while no NR leg is in use - 5G the modem could add
+        (decided 2026-10-01: the app says '5G' only for the leg in use).
 
         Rsrp is the serving RSRP in dBm - the LTE anchor's, the NR cell's on 5G SA - and Bars
         (0 to 4) follow from it; both $null when nothing is measured.
 
-        Returns Operator (as +COPS reports it, numeric: MCC and MNC), Technology, Rsrp, Bars,
+        Returns Operator (as +COPS reports it, numeric: MCC and MNC), Technology, NrAvailable, Rsrp, Bars,
         Signal, Cells and Carriers. Cells carry no location - MCC, MNC, TAC and cell identity
         are left out: what is shown never needs them.
     .EXAMPLE
@@ -48,14 +51,14 @@ function Resolve-RadioStatus {
     $lte = @($Cell | Where-Object { $_.Serving -and $_.Technology -eq 'LTE' }) | Select-Object -First 1
     $nr = @($Cell | Where-Object { $_.Serving -and $_.Technology -eq 'NR' }) | Select-Object -First 1
     $measured = { param($value) if ($null -ne $value) { $value.Value } }
-    $nrMeasured = $nr -or ($Signal -and $null -ne $Signal.NrRsrp)
+    $nrMeasured = [bool]($Signal -and $null -ne $Signal.NrRsrp)
     $secondary = @($Carrier | Where-Object { -not $_.Primary -and $_.Active }).Count -gt 0
     $operatorName = if ($Operator) { $Operator.Operator } else { $null }
 
     $technology = if ($nr -and -not $lte) {
         '5G SA'
     }
-    elseif ($lte -and $nrMeasured) {
+    elseif ($lte -and $nr) {
         '5G NSA'
     }
     elseif ($lte -and $secondary) {
@@ -82,13 +85,14 @@ function Resolve-RadioStatus {
     $bars = if ($null -ne $rsrp) { @($script:SignalBarEdges | Where-Object { $rsrp -ge $_ }).Count } else { $null }
 
     [pscustomobject]@{
-        Operator   = $operatorName
-        Technology = $technology
-        Rsrp       = $rsrp
-        Bars       = $bars
-        Signal     = $Signal
-        Cells      = [object[]]@($Cell | Select-Object -Property Serving, Technology, Band, Arfcn, Pci, BandwidthMHz, Rsrp, Rsrq, Sinr)
-        Carriers   = [object[]]@($Carrier)
+        Operator    = $operatorName
+        Technology  = $technology
+        NrAvailable = $nrMeasured -and -not $nr -and [bool]$lte
+        Rsrp        = $rsrp
+        Bars        = $bars
+        Signal      = $Signal
+        Cells       = [object[]]@($Cell | Select-Object -Property Serving, Technology, Band, Arfcn, Pci, BandwidthMHz, Rsrp, Rsrq, Sinr)
+        Carriers    = [object[]]@($Carrier)
     }
 }
 

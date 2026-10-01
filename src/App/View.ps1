@@ -119,10 +119,32 @@ function Get-ReasonText {
         # A registration state the table doesn't name (roaming SMS only, ...).
         return "Not registered ($reason)."
     }
-    if ($Snapshot.Action -and $script:ActionTexts.ContainsKey($Snapshot.Action)) {
-        return $script:ActionTexts[$Snapshot.Action]
+    $step = if ($Snapshot.Action -and $script:ActionTexts.ContainsKey($Snapshot.Action)) { $script:ActionTexts[$Snapshot.Action] } else { $null }
+    if ($step -and $Snapshot.ObserveOnly) {
+        return "The app only observes, so it doesn't take the next step: $($step.Substring(0, 1).ToLowerInvariant())$($step.Substring(1))"
+    }
+    if ($step) {
+        return $step
     }
     'Working on the connection.'
+}
+
+function Test-StepWithheld {
+    # Whether the connection waits on a step the app doesn't take because it only observes.
+    param([object] $Snapshot)
+
+    $Snapshot.ObserveOnly -and $Snapshot.State -ne 'Online' -and -not $Snapshot.Reason -and $Snapshot.Action -and $Snapshot.Action -ne 'None'
+}
+
+function Get-AppTitle {
+    # The headline: the tone's, except 'Not connected' while a step waits that the app, only
+    # observing, never takes.
+    param([object] $Snapshot, [string] $Tone)
+
+    if ($Tone -eq 'Working' -and (Test-StepWithheld -Snapshot $Snapshot)) {
+        return 'Not connected'
+    }
+    $script:ToneTitles[$Tone]
 }
 
 function Format-Measurement {
@@ -205,7 +227,7 @@ function ConvertTo-TrayText {
 
     $tone = Resolve-AppTone -Snapshot $Snapshot -Worker $Worker
     $parts = [System.Collections.Generic.List[string]]::new()
-    $parts.Add("FM350-GL: $($script:ToneTitles[$tone])")
+    $parts.Add("FM350-GL: $(Get-AppTitle -Snapshot $Snapshot -Tone $tone)")
     if ($tone -eq 'Online' -and $Snapshot.Radio) {
         $radio = $Snapshot.Radio
         foreach ($part in @($radio.Technology, (Format-Operator -Operator $radio.Operator))) {
@@ -403,10 +425,10 @@ function ConvertTo-WindowView {
 
     [pscustomobject]@{
         Tone              = $tone
-        Title             = $script:ToneTitles[$tone]
+        Title             = Get-AppTitle -Snapshot $Snapshot -Tone $tone
         Detail            = $detail
         Note              = if ($notes.Count) { $notes -join ' ' } else { $null }
-        Technology        = if ($radio) { $radio.Technology } else { $null }
+        Technology        = if ($radio -and $radio.NrAvailable) { "$($radio.Technology), 5G available" } elseif ($radio) { $radio.Technology } else { $null }
         Operator          = if ($radio) { Format-Operator -Operator $radio.Operator } else { $null }
         Bars              = if ($radio) { $radio.Bars } else { $null }
         Signal            = [string[]]$signal.ToArray()
