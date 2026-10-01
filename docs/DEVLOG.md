@@ -4,6 +4,20 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-01 — Decided: an unreadable APN password, a disabled adapter
+
+The two decisions the M2 review left open, taken by the maintainer:
+- **An APN password that can't be read is asked for again, never sent empty.** With PAP or CHAP,
+  no stored password still means an empty one — some operators expect a user name with an empty
+  password — but a stored password that can't be decrypted (another Windows user, a damaged file)
+  now stops the pass before activation, blocked (`ApnPasswordUnreadable`): sending an empty one
+  instead failed at every pass and would have made M4 escalate for nothing. An active context is
+  left alone. Rejected: always requiring a password with PAP or CHAP, which would shut out those
+  operators.
+- **A disabled adapter stays the user's choice.** The pass stops (`AdapterDisabled`, blocked), as
+  built; M3's window offers to enable it (administrator rights). Rejected: enabling it silently,
+  which overrides an explicit choice.
+
 ## 2026-10-01 — M2 complete: the review pass
 
 One lite review of M2's changes found nine defects in the product; seven are fixed, each with a
@@ -25,8 +39,8 @@ test that fails without the fix:
 - **A disabled adapter** stops the pass, blocked, instead of failing `ConfigureAdapter` at every
   pass.
 
-Two need the maintainer and are in ROADMAP → *Open decisions*: APN credentials whose stored
-password can't be read, and whether the app may enable a disabled adapter.
+Two needed the maintainer: APN credentials whose stored password can't be read, and whether the
+app may enable a disabled adapter (decided, entry above).
 
 ## 2026-10-01 — M2 on the device: the data context the FM350 really gives, and the SIM PIN
 

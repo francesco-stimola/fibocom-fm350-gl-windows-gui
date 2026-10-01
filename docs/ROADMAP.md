@@ -76,6 +76,7 @@ Everything needed to talk to the modem and understand its answers — no connect
 - [ ] Single instance (mutex; a second launch shows the first window).
 - [ ] Tray icon rendering with handle disposal; tooltip; menu.
 - [ ] Main window: connection status, signal, cells, carrier aggregation.
+- [ ] What blocks the connection, in the window, with the action that unblocks it: an APN to give (`ApnNeeded`), the APN password to give again (`ApnPasswordUnreadable`), and for a network adapter the user disabled (`AdapterDisabled`) an *Enable* button (administrator rights) — never enabled by the app on its own.
 - [ ] FCC lock in the window and the tray: the diagnosis, and *Unlock* for a modem diagnosed as locked, behind a confirmation that says it writes the modem's non-volatile memory and lifts the maker's restriction; never automatic. On hardware with a locked module when one is available — capturing the locked values too.
 - [ ] SIM PIN in the main window: enter or replace the stored PIN; the SIM's state (PIN or PUK required, PIN rejected, attempts left); "remove the PIN from the SIM" (`AT+CLCK="SC",0`) behind a confirmation that says it changes the SIM.
 - [ ] Development mode: the app runs against the simulated modem, without a device and without admin rights (no system changes).
@@ -158,17 +159,7 @@ data is left (design: ARCHITECTURE → *SMS, USSD and data usage*; facts: `AT-CO
 Decisions that change what happens next and are the maintainer's to take. Remove a line when it is
 decided, and record the decision in `DEVLOG.md`.
 
-- **APN credentials without a readable password** (ARCHITECTURE → *Connection state machine*).
-  With PAP or CHAP set and no password stored, the pass sends an empty one — what some operators
-  expect. When a password file exists but can't be decrypted (another Windows user, a damaged
-  file), it sends an empty one too, and activation then fails at every pass without a blocked
-  reason, so M4 would escalate. Options: tell the two apart and stop, blocked, when the stored
-  password can't be read, asking for it again (recommended); always require a password with PAP or
-  CHAP; leave it as it is.
-- **A network adapter disabled by the user** (ARCHITECTURE → *Network configuration*). Implemented
-  for now: the pass stops (`AdapterDisabled`, blocked) and leaves it alone. The alternatives: enable
-  it again by itself (administrator rights; it overrides the user's choice); or offer to enable it
-  in the window (M3).
+*None at the moment.*
 
 ---
 

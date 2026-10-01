@@ -346,7 +346,8 @@ Everything goes through `AT+GTACT` (spec: [`AT-COMMANDS.md` §5](AT-COMMANDS.md#
   (`fec0:0:0:ffff::1`–`3`, or router advertisements'), so a list compared whole would never match
   and the adapter would never count as configured.
 - **A disabled adapter is the user's choice**: the pass stops there (`AdapterDisabled`, blocked)
-  and changes nothing on it.
+  and changes nothing on it; the window offers to enable it again (administrator rights), never
+  the app by itself (decided 2026-10-01).
 - Every change is **scoped to the modem's adapter** and idempotent.
 
 ## Tray icon (M3)
@@ -496,6 +497,10 @@ values of the same shape in fixtures.
   invalid value is refused. The file is replaced whole (a temporary file, then a move).
 - Secrets — the SIM PIN, an APN password — never go in the settings file: each is kept
   DPAPI-encrypted for the current user in a file of its own in the same folder (see *SIM PIN*).
+  With PAP or CHAP set, **no stored password means an empty one**, which some operators expect;
+  a stored password that can't be read (another Windows user, a damaged file) is never replaced by
+  an empty one: the pass stops before activating (`ApnPasswordUnreadable`, blocked) and the
+  window asks for it again (decided 2026-10-01).
 - Logs: rolling files under `%LOCALAPPDATA%\fibocom-fm350-gl-windows-gui\logs\`, one per day,
   the 14 newest kept, at most 10 MB a day (then one line says so). **Every line is redacted on its
   way in** (`ConvertTo-RedactedText`): no IMEI, IMSI, ICCID, EID, MSISDN or other phone numbers,
