@@ -1,0 +1,6 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06; the FCC lock reads of a module unlocked by its owner, which registers.
+AT+GTFCCLOCKMODE?;+GTFCCLOCKSTATE?;+GTFCCEFFSTATUS?
++GTFCCLOCKMODE: 0
++GTFCCLOCKSTATE: 0
++GTFCCEFFSTATUS: 0,1
+OK
