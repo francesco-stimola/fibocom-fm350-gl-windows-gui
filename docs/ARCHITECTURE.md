@@ -310,8 +310,8 @@ that as a fault and climb the recovery ladder for nothing.
   module took the mode write without it, but the other sources pass the challenge first, so on
   some modules the unlock may be refused.
 - **Tested where it can be.** Our module is already unlocked, so the unlock path is proven against
-  the simulated modem; on hardware it waits for a locked module, which is also how the locked
-  values get captured.
+  the simulated modem. Proving it on a module that is really locked — and capturing the locked
+  values — is optional: taken up only if one turns up or a user needs it (decided 2026-10-01).
 
 ## Health checks and the recovery ladder (M4)
 

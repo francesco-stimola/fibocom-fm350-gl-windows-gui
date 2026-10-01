@@ -31,14 +31,18 @@ Invoke-Pester -Path ./tests -ExcludeTagFilter Hardware
 ```
 
 Both must be clean: zero diagnostics, zero failures. CI (`.github/workflows/ci.yml`) runs the
-same two commands on every push to `main` and every pull request.
+same two commands on every push to `main` and every pull request, and writes every diagnostic and
+every failed test as an annotation of the run: what failed can be read on the run's page, or from
+GitHub's public API, without its log.
 
 - **Lint goes through `tools/Invoke-Lint.ps1`**, not a bare `Invoke-ScriptAnalyzer`.
   PSScriptAnalyzer 1.24–1.25 on PowerShell 7.6 intermittently fails its own command lookups
   ("the term 'Get-Command' is not recognized") — an error of the analyzer, not a finding — and
   stays broken for the rest of the process. The script analyzes the files one at a time in a
-  child process, moves whatever is left to a fresh process after such a failure, and exits with
-  1 on any diagnostic or on a file it could not analyze at all.
+  child process and moves whatever is left to a fresh process after such a failure, for as long
+  as each process gets a file done; it exits with 1 on any diagnostic, or when three processes in
+  a row analyzed nothing. The list of files reaches the child in a temporary file, so a clone in a
+  deep folder doesn't outgrow Windows' command-line limit.
 - **This test command needs no modem and no admin rights.** Tests that talk to a real device are
   tagged `Hardware`, and every documented command excludes them: Pester itself runs every tag
   unless told otherwise. Run them on purpose on a machine where the modem is attached **and this

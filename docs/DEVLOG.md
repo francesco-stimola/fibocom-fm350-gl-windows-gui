@@ -4,6 +4,27 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-01 — CI: the linter retries while it makes progress; failures become annotations
+
+The first push of M3 failed at the lint step on GitHub, while a fresh clone lints clean
+locally. A run's log needs authentication to read; its annotations don't. Two changes:
+- **`tools/Invoke-Lint.ps1` retries for as long as it makes progress.** The analyzer's own
+  breakage ("'Get-Command' is not recognized") ends a child process; the files left over went to
+  a new one up to five times, which 67 files can outrun on a slower runner. Now a new process is
+  started as long as the last one analyzed a file, and only three in a row that analyzed nothing
+  end the run. The list of files reaches the child in a temporary file: on the command line it
+  outgrew Windows' limit in a deep folder.
+- **Diagnostics, unanalyzed files and failed tests are written as annotations** under GitHub
+  Actions: the next failure says what it is without the log. The test step no longer uses
+  Pester's `-CI` exit, so that it can write them first; its result is explicit.
+
+## 2026-10-01 — Decided: the FCC unlock on a locked module is optional
+
+Proving the unlock on a module that is really locked, and capturing its locked values, needs
+hardware the project doesn't have. It is no longer awaited: taken up only if such a module turns
+up or a user needs it. The unlock stays proven on the simulated modem; the locked values stay
+documented from `[4PDA]` (`AT-COMMANDS.md` §4).
+
 ## 2026-10-01 — M3 complete: the tray app
 
 The app now runs as designed in ARCHITECTURE → *Process model*: a worker in a runspace of its own

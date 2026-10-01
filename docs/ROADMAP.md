@@ -77,12 +77,12 @@ Everything needed to talk to the modem and understand its answers — no connect
 - [x] Tray icon rendering with handle disposal; tooltip; menu. Icon states and texts decided 2026-10-01.
 - [x] Main window: connection status, signal, cells, carrier aggregation.
 - [x] What blocks the connection, in the window, with the action that unblocks it: an APN to give (`ApnNeeded`), the APN password to give again (`ApnPasswordUnreadable`), and for a network adapter the user disabled (`AdapterDisabled`) an *Enable* button (administrator rights) — never enabled by the app on its own.
-- [x] FCC lock in the window and the tray: the diagnosis, and *Unlock* for a modem diagnosed as locked, behind a confirmation that says it writes the modem's non-volatile memory and lifts the maker's restriction; never automatic. Proven on the simulated modem; on hardware it waits for a locked module (below).
+- [x] FCC lock in the window and the tray: the diagnosis, and *Unlock* for a modem diagnosed as locked, behind a confirmation that says it writes the modem's non-volatile memory and lifts the maker's restriction; never automatic. Proven on the simulated modem; a module that is really locked is optional (below).
 - [x] SIM PIN in the main window: enter or replace the stored PIN; the SIM's state (PIN or PUK required, PIN rejected, attempts left); "remove the PIN from the SIM" (`AT+CLCK="SC",0`) behind a confirmation that says it changes the SIM.
 - [x] Development mode: the app runs against the simulated modem, without a device and without admin rights (no system changes).
 - [x] On the device: the worker and the tray on the real modem — observing only, then elevated: online from nothing, still online after *Exit*, attached again at the next start without a step. 5G told from the NR leg in use (`AT-COMMANDS.md` §3).
 
-Waiting for hardware: the FCC unlock on a module that is really locked, capturing its locked values (`AT-COMMANDS.md` §4) — whenever one is available; nothing in M4–M9 depends on it.
+Optional, not scheduled (decided 2026-10-01): the FCC unlock on a module that is really locked, capturing its locked values (`AT-COMMANDS.md` §4) — taken up only if one turns up or a user needs it; nothing in M4–M9 depends on it.
 
 <a id="m4"></a>
 ## M4 — Health & recovery
