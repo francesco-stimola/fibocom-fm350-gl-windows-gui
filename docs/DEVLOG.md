@@ -4,6 +4,19 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-01 — M2 defaults decided; the PnP reader moves to M2
+
+Decided by the maintainer before M2 starts (ARCHITECTURE → *Network configuration*):
+- **The modem is a backup**: a fixed interface metric of 500 keeps an existing wired or wireless
+  connection in charge, so plugging the modem in never takes its traffic. Windows' automatic
+  metric was the alternative to avoid: the RNDIS adapter reports 1 Gbps and would compete with
+  Ethernet. A setting makes the modem preferred.
+- **The operator's DNS**, from `+CGCONTRDP` or `+GTDNS`; the override is an empty setting.
+- **An empty APN with `IPV4V6`**: the network assigns the subscription's own APN; a specific one
+  goes in the settings.
+- The worker needs the AT port's COM name and the adapter before anything else, so reading the
+  PnP records — planned for M6 — is done in M2, next to the classification already there.
+
 ## 2026-10-01 — Decided: the app keeps the SIM PIN and can remove it from the SIM
 
 The plan only detected a locked SIM, so a SIM with its PIN enabled would have kept the connection

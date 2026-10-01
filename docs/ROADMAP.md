@@ -56,7 +56,8 @@ Everything needed to talk to the modem and understand its answers — no connect
 <a id="m2"></a>
 ## M2 — Connection
 
-- [ ] Settings file (APN, optional APN credentials, DNS override, route metric) with defaults and validation.
+- [ ] Settings file (APN, optional APN credentials, DNS override, route metric) with defaults and validation. Defaults (decided 2026-10-01): empty APN — the subscription's own — with PDP type `IPV4V6`; DNS from the operator, no override; the modem as a backup (interface metric 500).
+- [ ] Read the PnP records `Resolve-ModemUsbDevice` classifies (`Get-PnpDevice`, one `Get-PnpDeviceProperty` call per device, the COM port name from the registry), in the worker: the AT port and the adapter are found with it. Brought forward from M6.
 - [ ] Connection state machine as a pure transition function, with a matrix of tests.
 - [ ] Per-command timeouts as a pure lookup: each command's worst-case duration from the vendor manual (`AT-COMMANDS.md` §2), never less than 3 s.
 - [ ] Connect sequence: SIM check, data context definition (persistent on the FM350: written only when it differs from the settings), registration, attach, context activation.
@@ -64,7 +65,7 @@ Everything needed to talk to the modem and understand its answers — no connect
 - [ ] Network configuration of the modem's adapter (address, mask, gateway, DNS) in the active store.
 - [ ] Startup reconciliation: attach to an existing connection without re-dialing.
 - [ ] Redacted rolling log.
-- [ ] On the device: `AT-COMMANDS.md` §7 questions 5, 6 and 12 — the app's own data context, DHCP on the adapter, whether a written context survives a power cycle, the `+CGAUTH` set form for APN credentials on that context — and the NR leg of an EN-DC cell under traffic (questions 3, 4). With a SIM whose PIN is enabled: the `+CPIN` states, `AT+CPIN=`, `+CPINR`, `AT+CLCK="SC"` (`AT-COMMANDS.md` §3).
+- [ ] On the device: `AT-COMMANDS.md` §7 questions 5, 6 and 12 — the app's own data context, DHCP on the adapter, whether a written context survives a power cycle, the `+CGAUTH` set form for APN credentials on that context — and the NR leg of an EN-DC cell under traffic (questions 3, 4). With a SIM whose PIN is enabled: the `+CPIN` states, `AT+CPIN=`, `+CPINR`, `AT+CLCK="SC"` (`AT-COMMANDS.md` §3). The modem stays a backup (high metric) during the session, so the machine's own traffic keeps its usual route.
 
 <a id="m3"></a>
 ## M3 — Tray app
@@ -103,7 +104,7 @@ where a known copy is published and by whom; the user downloads it and hands it 
 verifies it and installs it (design: ARCHITECTURE → *Drivers*).
 
 - [x] Classify the modem's USB functions and their driver state (AT ports present without a driver) as a pure function, tested on a device capture: `Resolve-ModemUsbDevice`.
-- [ ] Read the PnP records it classifies (`Get-PnpDevice`, one `Get-PnpDeviceProperty` call per device, the COM port name from the registry), in the worker.
+- [ ] Read the PnP records it classifies: moved to M2, which needs it to find the AT port.
 - [ ] Driver dialog: the project does not distribute the driver; where a known copy is published (commit-pinned page from the manifest) and that it is a third party's copy of MediaTek's driver; actions *open that page* and *choose the downloaded package*.
 - [ ] Package intake: a zip or a folder chosen by the user; locate the INFs in it. Never run an executable from the package.
 - [ ] Verification as a pure decision function with a matrix of tests: catalog signed by Microsoft (WHQL) → required; INF covers the modem's hardware IDs → required; files match a known fingerprint → reported as a verified version.

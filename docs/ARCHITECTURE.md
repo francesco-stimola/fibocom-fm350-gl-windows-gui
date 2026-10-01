@@ -236,14 +236,20 @@ Everything goes through `AT+GTACT` (spec: [`AT-COMMANDS.md` §5](AT-COMMANDS.md#
 
 ## Network configuration (M2)
 
-- The modem's adapter is found through the device it belongs to (to be confirmed on the device:
-  [`AT-COMMANDS.md` §1](AT-COMMANDS.md#1-usb-identity)), never by name or index.
+- The modem's adapter is found through the device it belongs to: its `PnPDeviceID` is the
+  instance ID of the modem's RNDIS function (`MI_00`, ARCHITECTURE → *Drivers*), never a name or
+  an index.
 - Address, mask, gateway and DNS come from the modem (`+CGCONTRDP` where supported). The
   configuration is written to the **active store only** (`-PolicyStore ActiveStore`): it vanishes
   at reboot instead of lingering as stale persistent configuration.
-- DHCP versus static configuration: open question for the first device session.
-- A DNS override and the adapter's route metric (whether the modem wins over Wi-Fi/Ethernet) are
-  settings; their defaults are **TBD**.
+- DHCP versus static configuration: checked on the device in M2 (`AT-COMMANDS.md` §7, question 6).
+- **The modem is a backup by default** (decided 2026-10-01): its adapter gets a fixed interface
+  metric of 500, far above the automatic metrics Windows gives wired and wireless adapters, so
+  plugging it in never takes the traffic of a connection that is already up; alone, it carries
+  everything. The RNDIS adapter reports 1 Gbps, so the automatic metric would put it level with
+  Ethernet. A setting makes the modem preferred instead (a low metric).
+- **DNS: the operator's by default** — from `+CGCONTRDP`, else `+GTDNS`. The DNS override is a
+  setting, empty by default.
 - Every change is **scoped to the modem's adapter** and idempotent.
 
 ## Tray icon (M3)
