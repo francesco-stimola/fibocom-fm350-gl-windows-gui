@@ -154,6 +154,30 @@ The data context definition (`+CGDCONT`) is **persistent** on the FM350 (`AT-COM
 connect sequence reads it and writes it only when the APN or PDP type differ from the settings.
 It is the APN the user configured, written once — not rewritten at every connect.
 
+### SIM PIN (M2; dialog in M3)
+A SIM whose PIN is enabled asks for it at every power-on, so a modem that restarts would stay
+offline until someone typed it. The app keeps the PIN and enters it itself, under rules that never
+let it lock the SIM (facts: `AT-COMMANDS.md` §3):
+- **States** read from `+CPIN?`: `READY` continues; `SIM PIN` leads to the PIN step; `SIM PUK` (and
+  any other code) stops and says so — **the app never enters a PUK**, the user does it with a
+  phone; `+CME ERROR: 10` is "no SIM"; SIM busy (`14`) is waited out.
+- **Storage.** The user types the PIN once in the main window. It is kept encrypted with DPAPI for
+  the current user (`ConvertFrom-SecureString`, no extra dependency) in its own file next to the
+  settings — the elevated task runs as the same user, so it can read it — together with the
+  identity of the SIM it belongs to (its ICCID, read with the SIM still locked), so another SIM is
+  never sent it. Never logged, never in a snapshot: the UI only learns whether a PIN is stored.
+- **One attempt per stored PIN.** The worker sends `AT+CPIN="<pin>"` at most once for a given
+  stored PIN. Rejected, the PIN is deleted and the app asks for it again — never a second try:
+  three wrong PINs lock the SIM behind its PUK. When the remaining attempts can be read and only
+  one is left, nothing is sent automatically.
+- **"Remove the PIN from the SIM"** (M3): `AT+CLCK="SC",0,"<pin>"` turns the SIM's PIN request off
+  for good, after a confirmation that says it changes the SIM, not the app. It spends an attempt
+  like any PIN entry and follows the same rule.
+- The decision — SIM state, stored PIN and its SIM, attempts left, already tried → send, ask the
+  user, report, continue — is a **pure function** with a matrix of tests. A locked SIM is not a
+  fault the recovery ladder can fix: H3 failing for a PIN or PUK escalates nothing; the tray
+  shows it.
+
 ## Health checks and the recovery ladder (M4)
 
 **Health checks**, from cheapest to most expensive:
@@ -360,6 +384,8 @@ values of the same shape in fixtures.
 
 - Settings: a JSON file under `%APPDATA%\fibocom-fm350-gl-windows-gui\`. The elevated scheduled
   task runs as the same user, so the path is the same elevated or not.
+- Secrets — the SIM PIN, an APN password — never go in the settings file: each is kept
+  DPAPI-encrypted for the current user in a file of its own in the same folder (see *SIM PIN*).
 - Logs: rolling files under `%LOCALAPPDATA%\fibocom-fm350-gl-windows-gui\logs\`, **redacted**
   (no IMEI, IMSI, ICCID, EID, MSISDN or other phone numbers, serials, cell identity + TAC, message
   text, USSD replies).
@@ -414,7 +440,8 @@ carries `lpac.exe` for eSIM (see *eSIM*); nothing has to be installed separately
 5. **Every icon handle is destroyed.**
 6. **Parsers and decisions are pure.** Text or state in, value out; nothing in them touches the
    port, the network or the clock.
-7. **No identifier leaves the process unredacted.**
+7. **No identifier leaves the process unredacted**, and no secret (SIM PIN, APN password) leaves
+   it at all — encrypted at rest, never logged, never shown back.
 8. **System changes are scoped to the modem's adapter**, idempotent, and volatile where possible.
 9. **Band codes round-trip.** A code read from the modem survives being written back, even when
    the app does not understand it.

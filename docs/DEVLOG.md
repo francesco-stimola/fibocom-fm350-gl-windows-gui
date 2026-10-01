@@ -4,6 +4,23 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-01 — Decided: the app keeps the SIM PIN and can remove it from the SIM
+
+The plan only detected a locked SIM, so a SIM with its PIN enabled would have kept the connection
+down after every modem restart, against the app's purpose. Decided by the maintainer (options
+considered: detection only; asking at every start; storing the PIN; storing it plus a way to turn
+the PIN off): **store the PIN and enter it, and offer to remove it from the SIM.** Design in
+ARCHITECTURE → *SIM PIN*; logic in M2, dialog in M3. The rules that keep it safe:
+- **At most one attempt per stored PIN**, and none automatically with one attempt left: three
+  wrong PINs lock the SIM behind its PUK, which the app never enters.
+- The PIN is tied to the SIM it was given for, so a different SIM is never sent it.
+- Encrypted at rest with DPAPI for the current user — the elevated task runs as the same user —
+  and never logged or shown back; the same holds for an APN password (invariant 7 extended to
+  secrets).
+- Removing the PIN (`AT+CLCK="SC",0`) changes the SIM card, not the app, and says so before it
+  runs.
+The commands are standard (`[27.007]`) and wait for a device check with a PIN-enabled SIM (M2).
+
 ## 2026-10-01 — M1 complete: the protocol checked against a real FM350-GL
 
 The device session ran on firmware `81600.0000.00.29.22.06`, without a SIM, then with one

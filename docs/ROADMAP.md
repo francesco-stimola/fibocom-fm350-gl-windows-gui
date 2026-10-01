@@ -60,10 +60,11 @@ Everything needed to talk to the modem and understand its answers — no connect
 - [ ] Connection state machine as a pure transition function, with a matrix of tests.
 - [ ] Per-command timeouts as a pure lookup: each command's worst-case duration from the vendor manual (`AT-COMMANDS.md` §2), never less than 3 s.
 - [ ] Connect sequence: SIM check, data context definition (persistent on the FM350: written only when it differs from the settings), registration, attach, context activation.
+- [ ] SIM PIN (design: ARCHITECTURE → *SIM PIN*): the decision as a pure function with a matrix of tests (SIM state × stored PIN and its SIM × attempts left × already tried → send, ask the user, report, continue); the PIN stored DPAPI-encrypted with the SIM it belongs to; at most one attempt per stored PIN; a PUK never entered by the app.
 - [ ] Network configuration of the modem's adapter (address, mask, gateway, DNS) in the active store.
 - [ ] Startup reconciliation: attach to an existing connection without re-dialing.
 - [ ] Redacted rolling log.
-- [ ] On the device: `AT-COMMANDS.md` §7 questions 5, 6 and 12 — the app's own data context, DHCP on the adapter, whether a written context survives a power cycle, the `+CGAUTH` set form for APN credentials on that context — and the NR leg of an EN-DC cell under traffic (questions 3, 4).
+- [ ] On the device: `AT-COMMANDS.md` §7 questions 5, 6 and 12 — the app's own data context, DHCP on the adapter, whether a written context survives a power cycle, the `+CGAUTH` set form for APN credentials on that context — and the NR leg of an EN-DC cell under traffic (questions 3, 4). With a SIM whose PIN is enabled: the `+CPIN` states, `AT+CPIN=`, `+CPINR`, `AT+CLCK="SC"` (`AT-COMMANDS.md` §3).
 
 <a id="m3"></a>
 ## M3 — Tray app
@@ -73,6 +74,7 @@ Everything needed to talk to the modem and understand its answers — no connect
 - [ ] Single instance (mutex; a second launch shows the first window).
 - [ ] Tray icon rendering with handle disposal; tooltip; menu.
 - [ ] Main window: connection status, signal, cells, carrier aggregation.
+- [ ] SIM PIN in the main window: enter or replace the stored PIN; the SIM's state (PIN or PUK required, PIN rejected, attempts left); "remove the PIN from the SIM" (`AT+CLCK="SC",0`) behind a confirmation that says it changes the SIM.
 - [ ] Development mode: the app runs against the simulated modem, without a device and without admin rights (no system changes).
 
 <a id="m4"></a>
