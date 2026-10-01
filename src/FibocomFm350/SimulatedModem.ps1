@@ -45,6 +45,8 @@ class SimulatedModem {
     #   Urc       string    the unsolicited line for UrcAfter
     #   NoFinal   bool      leave out the final result code
     #   Vanish    bool      the port disappears once this output has been read
+    #   Then      hashtable command -> lines: standing answers that change once this command
+    #                       has run (a context activated, a SIM unlocked)
     #   Times     int       queue the behaviour this many times (default 1)
     [void] Script([string] $command, [hashtable] $behavior) {
         $key = $command.Trim()
@@ -187,6 +189,11 @@ class SimulatedModem {
         if ($behavior['Vanish']) {
             $this.VanishWhenDrained = $true
         }
+        if ($behavior.ContainsKey('Then')) {
+            foreach ($changed in $behavior['Then'].Keys) {
+                $this.SetAnswer($changed, [string[]]$behavior['Then'][$changed])
+            }
+        }
     }
 
     hidden [string[]] StandingAnswer([string] $command) {
@@ -278,7 +285,8 @@ function New-SimulatedModem {
 
         Scripted faults and events are methods on the returned object: Script($command,
         $behavior) for one-shot behaviours (delay, split output, garbage, a URC inside the answer,
-        no final result, the port vanishing), EmitUnsolicited($line, $delayMs), Vanish() and
+        no final result, the port vanishing, answers that change once the command has run),
+        EmitUnsolicited($line, $delayMs), Vanish() and
         Reappear($portName). SetAnswer($command, $lines) sets a standing answer. Received lists
         the commands written to it.
     .EXAMPLE

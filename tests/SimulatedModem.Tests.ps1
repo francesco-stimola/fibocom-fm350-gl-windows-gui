@@ -59,4 +59,20 @@ Describe 'New-SimulatedModem' {
         $modem.Write("ATE0`r")
         $modem.Echo | Should -BeFalse
     }
+
+    It 'changes its standing answers once a scripted command has run' {
+        $modem = New-SimulatedModem
+        $modem.SetAnswer('AT+CGACT?', @('OK'))
+        $modem.Script('AT+CGACT=1,1', @{ Lines = @('OK'); Then = @{ 'AT+CGACT?' = @('+CGACT: 1,1', 'OK') } })
+        $channel = New-AtChannel -Transport $modem
+        try {
+            (Invoke-AtCommand -Channel $channel -Command 'AT+CGACT?' -TimeoutMs 5000).Lines | Should -BeNullOrEmpty
+            (Invoke-AtCommand -Channel $channel -Command 'AT+CGACT=1,1' -TimeoutMs 5000).Status | Should -Be 'OK'
+            (Invoke-AtCommand -Channel $channel -Command 'AT+CGACT?' -TimeoutMs 5000).Lines | Should -Be @('+CGACT: 1,1')
+            (Invoke-AtCommand -Channel $channel -Command 'AT+CGACT?' -TimeoutMs 5000).Lines | Should -Be @('+CGACT: 1,1')
+        }
+        finally {
+            Close-AtChannel -Channel $channel
+        }
+    }
 }

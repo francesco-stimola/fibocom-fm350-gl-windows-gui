@@ -1,0 +1,5 @@
+# Source: [27.007] +CGDCONT read form, line layout as captured for context 0 (device/cgdcont.attached.txt); the app's context 1 defined with an empty APN; values invented.
+AT+CGDCONT?
++CGDCONT: 0,"IPV4V6","","",0,0,0,2,1,1,,0,1,0
++CGDCONT: 1,"IPV4V6","","",0,0,0,0,0,0,,0,0,0
+OK

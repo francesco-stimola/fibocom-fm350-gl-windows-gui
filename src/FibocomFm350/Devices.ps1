@@ -11,6 +11,54 @@ $script:NetworkInterface = 0
 # Windows problem codes that mean "no driver": 1 not configured, 28 drivers not installed.
 $script:NoDriverProblemCodes = @(1, 28)
 
+function Get-ModemPnpRecord {
+    <#
+    .SYNOPSIS
+        Reads the PnP records of the present MediaTek USB devices, as Resolve-ModemUsbDevice
+        takes them.
+    .DESCRIPTION
+        The thin I/O around Resolve-ModemUsbDevice: Get-PnpDevice for the instance IDs under
+        USB\VID_0E8D, then for each device one Get-PnpDeviceProperty call given the device object
+        (about 50 ms; given its instance ID, about a second), and its COM port name from its
+        registry parameters (Device Parameters\PortName, the same in every Windows language).
+        One call per device: given several devices at once, Get-PnpDeviceProperty now and then
+        labels one device's properties with another's instance ID. Reads only; needs no
+        administrator rights and never opens a port.
+
+        Returns one record per present device: InstanceId, Present, ProblemCode, Service,
+        Parent and PortName ($null when the device has none).
+    .EXAMPLE
+        Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord)
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param()
+
+    $devices = @(Get-PnpDevice -InstanceId 'USB\VID_0E8D*' -ErrorAction SilentlyContinue | Where-Object Present)
+    if ($devices.Count -eq 0) {
+        return
+    }
+    $keys = 'DEVPKEY_Device_ProblemCode', 'DEVPKEY_Device_Service', 'DEVPKEY_Device_Parent'
+    foreach ($device in $devices) {
+        $own = @(Get-PnpDeviceProperty -InputObject $device -KeyName $keys -ErrorAction SilentlyContinue |
+                Where-Object InstanceId -EQ $device.InstanceId)
+        $value = {
+            param($key)
+            $property = $own | Where-Object KeyName -EQ $key | Select-Object -First 1
+            if ($property) { $property.Data }
+        }
+        $parameters = Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Enum\$($device.InstanceId)\Device Parameters" -ErrorAction SilentlyContinue
+        [pscustomobject]@{
+            InstanceId  = [string]$device.InstanceId
+            Present     = $true
+            ProblemCode = [int]((& $value 'DEVPKEY_Device_ProblemCode') -as [int])
+            Service     = & $value 'DEVPKEY_Device_Service'
+            Parent      = & $value 'DEVPKEY_Device_Parent'
+            PortName    = if ($parameters -and $parameters.PSObject.Properties['PortName']) { [string]$parameters.PortName } else { $null }
+        }
+    }
+}
+
 function Resolve-ModemUsbDevice {
     <#
     .SYNOPSIS

@@ -1,0 +1,3 @@
+# Source: [4PDA] an FCC-locked FM350-GL refuses to turn its radio on: CME 0, phone failure ([FIBOCOM] §20.2 p.327).
+AT+CFUN=1
++CME ERROR: 0

@@ -1,5 +1,10 @@
 # The modem's USB functions: which is the AT port, which the network adapter, and their driver
-# state: on a captured PnP snapshot and on a matrix of made-up ones.
+# state: on a captured PnP snapshot and on a matrix of made-up ones. Reading the PnP records:
+# with PnP mocked, and on a real FM350 (Hardware, read-only).
+
+BeforeDiscovery {
+    $script:atPort = $env:FM350_AT_PORT
+}
 
 BeforeAll {
     Import-Module "$PSScriptRoot/../src/FibocomFm350/FibocomFm350.psd1" -Force
@@ -146,5 +151,85 @@ Describe 'Resolve-ModemUsbDevice' {
         $modem = Resolve-ModemUsbDevice -Device @(ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_00\8&00000000&0&0000' -Service 'usbrndis6')
         $modem.AtPort | Should -BeNullOrEmpty
         $modem.Network.State | Should -Be 'Working'
+    }
+}
+
+Describe 'Get-ModemPnpRecord' {
+    BeforeAll {
+        $script:composite = 'USB\VID_0E8D&PID_7127\7&00000000&0&1'
+        $script:atPortId = 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&0&0006'
+        $script:networkId = 'USB\VID_0E8D&PID_7127&MI_00\8&00000000&0&0000'
+        $script:leftoverId = 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&0&0009'
+    }
+
+    BeforeEach {
+        Mock -ModuleName FibocomFm350 Get-PnpDevice {
+            [pscustomobject]@{ InstanceId = $script:composite; Present = $true }
+            [pscustomobject]@{ InstanceId = $script:atPortId; Present = $true }
+            [pscustomobject]@{ InstanceId = $script:networkId; Present = $true }
+            [pscustomobject]@{ InstanceId = $script:leftoverId; Present = $false }
+        }
+        Mock -ModuleName FibocomFm350 Get-PnpDeviceProperty -RemoveParameterType InputObject {
+            foreach ($device in $InputObject) {
+                $service = switch ($device.InstanceId) {
+                    $script:networkId { 'usbrndis6' }
+                    $script:composite { 'usbccgp' }
+                    default { 'usb2ser' }
+                }
+                $values = @{
+                    DEVPKEY_Device_ProblemCode = 0
+                    DEVPKEY_Device_Service     = $service
+                    DEVPKEY_Device_Parent      = if ($device.InstanceId -eq $script:composite) { 'USB\ROOT_HUB30\6&00000000&1&0' } else { $script:composite }
+                }
+                foreach ($key in $KeyName) {
+                    [pscustomobject]@{ InstanceId = $device.InstanceId; KeyName = $key; Data = $values[$key] }
+                }
+            }
+        }
+        Mock -ModuleName FibocomFm350 Get-ItemProperty { [pscustomobject]@{ PortName = 'COM9' } } -ParameterFilter { $LiteralPath -like '*MI_06*' }
+        Mock -ModuleName FibocomFm350 Get-ItemProperty { [pscustomobject]@{ Other = 1 } } -ParameterFilter { $LiteralPath -notlike '*MI_06*' }
+    }
+
+    It 'reads the present devices, one property call each, given the device object' {
+        $records = @(Get-ModemPnpRecord)
+        $records.InstanceId | Should -Be @($script:composite, $script:atPortId, $script:networkId)
+        Should -Invoke -ModuleName FibocomFm350 Get-PnpDeviceProperty -Times 3 -Exactly -ParameterFilter { @($InputObject).Count -eq 1 }
+    }
+
+    It 'ignores properties labelled with another device''s instance ID' {
+        Mock -ModuleName FibocomFm350 Get-PnpDeviceProperty -RemoveParameterType InputObject {
+            foreach ($key in $KeyName) {
+                [pscustomobject]@{ InstanceId = $script:atPortId; KeyName = $key; Data = $(if ($key -like '*ProblemCode') { 0 } else { 'wrong' }) }
+            }
+        }
+        $network = Get-ModemPnpRecord | Where-Object InstanceId -EQ $script:networkId
+        $network.Parent | Should -BeNullOrEmpty
+        $network.Service | Should -BeNullOrEmpty
+    }
+
+    It 'gives Resolve-ModemUsbDevice what it takes: the AT port on its COM port, the network function' {
+        $modem = Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord)
+        $modem.InstanceId | Should -Be $script:composite
+        $modem.AtPort.PortName | Should -Be 'COM9'
+        $modem.AtPort.State | Should -Be 'Working'
+        $modem.Network.InstanceId | Should -Be $script:networkId
+        $modem.Network.PortName | Should -BeNullOrEmpty
+    }
+
+    It 'reads nothing more when no MediaTek device is present' {
+        Mock -ModuleName FibocomFm350 Get-PnpDevice { }
+        Get-ModemPnpRecord | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName FibocomFm350 Get-PnpDeviceProperty -Times 0 -Exactly
+    }
+}
+
+# Reads PnP only: it doesn't open the AT port, so it may run while this app holds it.
+Describe 'PnP records of a real FM350' -Tag Hardware -Skip:(-not $script:atPort) {
+    It 'finds the AT port on the COM port named in FM350_AT_PORT, and the network function' {
+        $modem = @(Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord))
+        $modem.Count | Should -Be 1
+        $modem[0].AtPort.State | Should -Be 'Working'
+        $modem[0].AtPort.PortName | Should -Be $env:FM350_AT_PORT
+        $modem[0].Network.State | Should -Be 'Working'
     }
 }

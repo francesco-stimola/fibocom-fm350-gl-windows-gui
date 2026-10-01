@@ -1,0 +1,5 @@
+# Source: [FIBOCOM] §12.2.10 p.215 +CGCONTRDP layout: address and mask in one field, an IPv4 line then an IPv6 line; documentation addresses (RFC 5737, RFC 3849), values invented.
+AT+CGCONTRDP=1
++CGCONTRDP: 1,6,"internet","198.51.100.23.255.255.255.0","198.51.100.1","203.0.113.53","203.0.113.54","","",0,,1500
++CGCONTRDP: 1,6,"internet","32.1.13.184.0.0.0.0.0.0.0.0.0.0.0.23.255.255.255.255.255.255.255.255.0.0.0.0.0.0.0.0","","32.1.13.184.0.0.0.0.0.0.0.0.0.0.0.83","","","",0,,1500
+OK

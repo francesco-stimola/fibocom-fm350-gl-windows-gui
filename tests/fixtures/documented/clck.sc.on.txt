@@ -1,0 +1,4 @@
+# Source: [27.007] +CLCK read of facility "SC": the SIM asks for its PIN at power-on.
+AT+CLCK="SC",2
++CLCK: 1
+OK

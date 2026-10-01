@@ -115,6 +115,7 @@ function Invoke-AtCommand {
         - Discarded: how many stale lines were dropped.
         - ElapsedMs.
 
+        -TimeoutMs defaults to the command's documented worst case (Get-AtCommandTimeout).
         -NoEchoAnchor accepts an answer without waiting for the echo. It exists for ATE1, which
         is sent when the echo may be off, and is not meant for anything else.
         On a lost port the channel becomes 'Lost' and every later command returns 'PortLost'
@@ -133,7 +134,6 @@ function Invoke-AtCommand {
         [ValidatePattern('^AT[\x20-\x7E]*$')]
         [string] $Command,
 
-        [Parameter(Mandatory)]
         [ValidateRange(1, [int]::MaxValue)]
         [int] $TimeoutMs,
 
@@ -145,6 +145,9 @@ function Invoke-AtCommand {
     }
 
     $commandLine = $Command.Trim()
+    if (-not $PSBoundParameters.ContainsKey('TimeoutMs')) {
+        $TimeoutMs = Get-AtCommandTimeout -Command $commandLine
+    }
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
     $lines = [System.Collections.Generic.List[string]]::new()
     $echoSeen = $false
@@ -235,9 +238,10 @@ function Initialize-AtChannel {
         ATE1 can't be anchored - the echo may be off - so its answer may be a late one from a
         command that timed out; it is not trusted. AT+CMEE=1 is anchored on its echo, so its OK
         proves the channel is in step. Run it after opening the channel, and again after a
-        timeout. Returns the answer to AT+CMEE=1, or to ATE1 if the port was lost.
+        timeout. Returns the answer to AT+CMEE=1, or to ATE1 if the port was lost. -TimeoutMs
+        applies to each of the two commands and defaults to their documented worst case.
     .EXAMPLE
-        $ready = Initialize-AtChannel -Channel $channel -TimeoutMs 2000
+        $ready = Initialize-AtChannel -Channel $channel
         if ($ready.Status -ne 'OK') { ... }
     #>
     [CmdletBinding()]
@@ -246,16 +250,19 @@ function Initialize-AtChannel {
         [Parameter(Mandatory)]
         [AtChannel] $Channel,
 
-        [Parameter(Mandatory)]
         [ValidateRange(1, [int]::MaxValue)]
         [int] $TimeoutMs
     )
 
-    $echo = Invoke-AtCommand -Channel $Channel -Command 'ATE1' -TimeoutMs $TimeoutMs -NoEchoAnchor
+    $timeout = @{}
+    if ($PSBoundParameters.ContainsKey('TimeoutMs')) {
+        $timeout['TimeoutMs'] = $TimeoutMs
+    }
+    $echo = Invoke-AtCommand -Channel $Channel -Command 'ATE1' -NoEchoAnchor @timeout
     if ($echo.Status -eq 'PortLost') {
         return $echo
     }
-    Invoke-AtCommand -Channel $Channel -Command 'AT+CMEE=1' -TimeoutMs $TimeoutMs
+    Invoke-AtCommand -Channel $Channel -Command 'AT+CMEE=1' @timeout
 }
 
 function Receive-AtUrc {

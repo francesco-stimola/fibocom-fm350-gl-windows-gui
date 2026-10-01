@@ -1,0 +1,248 @@
+# The modem adapter's configuration plan: a matrix of adapters as read and contexts as reported,
+# and the plan being empty once the adapter is configured (idempotent).
+
+BeforeAll {
+    Import-Module "$PSScriptRoot/../src/FibocomFm350/FibocomFm350.psd1" -Force
+    . "$PSScriptRoot/FixtureAnswer.ps1"
+
+    $script:context = ConvertFrom-AtContextParameter -Lines (Get-FixtureAnswer -Name 'cgcontrdp.data.txt')
+    $script:settings = (ConvertTo-AppSetting -InputObject $null).Settings
+
+    # The adapter as the modem leaves it with no data context: DHCP on, a link-local address.
+    function Get-TestAdapter {
+        param([hashtable] $Change = @{})
+        $adapter = [ordered]@{
+            InterfaceIndex  = 12
+            Dhcp            = 'Enabled'
+            InterfaceMetric = 25
+            AutomaticMetric = $true
+            Addresses       = @([pscustomobject]@{ Address = '169.254.10.20'; PrefixLength = 16; Origin = 'WellKnown' })
+            Gateways        = @()
+            DnsServers      = @()
+        }
+        foreach ($key in $Change.Keys) {
+            $adapter[$key] = $Change[$key]
+        }
+        [pscustomobject]$adapter
+    }
+
+    # The adapter once the plan for $script:context has been applied.
+    function Get-TestConfiguredAdapter {
+        param([hashtable] $Change = @{})
+        $configured = @{
+            Dhcp            = 'Disabled'
+            InterfaceMetric = 500
+            AutomaticMetric = $false
+            Addresses       = @([pscustomobject]@{ Address = '198.51.100.23'; PrefixLength = 24; Origin = 'Manual' })
+            Gateways        = @('198.51.100.1')
+            DnsServers      = @('203.0.113.53', '203.0.113.54', '2001:db8::53')
+        }
+        foreach ($key in $Change.Keys) {
+            $configured[$key] = $Change[$key]
+        }
+        Get-TestAdapter -Change $configured
+    }
+}
+
+AfterAll {
+    Remove-Module FibocomFm350 -ErrorAction SilentlyContinue
+}
+
+Describe 'Resolve-AdapterConfiguration' {
+    It 'configures a fresh adapter from the context: address, gateway, DNS, metric' {
+        $plan = Resolve-AdapterConfiguration -Context $script:context -Adapter (Get-TestAdapter) -Settings $script:settings
+        $plan.Configured | Should -BeFalse
+        $plan.Problem | Should -BeNullOrEmpty
+        $plan.Actions.Action | Should -Be @('DisableDhcp', 'SetAddress', 'SetGateway', 'SetDns', 'SetMetric')
+        $plan.Actions[1].Address | Should -Be '198.51.100.23'
+        $plan.Actions[1].PrefixLength | Should -Be 24
+        $plan.Actions[2].NextHop | Should -Be '198.51.100.1'
+        $plan.Actions[3].Servers | Should -Be @('203.0.113.53', '203.0.113.54', '2001:db8::53')
+        $plan.Actions[4].Metric | Should -Be 500
+    }
+
+    It 'plans nothing for an adapter already configured: safe to run twice' {
+        $plan = Resolve-AdapterConfiguration -Context $script:context -Adapter (Get-TestConfiguredAdapter) -Settings $script:settings
+        $plan.Configured | Should -BeTrue
+        $plan.Actions | Should -BeNullOrEmpty
+    }
+
+    It 'replaces the address and gateway of an earlier context' {
+        $adapter = Get-TestConfiguredAdapter -Change @{
+            Addresses = @([pscustomobject]@{ Address = '198.51.100.99'; PrefixLength = 24; Origin = 'Manual' })
+            Gateways  = @('198.51.100.254')
+        }
+        $plan = Resolve-AdapterConfiguration -Context $script:context -Adapter $adapter -Settings $script:settings
+        $plan.Actions.Action | Should -Be @('RemoveAddress', 'SetAddress', 'RemoveGateway', 'SetGateway')
+        $plan.Actions[0].Address | Should -Be '198.51.100.99'
+        $plan.Actions[2].NextHop | Should -Be '198.51.100.254'
+    }
+
+    It 'replaces an address whose mask changed' {
+        $adapter = Get-TestConfiguredAdapter -Change @{ Addresses = @([pscustomobject]@{ Address = '198.51.100.23'; PrefixLength = 16; Origin = 'Manual' }) }
+        $plan = Resolve-AdapterConfiguration -Context $script:context -Adapter $adapter -Settings $script:settings
+        $plan.Actions.Action | Should -Be @('RemoveAddress', 'SetAddress')
+    }
+
+    It 'keeps what the modem''s DHCP gave the adapter, and only sets the metric' {
+        $adapter = Get-TestAdapter -Change @{
+            Addresses  = @([pscustomobject]@{ Address = '192.168.225.20'; PrefixLength = 24; Origin = 'Dhcp' })
+            Gateways   = @('192.168.225.1')
+            DnsServers = @('192.168.225.1')
+        }
+        $plan = Resolve-AdapterConfiguration -Context $script:context -Adapter $adapter -Settings $script:settings
+        $plan.Actions.Action | Should -Be @('SetMetric')
+    }
+
+    It 'applies the DNS override over DHCP and over the operator''s servers' {
+        $settings = (ConvertTo-AppSetting -InputObject @{ DnsServers = @('203.0.113.99') }).Settings
+        $dhcp = Get-TestAdapter -Change @{
+            Addresses = @([pscustomobject]@{ Address = '192.168.225.20'; PrefixLength = 24; Origin = 'Dhcp' })
+            Gateways  = @('192.168.225.1'); AutomaticMetric = $false; InterfaceMetric = 500
+        }
+        (Resolve-AdapterConfiguration -Context $script:context -Adapter $dhcp -Settings $settings).Actions.Action | Should -Be @('SetDns')
+        $static = Get-TestConfiguredAdapter
+        $plan = Resolve-AdapterConfiguration -Context $script:context -Adapter $static -Settings $settings
+        $plan.Actions.Action | Should -Be @('SetDns')
+        $plan.Actions[0].Servers | Should -Be @('203.0.113.99')
+    }
+
+    It 'sets the metric of the settings: <Name>' -ForEach @(
+        @{ Name = 'automatic metric'; Change = @{ AutomaticMetric = $true }; Metric = 500; Expected = @('SetMetric') }
+        @{ Name = 'another metric'; Change = @{ InterfaceMetric = 10 }; Metric = 500; Expected = @('SetMetric') }
+        @{ Name = 'the modem preferred'; Change = @{}; Metric = 5; Expected = @('SetMetric') }
+        @{ Name = 'already right'; Change = @{}; Metric = 500; Expected = @() }
+    ) {
+        $settings = (ConvertTo-AppSetting -InputObject @{ InterfaceMetric = $Metric }).Settings
+        $plan = Resolve-AdapterConfiguration -Context $script:context -Adapter (Get-TestConfiguredAdapter -Change $Change) -Settings $settings
+        @($plan.Actions.Action) | Should -Be $Expected
+        if ($Expected) { $plan.Actions[-1].Metric | Should -Be $Metric }
+    }
+
+    It 'rewrites DNS servers in the wrong order' {
+        $adapter = Get-TestConfiguredAdapter -Change @{ DnsServers = @('203.0.113.54', '203.0.113.53', '2001:db8::53') }
+        (Resolve-AdapterConfiguration -Context $script:context -Adapter $adapter -Settings $script:settings).Actions.Action | Should -Be @('SetDns')
+    }
+
+    It 'keeps a default route already there when the modem reports no gateway' {
+        $context = $script:context | Select-Object -Property *
+        $context.IPv4Gateway = $null
+        $plan = Resolve-AdapterConfiguration -Context $context -Adapter (Get-TestConfiguredAdapter) -Settings $script:settings
+        $plan.Configured | Should -BeTrue
+    }
+
+    It 'plans nothing and says why: <Problem>' -ForEach @(
+        @{ Problem = 'NoAddress'; Change = @{ IPv4Address = $null } }
+        @{ Problem = 'NoMask'; Change = @{ IPv4PrefixLength = $null } }
+        @{ Problem = 'NoGateway'; Change = @{ IPv4Gateway = $null } }
+    ) {
+        $context = $script:context | Select-Object -Property *
+        foreach ($key in $Change.Keys) { $context.$key = $Change[$key] }
+        $plan = Resolve-AdapterConfiguration -Context $context -Adapter (Get-TestAdapter) -Settings $script:settings
+        $plan.Problem | Should -Be $Problem
+        $plan.Configured | Should -BeFalse
+        $plan.Actions | Should -BeNullOrEmpty
+    }
+
+    It 'says NoAddress without a context' {
+        (Resolve-AdapterConfiguration -Context $null -Adapter (Get-TestAdapter) -Settings $script:settings).Problem | Should -Be 'NoAddress'
+    }
+
+    It 'does not disable DHCP that is already off' {
+        $adapter = Get-TestAdapter -Change @{ Dhcp = 'Disabled'; Addresses = @() }
+        (Resolve-AdapterConfiguration -Context $script:context -Adapter $adapter -Settings $script:settings).Actions.Action | Should -Not -Contain 'DisableDhcp'
+    }
+}
+
+Describe 'Get-ModemAdapterState' {
+    BeforeEach {
+        $script:instance = 'USB\VID_0E8D&PID_7127&MI_00\8&00000000&0&0000'
+        Mock -ModuleName FibocomFm350 Get-NetAdapter {
+            [pscustomobject]@{ Name = 'Wi-Fi'; ifIndex = 7; Status = 'Up'; PnPDeviceID = 'PCI\VEN_8086&DEV_0000\0' }
+            [pscustomobject]@{ Name = 'Ethernet 3'; ifIndex = 12; Status = 'Up'; PnPDeviceID = $script:instance }
+        }
+        Mock -ModuleName FibocomFm350 Get-NetIPInterface { [pscustomobject]@{ Dhcp = 'Disabled'; InterfaceMetric = 500; AutomaticMetric = 'Disabled' } }
+        Mock -ModuleName FibocomFm350 Get-NetIPAddress {
+            [pscustomobject]@{ IPAddress = '198.51.100.23'; PrefixLength = 24; PrefixOrigin = 'Manual' }
+        }
+        Mock -ModuleName FibocomFm350 Get-NetRoute {
+            [pscustomobject]@{ NextHop = '198.51.100.1' }
+            [pscustomobject]@{ NextHop = '0.0.0.0' }
+        }
+        Mock -ModuleName FibocomFm350 Get-DnsClientServerAddress {
+            [pscustomobject]@{ AddressFamily = 23; ServerAddresses = @('2001:db8::53') }
+            [pscustomobject]@{ AddressFamily = 2; ServerAddresses = @('203.0.113.53', '203.0.113.54') }
+        }
+    }
+
+    It 'finds the adapter by its instance ID and reads what the plan needs' {
+        $state = Get-ModemAdapterState -InstanceId $script:instance
+        $state.InterfaceIndex | Should -Be 12
+        $state.Dhcp | Should -Be 'Disabled'
+        $state.InterfaceMetric | Should -Be 500
+        $state.AutomaticMetric | Should -BeFalse
+        $state.Addresses[0].Address | Should -Be '198.51.100.23'
+        $state.Addresses[0].Origin | Should -Be 'Manual'
+        $state.Gateways | Should -Be @('198.51.100.1')
+        $state.DnsServers | Should -Be @('203.0.113.53', '203.0.113.54', '2001:db8::53')
+        Should -Invoke -ModuleName FibocomFm350 Get-NetIPAddress -ParameterFilter { $InterfaceIndex -eq 12 }
+    }
+
+    It 'gives nothing when no adapter has that instance ID' {
+        Get-ModemAdapterState -InstanceId 'USB\VID_0E8D&PID_7127&MI_00\9&00000000&0&0000' | Should -BeNullOrEmpty
+    }
+
+    It 'reads an adapter without IPv4 configuration' {
+        Mock -ModuleName FibocomFm350 Get-NetIPInterface { }
+        Mock -ModuleName FibocomFm350 Get-NetIPAddress { }
+        Mock -ModuleName FibocomFm350 Get-NetRoute { }
+        Mock -ModuleName FibocomFm350 Get-DnsClientServerAddress { }
+        $state = Get-ModemAdapterState -InstanceId $script:instance
+        $state.Dhcp | Should -BeNullOrEmpty
+        $state.AutomaticMetric | Should -BeFalse
+        @($state.Addresses).Count | Should -Be 0
+        @($state.Gateways).Count | Should -Be 0
+        @($state.DnsServers).Count | Should -Be 0
+    }
+}
+
+Describe 'Set-ModemAdapterConfiguration' {
+    BeforeEach {
+        Mock -ModuleName FibocomFm350 Set-NetIPInterface { }
+        Mock -ModuleName FibocomFm350 Remove-NetIPAddress { }
+        Mock -ModuleName FibocomFm350 New-NetIPAddress { }
+        Mock -ModuleName FibocomFm350 Remove-NetRoute { }
+        Mock -ModuleName FibocomFm350 New-NetRoute { }
+        Mock -ModuleName FibocomFm350 Set-DnsClientServerAddress { }
+        $script:plan = Resolve-AdapterConfiguration -Context $script:context -Adapter (Get-TestAdapter) -Settings $script:settings
+    }
+
+    It 'applies every action to that adapter, in the active store' {
+        $results = @(Set-ModemAdapterConfiguration -InterfaceIndex 12 -Plan $script:plan -Confirm:$false)
+        $results.Action | Should -Be @('DisableDhcp', 'SetAddress', 'SetGateway', 'SetDns', 'SetMetric')
+        @($results | Where-Object { -not $_.Done }).Count | Should -Be 0
+        Should -Invoke -ModuleName FibocomFm350 New-NetIPAddress -Times 1 -Exactly -ParameterFilter {
+            $InterfaceIndex -eq 12 -and $IPAddress -eq '198.51.100.23' -and $PrefixLength -eq 24 -and $PolicyStore -eq 'ActiveStore'
+        }
+        Should -Invoke -ModuleName FibocomFm350 New-NetRoute -Times 1 -Exactly -ParameterFilter {
+            $InterfaceIndex -eq 12 -and $DestinationPrefix -eq '0.0.0.0/0' -and $NextHop -eq '198.51.100.1' -and $PolicyStore -eq 'ActiveStore'
+        }
+        Should -Invoke -ModuleName FibocomFm350 Set-DnsClientServerAddress -Times 1 -Exactly -ParameterFilter { $InterfaceIndex -eq 12 }
+        Should -Invoke -ModuleName FibocomFm350 Set-NetIPInterface -Times 3 -Exactly -ParameterFilter { $InterfaceIndex -eq 12 -and $PolicyStore -eq 'ActiveStore' }
+    }
+
+    It 'stops at the first action that fails, and says why' {
+        Mock -ModuleName FibocomFm350 New-NetIPAddress { throw 'Access is denied.' }
+        $results = @(Set-ModemAdapterConfiguration -InterfaceIndex 12 -Plan $script:plan -Confirm:$false)
+        $results.Action | Should -Be @('DisableDhcp', 'SetAddress')
+        $results[1].Done | Should -BeFalse
+        $results[1].Error | Should -Match 'denied'
+        Should -Invoke -ModuleName FibocomFm350 New-NetRoute -Times 0 -Exactly
+    }
+
+    It 'changes nothing under -WhatIf' {
+        @(Set-ModemAdapterConfiguration -InterfaceIndex 12 -Plan $script:plan -WhatIf).Count | Should -Be 0
+        Should -Invoke -ModuleName FibocomFm350 New-NetIPAddress -Times 0 -Exactly
+        Should -Invoke -ModuleName FibocomFm350 Set-NetIPInterface -Times 0 -Exactly
+    }
+}

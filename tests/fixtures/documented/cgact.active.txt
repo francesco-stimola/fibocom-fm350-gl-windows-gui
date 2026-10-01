@@ -1,0 +1,4 @@
+# Source: [27.007] +CGACT read form, "+CGACT: <cid>,<state>"; context 1 active; values invented.
+AT+CGACT?
++CGACT: 1,1
+OK

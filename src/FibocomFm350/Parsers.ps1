@@ -134,12 +134,16 @@ function ConvertFrom-AtSimState {
     .SYNOPSIS
         Reads the SIM state from the answer to AT+CPIN?.
     .DESCRIPTION
-        Returns Ready ($true for '+CPIN: READY') and Waiting: what the SIM is waiting for
-        ('SIM PIN', 'SIM PUK', ...), or $null when it is ready. Returns $null if the answer has no
-        '+CPIN:' line. A missing or busy SIM answers '+CME ERROR' instead (10, 14): see
-        Invoke-AtCommand's Status and ErrorCode.
+        Returns Ready ($true for '+CPIN: READY'), Waiting - what the SIM is waiting for ('SIM PIN',
+        'SIM PUK', ...), or $null when it is ready - and State: 'Ready', 'PinRequired',
+        'PukRequired', 'Absent', 'Busy', 'Failure' or 'Other'.
+        A missing or busy SIM answers '+CME ERROR' instead: pass its number as -ErrorCode (10 no
+        SIM, 11 PIN required, 12 PUK required, 13 SIM failure, 14 busy; any other is 'Other').
+        Returns $null for an answer with no '+CPIN:' line and no error code.
     .EXAMPLE
         ConvertFrom-AtSimState -Lines '+CPIN: SIM PIN'
+    .EXAMPLE
+        ConvertFrom-AtSimState -Lines @() -ErrorCode 10
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -147,17 +151,39 @@ function ConvertFrom-AtSimState {
         [Parameter(Mandatory)]
         [AllowEmptyCollection()]
         [AllowEmptyString()]
-        [string[]] $Lines
+        [string[]] $Lines,
+
+        [Nullable[int]] $ErrorCode
     )
 
     $text = @(Get-AtPrefixedLine -Lines $Lines -Prefix '+CPIN') | Select-Object -First 1
-    if ($null -eq $text) {
-        return
+    if ($null -ne $text) {
+        $code = $text.Trim().Trim('"')
+        $state = switch ($code) {
+            'READY' { 'Ready' }
+            'SIM PIN' { 'PinRequired' }
+            'SIM PUK' { 'PukRequired' }
+            default { 'Other' }
+        }
+        [pscustomobject]@{
+            Ready   = $state -eq 'Ready'
+            Waiting = if ($state -eq 'Ready') { $null } else { $code }
+            State   = $state
+        }
     }
-    $code = $text.Trim().Trim('"')
-    [pscustomobject]@{
-        Ready   = $code -eq 'READY'
-        Waiting = if ($code -eq 'READY') { $null } else { $code }
+    elseif ($null -ne $ErrorCode) {
+        [pscustomobject]@{
+            Ready   = $false
+            Waiting = $null
+            State   = switch ($ErrorCode) {
+                10 { 'Absent' }
+                11 { 'PinRequired' }
+                12 { 'PukRequired' }
+                13 { 'Failure' }
+                14 { 'Busy' }
+                default { 'Other' }
+            }
+        }
     }
 }
 

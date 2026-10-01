@@ -1,0 +1,4 @@
+# Source: [FIBOCOM] §3.12 p.29 +ICCID, unquoted; the fake ICCID of tests/fixtures/fakes.psd1.
+AT+ICCID
++ICCID: 8900100000000000000
+OK

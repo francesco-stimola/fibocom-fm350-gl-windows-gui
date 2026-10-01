@@ -1,0 +1,7 @@
+# Source: [27.007] +CPINR, "+CPINR: <code>,<retries>,<default retries>"; values invented.
+AT+CPINR
++CPINR: SIM PIN,3,3
++CPINR: SIM PUK,10,10
++CPINR: SIM PIN2,3,3
++CPINR: SIM PUK2,10,10
+OK

@@ -1,0 +1,5 @@
+# Source: [27.007] +CGAUTH read form, layout as captured (device/cgauth.read.txt); context 1 with PAP, user and password invented.
+AT+CGAUTH?
++CGAUTH: 0,0,"",""
++CGAUTH: 1,1,"user","secret"
+OK

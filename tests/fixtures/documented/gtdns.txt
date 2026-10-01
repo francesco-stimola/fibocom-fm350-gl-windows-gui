@@ -1,0 +1,4 @@
+# Source: [FIBOCOM] §12.2.17 p.230 +GTDNS answer "<cid>,<DNS 1>,<DNS 2>"; documentation addresses (RFC 5737), values invented.
+AT+GTDNS=1
++GTDNS: 1,"203.0.113.53","203.0.113.54"
+OK
