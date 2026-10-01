@@ -4,6 +4,42 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-01 — M1 complete: the protocol checked against a real FM350-GL
+
+The device session ran on firmware `81600.0000.00.29.22.06`, without a SIM, then with one
+registered on LTE; every answer was captured through the project's own channel, redacted into
+`tests/fixtures/device/`, and played back through the parsers. The `Hardware` test passed: the
+serial transport works on the real port. Facts are in `AT-COMMANDS.md` with their fixtures; what
+changed the code or the design:
+- **Parsers fixed where the device differs from the manual**, each with a test that fails
+  without the fix: a format and an `<AcT>` without an operator mean nothing (`+COPS:0,255,"",0`
+  read as GSM); a temperature sensor answering `0` is absent; TAC and cell identity filled with
+  the modem's "not known" pattern (`FFFF`, `00FFFFFFF`, `000000`) are no location; a serving
+  cell's band, left empty while idle, comes from its channel number (an NR channel shared by two
+  bands stays without one); a primary carrier line has ten fields, the UL bandwidth after the DL
+  one, while the manual lists nine.
+- **`<AcT>` 13 is not 5G.** The device reports `13` (EN-DC) in `+COPS` and every registration
+  report on an LTE cell with NR switched off: the cell can anchor EN-DC, nothing more. Whether NR
+  is in use must come from an NR measurement. Likewise `+C5GREG` mirrors the EPS registration.
+- **The modem doesn't send every report it is asked for**: no `+CSCON`, `+CGREG` or `+C5GREG`
+  code arrived while the state changed, and MediaTek's own codes (`+CIREPI`, `+CTZV`…) can land
+  inside an answer. So health checks read the state, and parsers pick lines by prefix or shape,
+  never by position (ARCHITECTURE).
+- **The port**: a pulled cable makes the next write fail at once and the transport reports the
+  port lost — never a write timeout — and `pwsh` survives it, finalizers included; this also
+  confirms the write-timeout fix of the M1 review. `GetPortNames()` keeps listing a port that was
+  open when its device left, so presence comes from PnP. Once, the first open after the driver
+  install stayed silent for about 45 s; it never happened again, and the worker keeps
+  initializing a silent port rather than closing it.
+- **`+GTACT` is persistent on this firmware**, against the manual: it survives `+CFUN=15` and a
+  power cycle. LTE and NR codes go in one write, the lists are per RAT, and n77 drops out of the
+  list by itself after a registration attempt (cause unknown, carried by M5).
+- **No working route for APN credentials**: `+CGAUTH=?` and `+EIAAPN?` both answer
+  `+CME ERROR: 100` — an open decision in the ROADMAP.
+- Carried forward on purpose: the app's own data context, DHCP and context persistence go to M2,
+  which builds that sequence; NSA, SA and LTE-A observations to M5; `+CFUN=1,1` to M4; the eSIM
+  questions to a module with an eUICC (this one has none).
+
 ## 2026-10-01 — The AT-port driver installed the way M6 will install it
 
 The guided path of ARCHITECTURE → *Drivers*, walked by hand once: the package (the commit-pinned

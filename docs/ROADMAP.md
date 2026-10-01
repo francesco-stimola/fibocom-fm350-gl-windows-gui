@@ -14,7 +14,7 @@ written `(planned)`.
 | Milestone | Status |
 |---|---|
 | [M0 — Project setup](#m0) | ✅ complete |
-| [M1 — Modem protocol](#m1) | 🔨 code-complete |
+| [M1 — Modem protocol](#m1) | ✅ complete |
 | [M2 — Connection](#m2) | 📋 planned |
 | [M3 — Tray app](#m3) | 📋 planned |
 | [M4 — Health & recovery](#m4) | 📋 planned |
@@ -41,7 +41,7 @@ written `(planned)`.
 
 Everything needed to talk to the modem and understand its answers — no connection logic yet.
 
-- [ ] **Device session**: answer the open questions in [`AT-COMMANDS.md` §7](AT-COMMANDS.md#7-open-questions-for-the-first-device-session), capture the responses into `tests/fixtures/device/`, and run the `Hardware` tests — the first time the serial transport meets the real port.
+- [x] **Device session**: answer the open questions in [`AT-COMMANDS.md` §7](AT-COMMANDS.md#7-open-questions-for-the-first-device-session), capture the responses into `tests/fixtures/device/`, and run the `Hardware` tests — the first time the serial transport meets the real port. The questions that need a data context, an NR leg or another network are carried by M2, M4 and M5 below.
 - [x] Fixture rules in place: capture format, redaction of identifiers, and a test that fails if a fixture contains an unredacted IMEI/IMSI/ICCID pattern.
 - [x] AT channel over a **transport** interface, with `System.IO.Ports` as the real transport: send a command, collect lines until the final result code, per-command timeout, URCs separated from responses.
 - [x] **Simulated modem**: a transport that answers from fixtures and runs **scripted fault scenarios**, each an automated test in the default run:
@@ -63,6 +63,7 @@ Everything needed to talk to the modem and understand its answers — no connect
 - [ ] Network configuration of the modem's adapter (address, mask, gateway, DNS) in the active store.
 - [ ] Startup reconciliation: attach to an existing connection without re-dialing.
 - [ ] Redacted rolling log.
+- [ ] On the device: `AT-COMMANDS.md` §7 questions 5, 6 and 12 — the app's own data context, DHCP on the adapter, whether a written context survives a power cycle — and the NR leg of an EN-DC cell under traffic (questions 3, 4).
 
 <a id="m3"></a>
 ## M3 — Tray app
@@ -81,6 +82,7 @@ Everything needed to talk to the modem and understand its answers — no connect
 - [ ] Recovery decision as a pure function (symptoms + history → step), with a matrix of tests.
 - [ ] Recovery steps R1–R6 with settle times and backoff (**values: human decision**).
 - [ ] Maintenance windows.
+- [ ] On the device: `AT-COMMANDS.md` §7 question 8 for `+CFUN=1,1` (`+CFUN=15` and `+CFUN=4`/`1` are measured).
 - [ ] Soak run on the real device (duration: human decision), with handle and memory counts before/after.
 
 <a id="m5"></a>
@@ -89,6 +91,7 @@ Everything needed to talk to the modem and understand its answers — no connect
 - [ ] Read current mode and bands from the modem; supported values from `AT+GTACT=?`.
 - [ ] UI: mode selector (at least 4G + 5G / 4G only) and per-RAT band checkboxes.
 - [ ] Apply inside a maintenance window, writing every managed RAT's band list (the modem keeps one list per RAT); persist in settings; re-apply on every connect.
+- [ ] On the device: `AT-COMMANDS.md` §7 questions 7 (do NR codes restrict NSA?) and 10 (`+GTCAINFO` with LTE-A, NSA, SA), and why n77 drops out of the band list (§5).
 
 <a id="m6"></a>
 ## M6 — Driver installation
@@ -150,7 +153,11 @@ data is left (design: ARCHITECTURE → *SMS, USSD and data usage*; facts: `AT-CO
 Decisions that change what happens next and are the maintainer's to take. Remove a line when it is
 decided, and record the decision in `DEVLOG.md`.
 
-*None open.*
+- **APN credentials (M2 settings).** On firmware `81600.0000.00.29.22.06` neither `AT+CGAUTH=?`
+  nor `AT+EIAAPN?` answers (`AT-COMMANDS.md` §3), so the setting "optional APN credentials" has no
+  known route. Options: (1) drop it from M2 — most APNs need none — and say so in the README;
+  (2) probe the set form `AT+EIAAPN=…` on the device, which writes persistent modem state;
+  (3) keep the setting and report it as unsupported on this firmware.
 
 ---
 

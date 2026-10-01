@@ -113,7 +113,10 @@ Everything the worker says to the modem goes through one **AT channel** per port
 - **Unsolicited codes** are recognized by prefix and queued, including those arriving in the
   middle of an answer; the worker drains the queue between commands. A read or test command
   (`AT+CEREG?`) claims lines with its own prefix as its answer; a set command (`AT+CEREG=2`)
-  doesn't, so a registration code arriving during it still reaches the queue.
+  doesn't, so a registration code arriving during it still reaches the queue. The modem's own
+  MediaTek codes (`+CIREPI`, `+EDSBP`, `+CTZV`…) are not on the list: one arriving between a
+  command's echo and its result lands among the answer's lines. So **parsers pick their lines by
+  prefix or by shape, never by position** (`AT-COMMANDS.md` §2).
 - **Command text is printable ASCII.** A CR would make the modem run two commands; a character
   the port can't carry would make the echo unrecognizable, and a command that ran would be
   reported as a timeout and retried.
@@ -177,7 +180,13 @@ the checks keep failing after each step's settle time:
 | R5 | Modem reset (`+CFUN=15`) | R4 failed | Device re-enumerates on USB. |
 | R6 | Restart the USB device (`pnputil /restart-device`) | H2 with H1 passing | Device re-enumerates. |
 
+- The checks **read** the state; they don't wait for unsolicited codes. The FM350 doesn't send
+  every report it is asked for — no `+CSCON`, `+CGREG` or `+C5GREG` code was seen while the state
+  changed (`AT-COMMANDS.md` §2) — so a code is a hint to read sooner, never the only source.
 - Settle times, backoff between cycles, and when counters reset after sustained health: **TBD**.
+  Measured on the device, as input: after `+CFUN=1` (R4) the modem was registered again within
+  about a second; after `+CFUN=15` (R5) it dropped off USB about 49 s after the `OK` and was back
+  about 28 s later.
 - After repeated full cycles the app keeps trying at a slow cadence (**TBD**) and shows the
   failure in the tray instead of hammering the network.
 - The choice "symptoms + history → next step" is a **pure function**, proven by a matrix.

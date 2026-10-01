@@ -54,7 +54,7 @@ same two commands on every push to `main` and every pull request.
 
 | File | What it proves |
 |---|---|
-| `tests/Bands.Tests.ps1` | `AT+GTACT` band codes: encoding matrix per RAT, rejected inputs, decoding matrix, unknown codes kept as-is, empty or malformed fields refused (never read as "all bands"), full encode→decode round trip. |
+| `tests/Bands.Tests.ps1` | `AT+GTACT` band codes: encoding matrix per RAT, rejected inputs, decoding matrix, unknown codes kept as-is, empty or malformed fields refused (never read as "all bands"), full encode→decode round trip; the supported and current band lists captured from the device (`AT+GTACT=?`, LTE-only, automatic, combined writes). |
 | `tests/Module.Tests.ps1` | The manifest is valid and exports exactly the public functions. |
 | `tests/AtText.Tests.ps1` | Framing the port's text into lines (split reads, CR-only echo, noise) and classifying each line: echo, answer, final result with its error code, unsolicited, stale. |
 | `tests/AtChannel.Tests.ps1` | The AT channel over the simulated modem, and every fault scenario of ROADMAP M1: timeout, split answer, garbled bytes, a URC mid-answer, the port vanishing, the device back under another COM number, SIM busy after a band change, registration lost and regained, a slow `AT+COPS=0`, a late answer after a timeout, echo turned off. Also the bounded URC queue and closing. |
@@ -62,8 +62,8 @@ same two commands on every push to `main` and every pull request.
 | `tests/Transport.Tests.ps1` | Serial port names refused, a missing port failing to open; the `Hardware` test on a real FM350. |
 | `tests/Fixtures.Tests.ps1` | Every fixture follows the format, names its source and carries only the documented fake identifiers; the identifier check catches real-looking ones. |
 | `tests/Measurements.Tests.ps1` | Every measurement kind's index → dBm/dB mapping: range edges, the open-ended lowest and highest indexes, "not known" and out-of-range indexes. |
-| `tests/Parsers.Tests.ps1` | Identity, SIM state, registration (read answers and URCs, every domain, reject causes), operator and technology, signal quality, temperature — on documented fixtures played through the channel. |
-| `tests/Cells.Tests.ps1` | `+GTCCINFO` serving and neighbour layouts on LTE, EN-DC and SA; `+GTCAINFO` primary and secondary carriers, older shorter lines, malformed fields. |
+| `tests/Parsers.Tests.ps1` | Identity, SIM state, registration (read answers and URCs, every domain, reject causes), operator and technology, signal quality, temperature — on documented and captured fixtures played through the channel: without a SIM, registered on LTE, with the radio off. |
+| `tests/Cells.Tests.ps1` | `+GTCCINFO` serving and neighbour layouts on LTE, EN-DC and SA; `+GTCAINFO` primary and secondary carriers, older shorter lines, malformed fields; the device's cells idle and connected (band from the channel number, the "not known" location pattern) and its ten-field primary carrier. |
 | `tests/Arfcn.Tests.ps1` | EARFCN and NR-ARFCN against values worked out by hand from the 3GPP formulas, including the table rows that needed repair when transcribed. |
 | `tests/Devices.Tests.ps1` | The modem's USB functions on captured PnP snapshots — before the serial driver (AT port without it, RNDIS working) and after (AT port working on its COM port) — the AT port of each composition, problem codes → driver state, leftover devices and other MediaTek devices skipped, two modems told apart. |
 
@@ -101,7 +101,11 @@ prefix (`InstanceId`, `Present`, `ProblemCode`, `Service`, `Parent`, `HardwareId
 serial number (`+CFSN`), the TAC and cell identity of registration reports and `+GTCCINFO`
 lines, and in PnP snapshots the instance part of every instance ID (a USB serial number, or a
 Windows-generated hash) and the container ID. Message text and USSD replies are
-rewritten by hand. `tests/Fixtures.Tests.ps1` fails on any fixture that still carries an
+rewritten by hand. Location fakes keep the length the modem pads to (TAC 4 or 6 digits, cell
+identity 8, 9 or 10); the modem's own "not known" pattern (`FFFF`, `00FFFFFFF`, `000000`) stays as
+captured. Captured fixtures also take the 3GPP test network `001`/`01` for the operator, invented
+PCIs (with the channel numbers, a set of neighbour cells fingerprints a place) and documentation
+addresses (RFC 5737 for IPv4, RFC 3849 for IPv6). `tests/Fixtures.Tests.ps1` fails on any fixture that still carries an
 identifier-like value other than those fakes.
 
 ## Releasing (from M7)
