@@ -18,17 +18,18 @@ function Resolve-ModemUsbDevice {
         adapter apart, each with its driver state.
     .DESCRIPTION
         Takes device records as read from PnP, each with InstanceId, Present, ProblemCode,
-        Service and Parent; other properties are ignored. Only present USB functions of the FM350
+        Service and Parent, plus PortName (the COM port, from the device's registry parameters)
+        for a serial port; other properties are ignored. Only present USB functions of the FM350
         compositions (USB\VID_0E8D&PID_7126 and 7127, interface MI_xx) count: devices left over
         from an earlier plug-in, the composite device itself and other MediaTek devices are
         skipped. A modem is the composite device its functions hang from.
 
         Returns one object per modem: InstanceId (of the composite device), ProductId, AtPort,
         Network and Functions (every function, by interface number). Each function has
-        InstanceId, Interface, Role ('AtPort', 'Network' or 'Other'), State, ProblemCode and
-        Service. State is 'Working', 'NoDriver' (problem code 1 or 28) or 'Problem' (any other
-        problem code: disabled, failed to start...). AtPort or Network is $null when that function
-        is not present.
+        InstanceId, Interface, Role ('AtPort', 'Network' or 'Other'), State, ProblemCode, Service
+        and PortName. State is 'Working', 'NoDriver' (problem code 1 or 28) or 'Problem' (any
+        other problem code: disabled, failed to start...). AtPort or Network is $null when that
+        function is not present; PortName is $null when the record has none.
     .EXAMPLE
         Resolve-ModemUsbDevice -Device $records | Where-Object { $_.AtPort.State -eq 'NoDriver' }
     #>
@@ -72,6 +73,7 @@ function Resolve-ModemUsbDevice {
                 State       = $state
                 ProblemCode = $problemCode
                 Service     = if ($record.Service) { [string]$record.Service } else { $null }
+                PortName    = if ($record.PSObject.Properties['PortName'] -and $record.PortName) { [string]$record.PortName } else { $null }
             }
         }
     }

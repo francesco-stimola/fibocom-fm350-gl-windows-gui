@@ -54,6 +54,32 @@ Describe 'Resolve-ModemUsbDevice' {
             $script:modems[0].Functions.State | Should -Be @('Working', 'NoDriver', 'NoDriver', 'NoDriver', 'Working', 'NoDriver', 'NoDriver', 'NoDriver', 'NoDriver')
             $script:modems[0].Functions.Role | Should -Be @('Network', 'Other', 'Other', 'Other', 'Other', 'AtPort', 'Other', 'Other', 'Other')
         }
+
+        It 'has no COM port yet' {
+            $script:modems[0].Functions.PortName | Where-Object { $_ } | Should -BeNullOrEmpty
+        }
+    }
+
+    Context 'on the captured 7127 modem with the AT-port driver installed' {
+        BeforeAll {
+            $fixture = Get-Content -LiteralPath "$PSScriptRoot/fixtures/device/pnp.7127.driver.json" -Raw | ConvertFrom-Json
+            $script:modems = @(Resolve-ModemUsbDevice -Device $fixture.Devices)
+        }
+
+        It 'finds the AT port on MI_06, working, with its COM port' {
+            $script:modems.Count | Should -Be 1
+            $atPort = $script:modems[0].AtPort
+            $atPort.Interface | Should -Be 6
+            $atPort.State | Should -Be 'Working'
+            $atPort.Service | Should -Be 'usb2ser_tm'
+            $atPort.PortName | Should -Be 'COM9'
+        }
+
+        It 'sees every function working, a COM port on each serial one' {
+            $script:modems[0].Functions.State | Should -Be @('Working', 'Working', 'Working', 'Working', 'Working', 'Working', 'Working', 'Working', 'Working')
+            $script:modems[0].Functions.PortName | Should -Be @($null, 'COM3', 'COM5', 'COM7', $null, 'COM9', 'COM4', 'COM6', 'COM8')
+            $script:modems[0].Network.PortName | Should -BeNullOrEmpty
+        }
     }
 
     It 'finds the AT port on MI_04 in composition 7126' {

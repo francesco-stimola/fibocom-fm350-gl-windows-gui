@@ -1,5 +1,5 @@
 {
-  "Source": "captured 2026-10-01: FM350-GL over USB, Windows 11 build 26300, no AT-port driver installed; Get-PnpDevice and Get-PnpDeviceProperty, present devices with instance ID USB\\VID_0E8D*; instance-ID tails and container ID replaced by fakes",
+  "Source": "captured 2026-10-01: FM350-GL over USB, Windows 11 build 26300 with Memory Integrity on, usb2ser_tm 3.22.43.1 installed; Get-PnpDevice and Get-PnpDeviceProperty, present devices with instance ID USB\\VID_0E8D*, PortName from the device's registry parameters; instance-ID tails and container ID replaced by fakes",
   "Devices": [
     {
       "InstanceId": "USB\\VID_0E8D&PID_7127\\7&00000000&0&1",
@@ -55,11 +55,11 @@
     {
       "InstanceId": "USB\\VID_0E8D&PID_7127&MI_02\\8&00000000&0&0002",
       "Present": true,
-      "ProblemCode": 28,
-      "Class": null,
-      "Service": null,
-      "DriverInfPath": null,
-      "FriendlyName": null,
+      "ProblemCode": 0,
+      "Class": "Ports",
+      "Service": "usb2ser_tm",
+      "DriverInfPath": "oem24.inf",
+      "FriendlyName": "USB AP Log Port (COM3)",
       "BusReportedDeviceDesc": "USB COM Port",
       "HardwareIds": [
         "USB\\VID_0E8D&PID_7127&REV_0001&MI_02",
@@ -75,16 +75,16 @@
       ],
       "ContainerId": "{00000000-0000-0000-0000-000000000001}",
       "Parent": "USB\\VID_0E8D&PID_7127\\7&00000000&0&1",
-      "PortName": null
+      "PortName": "COM3"
     },
     {
       "InstanceId": "USB\\VID_0E8D&PID_7127&MI_03\\8&00000000&0&0003",
       "Present": true,
-      "ProblemCode": 28,
-      "Class": null,
-      "Service": null,
-      "DriverInfPath": null,
-      "FriendlyName": null,
+      "ProblemCode": 0,
+      "Class": "Ports",
+      "Service": "usb2ser_tm",
+      "DriverInfPath": "oem24.inf",
+      "FriendlyName": "USB AP GNSS Port (COM5)",
       "BusReportedDeviceDesc": "USB COM Port",
       "HardwareIds": [
         "USB\\VID_0E8D&PID_7127&REV_0001&MI_03",
@@ -100,16 +100,16 @@
       ],
       "ContainerId": "{00000000-0000-0000-0000-000000000001}",
       "Parent": "USB\\VID_0E8D&PID_7127\\7&00000000&0&1",
-      "PortName": null
+      "PortName": "COM5"
     },
     {
       "InstanceId": "USB\\VID_0E8D&PID_7127&MI_04\\8&00000000&0&0004",
       "Present": true,
-      "ProblemCode": 28,
-      "Class": null,
-      "Service": null,
-      "DriverInfPath": null,
-      "FriendlyName": null,
+      "ProblemCode": 0,
+      "Class": "Ports",
+      "Service": "usb2ser_tm",
+      "DriverInfPath": "oem24.inf",
+      "FriendlyName": "USB AP META Port (COM7)",
       "BusReportedDeviceDesc": "USB COM Port",
       "HardwareIds": [
         "USB\\VID_0E8D&PID_7127&REV_0001&MI_04",
@@ -125,7 +125,7 @@
       ],
       "ContainerId": "{00000000-0000-0000-0000-000000000001}",
       "Parent": "USB\\VID_0E8D&PID_7127\\7&00000000&0&1",
-      "PortName": null
+      "PortName": "COM7"
     },
     {
       "InstanceId": "USB\\VID_0E8D&PID_7127&MI_05\\8&00000000&0&0005",
@@ -155,11 +155,11 @@
     {
       "InstanceId": "USB\\VID_0E8D&PID_7127&MI_06\\8&00000000&0&0006",
       "Present": true,
-      "ProblemCode": 28,
-      "Class": null,
-      "Service": null,
-      "DriverInfPath": null,
-      "FriendlyName": null,
+      "ProblemCode": 0,
+      "Class": "Ports",
+      "Service": "usb2ser_tm",
+      "DriverInfPath": "oem24.inf",
+      "FriendlyName": "USB MD AT Port (COM9)",
       "BusReportedDeviceDesc": "USB COM Port",
       "HardwareIds": [
         "USB\\VID_0E8D&PID_7127&REV_0001&MI_06",
@@ -175,16 +175,16 @@
       ],
       "ContainerId": "{00000000-0000-0000-0000-000000000001}",
       "Parent": "USB\\VID_0E8D&PID_7127\\7&00000000&0&1",
-      "PortName": null
+      "PortName": "COM9"
     },
     {
       "InstanceId": "USB\\VID_0E8D&PID_7127&MI_07\\8&00000000&0&0007",
       "Present": true,
-      "ProblemCode": 28,
-      "Class": null,
-      "Service": null,
-      "DriverInfPath": null,
-      "FriendlyName": null,
+      "ProblemCode": 0,
+      "Class": "Ports",
+      "Service": "usb2ser_tm",
+      "DriverInfPath": "oem24.inf",
+      "FriendlyName": "USB MD META Port (COM4)",
       "BusReportedDeviceDesc": "USB COM Port",
       "HardwareIds": [
         "USB\\VID_0E8D&PID_7127&REV_0001&MI_07",
@@ -200,16 +200,16 @@
       ],
       "ContainerId": "{00000000-0000-0000-0000-000000000001}",
       "Parent": "USB\\VID_0E8D&PID_7127\\7&00000000&0&1",
-      "PortName": null
+      "PortName": "COM4"
     },
     {
       "InstanceId": "USB\\VID_0E8D&PID_7127&MI_08\\8&00000000&0&0008",
       "Present": true,
-      "ProblemCode": 28,
-      "Class": null,
-      "Service": null,
-      "DriverInfPath": null,
-      "FriendlyName": null,
+      "ProblemCode": 0,
+      "Class": "Ports",
+      "Service": "usb2ser_tm",
+      "DriverInfPath": "oem24.inf",
+      "FriendlyName": "USB NPT Port (COM6)",
       "BusReportedDeviceDesc": "USB COM Port",
       "HardwareIds": [
         "USB\\VID_0E8D&PID_7127&REV_0001&MI_08",
@@ -225,16 +225,16 @@
       ],
       "ContainerId": "{00000000-0000-0000-0000-000000000001}",
       "Parent": "USB\\VID_0E8D&PID_7127\\7&00000000&0&1",
-      "PortName": null
+      "PortName": "COM6"
     },
     {
       "InstanceId": "USB\\VID_0E8D&PID_7127&MI_09\\8&00000000&0&0009",
       "Present": true,
-      "ProblemCode": 28,
-      "Class": null,
-      "Service": null,
-      "DriverInfPath": null,
-      "FriendlyName": null,
+      "ProblemCode": 0,
+      "Class": "Ports",
+      "Service": "usb2ser_tm",
+      "DriverInfPath": "oem24.inf",
+      "FriendlyName": "USB Debug Port (COM8)",
       "BusReportedDeviceDesc": "USB COM Port",
       "HardwareIds": [
         "USB\\VID_0E8D&PID_7127&REV_0001&MI_09",
@@ -250,7 +250,7 @@
       ],
       "ContainerId": "{00000000-0000-0000-0000-000000000001}",
       "Parent": "USB\\VID_0E8D&PID_7127\\7&00000000&0&1",
-      "PortName": null
+      "PortName": "COM8"
     }
   ]
 }
