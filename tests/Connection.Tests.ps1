@@ -82,6 +82,9 @@ Describe 'Resolve-ConnectionState' {
         @{ Name = 'context on the IMS APN, the APN of the settings'; Change = @{ ContextApn = 'ims.mnc001.mcc001.gprs' }; State = 'Registered'; Action = 'None'; Reason = 'NoAddress'; Blocked = $false }
         @{ Name = 'context on an APN that only starts with ims'; Change = @{ ContextApn = 'ims.example.mnc001.mcc001.gprs'; ApnSet = $false }; State = 'Online'; Action = 'None'; Reason = $null; Blocked = $false }
         @{ Name = 'context on the internet APN, no APN set'; Change = @{ ContextApn = 'internet.mnc001.mcc001.gprs'; ApnSet = $false }; State = 'Online'; Action = 'None'; Reason = $null; Blocked = $false }
+        # A stored APN password that can't be read: the user gives it again.
+        @{ Name = 'context to activate, APN password unreadable'; Change = @{ ContextActive = $false; ContextAddress = $null; ApnPasswordUnreadable = $true }; State = 'Registered'; Action = 'None'; Reason = 'ApnPasswordUnreadable'; Blocked = $true }
+        @{ Name = 'active context, APN password unreadable'; Change = @{ ApnPasswordUnreadable = $true }; State = 'Online'; Action = 'None'; Reason = $null; Blocked = $false }
         # What couldn't be read is never taken for "no": nothing is written over it.
         @{ Name = 'activation not read, not registered'; Change = @{ Registered = $false; RegistrationState = 'Searching'; ContextDefined = $false; ContextActive = $null }; State = 'SimReady'; Action = 'None'; Reason = 'Searching'; Blocked = $false }
         @{ Name = 'active context differing from the settings, registration lost a moment'; Change = @{ Registered = $false; RegistrationState = 'Searching'; ContextDefined = $false }; State = 'SimReady'; Action = 'None'; Reason = 'Searching'; Blocked = $false }

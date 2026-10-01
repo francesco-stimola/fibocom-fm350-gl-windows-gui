@@ -456,6 +456,34 @@ Describe 'Invoke-ModemConnect' {
             Get-WriteCommand -Modem $modem | Should -Be @('AT+CGAUTH=1,0', 'AT+CGACT=1,1')
         }
 
+        It 'stops, blocked, when the stored password cannot be read, and sends no credentials' {
+            $script:settings = (ConvertTo-AppSetting -InputObject @{ ApnAuthentication = 'PAP'; ApnUser = 'me' }).Settings
+            Set-Content -LiteralPath $script:passwordPath -Value 'not encrypted for this user'
+            $modem = Get-OnlineModem -Answers $script:inactive
+            $pass = & $script:connect $modem
+            $pass.State | Should -Be 'Registered'
+            $pass.Reason | Should -Be 'ApnPasswordUnreadable'
+            $pass.Blocked | Should -BeTrue
+            Get-WriteCommand -Modem $modem | Should -BeNullOrEmpty
+        }
+
+        It 'sends an empty password when none is stored, as some operators expect' {
+            $script:settings = (ConvertTo-AppSetting -InputObject @{ ApnAuthentication = 'PAP'; ApnUser = 'me' }).Settings
+            $modem = Get-OnlineModem -Answers $script:inactive
+            $modem.SetAnswer('AT+CGAUTH=1,1,"me",""', @('OK'))
+            $modem.Script('AT+CGACT=1,1', @{ Lines = @('OK'); Then = @{ 'AT+CGACT?' = @('+CGACT: 1,1', 'OK') } })
+            (& $script:connect $modem).State | Should -Be 'Online'
+            Get-WriteCommand -Modem $modem | Should -Be @('AT+CGAUTH=1,1,"me",""', 'AT+CGACT=1,1')
+        }
+
+        It 'leaves an active context alone when the stored password cannot be read' {
+            $script:settings = (ConvertTo-AppSetting -InputObject @{ ApnAuthentication = 'PAP'; ApnUser = 'me' }).Settings
+            Set-Content -LiteralPath $script:passwordPath -Value 'not encrypted for this user'
+            $modem = Get-OnlineModem
+            (& $script:connect $modem).State | Should -Be 'Online'
+            Get-WriteCommand -Modem $modem | Should -BeNullOrEmpty
+        }
+
         It 'does not activate when the credentials are refused' {
             $script:settings = (ConvertTo-AppSetting -InputObject @{ ApnAuthentication = 'CHAP'; ApnUser = 'me' }).Settings
             $modem = Get-OnlineModem -Answers $script:inactive

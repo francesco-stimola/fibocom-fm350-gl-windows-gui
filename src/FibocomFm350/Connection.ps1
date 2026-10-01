@@ -34,7 +34,9 @@ function Resolve-ConnectionState {
           ContextAddress, ContextApn: it is active, with this IPv4 address, on this APN (as the
           network reports it); ContextActive $null: its activation couldn't be read.
           ContextRead: $false when the active context's parameters couldn't be read. ApnSet: the
-          settings name an APN (empty: the subscription's own).
+          settings name an APN (empty: the subscription's own). ApnPasswordUnreadable: the
+          settings ask for APN credentials and a stored password exists but can't be read (no
+          stored password is an empty one, which some operators expect).
         - Adapter: 'Present', 'Disabled' (by the user) or 'Absent' (the modem's network
           adapter). AdapterConfigured: its
           configuration matches the context and the settings. AdapterProblem: why it can't be
@@ -49,9 +51,9 @@ function Resolve-ConnectionState {
           'ConfigureAdapter' - or 'None'.
         - Reason: why there is no step to take, or $null.
         - Blocked: $true when what stops the connection is out of the app's reach - no device or
-          driver, a SIM waiting for the user, an FCC lock, an APN the user must give, an adapter
-          missing or disabled: no recovery step changes it, so none is escalated (ARCHITECTURE ->
-          Health checks).
+          driver, a SIM waiting for the user, an FCC lock, an APN or an APN password the user
+          must give, an adapter missing or disabled: no recovery step changes it, so none is
+          escalated (ARCHITECTURE -> Health checks).
 
         A context that is active without an IPv4 address, or on the IMS APN, carries no internet
         traffic. With an empty APN in the settings, the network chose the APN - on some networks
@@ -151,6 +153,11 @@ function Resolve-ConnectionState {
         return & $outcome 'Registered' 'None' 'ContextUnknown' $false
     }
     if ((& $fact 'ContextActive') -eq $false) {
+        # A stored APN password that can't be read is never replaced by an empty one: the user
+        # gives it again (decided 2026-10-01).
+        if ((& $fact 'ApnPasswordUnreadable') -eq $true) {
+            return & $outcome 'Registered' 'None' 'ApnPasswordUnreadable' $true
+        }
         return & $outcome 'Registered' 'ActivateContext' $null $false
     }
     if ((& $fact 'ContextRead') -eq $false) {
@@ -215,7 +222,9 @@ function Get-ModemObservation {
         # The modem's network function (Resolve-ModemUsbDevice's Network.InstanceId).
         [string] $AdapterInstanceId,
 
-        [string] $SimPinPath = (Get-AppDataPath -Name 'sim-pin.json')
+        [string] $SimPinPath = (Get-AppDataPath -Name 'sim-pin.json'),
+
+        [string] $ApnSecretPath = (Get-AppDataPath -Name 'apn-password.dat')
     )
 
     if ($Channel.State -eq 'Closed') {
@@ -225,6 +234,7 @@ function Get-ModemObservation {
         Device = 'Present'; PortOpen = $true; Responsive = $null; Sim = $null; Fcc = $null
         RadioOn = $null; OperatorMode = $null; Registered = $null; RegistrationState = $null
         ContextDefined = $null; ContextActive = $null; ContextAddress = $null; ContextApn = $null; ContextRead = $null; ApnSet = [bool]$Settings.Apn
+        ApnPasswordUnreadable = $Settings.ApnAuthentication -ne 'None' -and (Test-Path -LiteralPath $ApnSecretPath -PathType Leaf) -and -not (Get-ApnPassword -Path $ApnSecretPath)
         Adapter = $null; AdapterConfigured = $null; AdapterProblem = $null; DataPath = $null
     }
     $result = [pscustomobject]@{ Facts = $null; Context = $null; AdapterState = $null; AdapterPlan = $null }
@@ -451,8 +461,14 @@ function Invoke-ConnectionStep {
             if ($Settings.ApnAuthentication -ne 'None') {
                 $code = if ($Settings.ApnAuthentication -eq 'PAP') { 1 } else { 2 }
                 $secret = Get-ApnPassword -Path $ApnSecretPath
-                $password = if ($secret) { [System.Net.NetworkCredential]::new('', $secret).Password } else { '' }
-                $authenticated = (& $send ('AT+CGAUTH={0},{1},"{2}","{3}"' -f $cid, $code, $Settings.ApnUser, $password)).Status -eq 'OK'
+                if (-not $secret -and (Test-Path -LiteralPath $ApnSecretPath -PathType Leaf)) {
+                    # Stored but unreadable: never sent as an empty one.
+                    $authenticated = $false
+                }
+                else {
+                    $password = if ($secret) { [System.Net.NetworkCredential]::new('', $secret).Password } else { '' }
+                    $authenticated = (& $send ('AT+CGAUTH={0},{1},"{2}","{3}"' -f $cid, $code, $Settings.ApnUser, $password)).Status -eq 'OK'
+                }
             }
             else {
                 $current = ConvertFrom-AtContextAuthentication -Lines (& $send 'AT+CGAUTH?').Lines | Where-Object Cid -EQ $cid | Select-Object -First 1
@@ -542,7 +558,7 @@ function Invoke-ModemConnect {
     [void]$done.Add('Initialize')
 
     while ($true) {
-        $observation = Get-ModemObservation -Channel $Channel -Settings $Settings -AdapterInstanceId $AdapterInstanceId -SimPinPath $SimPinPath
+        $observation = Get-ModemObservation -Channel $Channel -Settings $Settings -AdapterInstanceId $AdapterInstanceId -SimPinPath $SimPinPath -ApnSecretPath $ApnSecretPath
         if ($observation.Facts.Sim -and $observation.Facts.Sim.Reason -eq 'PinAccepted') {
             try {
                 Set-SimPinAttempt -Attempted $false -Path $SimPinPath -Confirm:$false -ErrorAction Stop
