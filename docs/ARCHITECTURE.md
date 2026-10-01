@@ -91,16 +91,17 @@ Everything the worker says to the modem goes through one **AT channel** per port
   **simulated modem**, which answers from fixtures and plays scripted faults — the tests use it,
   and so does the app's development mode (M3). A transport that loses its port sets `Lost`
   instead of throwing, and never touches the port again; the channel then reports `PortLost` to
-  every command, and the worker opens a new channel once the device is back, possibly under
-  another COM number.
+  every command, and the worker opens a new channel once the device is back — found again by PnP,
+  because it can come back as a new device instance under another COM number (`AT-COMMANDS.md`
+  §1).
 - **Echo as anchor.** The modem's echo stays on (its power-on default). A command's answer starts
   after its echo: anything else that arrives before it is left over from an earlier command,
   typically a late answer after a timeout, and is discarded. Without the anchor, one late answer
   would shift every later answer by one command — for as long as the process runs.
   `Initialize-AtChannel` turns the echo back on (`ATE1`) and sets numeric error codes
   (`AT+CMEE=1`); the worker runs it after opening a channel and after a timeout, and keeps
-  running it while it times out: the port has been seen silent for most of a minute after it was
-  first opened (`AT-COMMANDS.md` §2), which is no reason to close it.
+  running it while it times out: the port has been seen silent for up to almost three minutes
+  after it appeared (`AT-COMMANDS.md` §2), which is no reason to close it.
 - **Late answers stay answers.** After a timeout the channel remembers the command (up to the
   last 10 of them) until its late answer ends — a stale final result closes the oldest — or the
   next echo arrives; meanwhile those answers' lines are discarded, not passed on as unsolicited
@@ -149,8 +150,16 @@ Everything the worker says to the modem goes through one **AT channel** per port
   turn the radio on, select the operator automatically, define the app's context, activate it,
   configure the adapter. With no step to take, a **reason** says why — searching, SIM busy, a PIN
   the user must give, an FCC lock — and **blocked** says whether it is out of the app's reach: no
-  device or driver, a SIM waiting for the user, an FCC lock, no network adapter. No recovery step
-  changes those, so none is escalated (M4).
+  device or driver, a SIM waiting for the user, an FCC lock, an APN the user must give, no network
+  adapter. No recovery step changes those, so none is escalated (M4).
+- **A context that carries no internet** — active without an IPv4 address, or on the IMS APN,
+  told by the network identifier `ims` in `+CGCONTRDP` (`AT-COMMANDS.md` §3) — doesn't count as
+  data active. With an empty APN in the settings that is the network's choice, on some networks
+  the IMS APN: the reason is `ApnNeeded` (blocked) and the window asks for an APN; the default
+  stays empty, since it works where the network assigns its internet APN (decided 2026-10-01).
+  When such a context differs from the settings — the user has just given an APN — it is
+  **deactivated**, then defined and activated as they say: it carries nothing, so nothing that
+  works is broken. Without an address on the APN of the settings, the reason is `NoAddress`.
 - **A pass** (`Invoke-ModemConnect`) observes, takes the missing step, observes again, until no
   step is left — and never runs the same step twice in one pass: a step that didn't take waits for
   the next pass, on the worker's cadence. The observation reads only as far as the state allows
@@ -165,9 +174,9 @@ ready, is the modem registered, is a data context active, does the adapter alrea
 address? It enters the state machine at the furthest state the facts support. Only the missing
 steps are executed.
 
-The data context definition (`+CGDCONT`) is **persistent** on the FM350 (`AT-COMMANDS.md` §3): the
-connect sequence reads it and writes it only when the APN or PDP type differ from the settings.
-It is the APN the user configured, written once — not rewritten at every connect. A context that
+The data context definition (`+CGDCONT`) is documented as **persistent** on the FM350, though our
+device lost it at a reset (`AT-COMMANDS.md` §3): the connect sequence reads it and writes it only
+when it is missing or its APN or PDP type differ from the settings — not at every connect. A context that
 is **active** but not as the settings say is left alone (the pass says `SettingsPending`): new
 settings apply at the next connect, never by breaking a connection that works.
 
@@ -187,8 +196,9 @@ let it lock the SIM (facts: `AT-COMMANDS.md` §3):
   whether a PIN is stored.
 - **One attempt per stored PIN.** The worker sends `AT+CPIN="<pin>"` at most once for a given
   stored PIN. Rejected, the PIN is deleted and the app asks for it again — never a second try:
-  three wrong PINs lock the SIM behind its PUK. When the remaining attempts can be read and only
-  one is left, nothing is sent automatically. The attempt is **recorded before** `AT+CPIN` goes
+  three wrong PINs lock the SIM behind its PUK. When the remaining attempts can be read —
+  `+CPINR`, or on the FM350, which lacks it, the first value of `+EPINC` — and only one is left,
+  nothing is sent automatically. The attempt is **recorded before** `AT+CPIN` goes
   out, and cleared once the SIM is seen ready: an answer that never arrives — a timeout, a crash —
   is never followed by a second attempt; the user is asked instead.
 - **"Remove the PIN from the SIM"** (logic M2, dialog M3): `AT+CLCK="SC",0,"<pin>"` turns the
@@ -223,10 +233,11 @@ that as a fault and climb the recovery ladder for nothing.
   and reports. Never automatic, never repeated by itself (`Invoke-FccUnlock`). It reads the lock
   first and writes nothing unless the modem says it is locked; it stops at the first command that
   fails, before the restart — except `AT+GTFCCEFFSTATUS=0,0`, which the vendor documents as
-  read-only (its set form answers `ERROR`): its error doesn't stop the sequence. The vendor's own
-  unlock is a challenge-response with a secret of the laptop's maker, which the app never
-  implements; no source shows a locked module taking the mode write without it, so on some
-  modules the unlock may be refused.
+  read-only (its set form answers `ERROR`): it is kept as the sequence was done on our module, and
+  its error doesn't stop the sequence (decided 2026-10-01). The vendor's own unlock is a
+  challenge-response with a secret of the laptop's maker, which the app never implements; our
+  module took the mode write without it, but the other sources pass the challenge first, so on
+  some modules the unlock may be refused.
 - **Tested where it can be.** Our module is already unlocked, so the unlock path is proven against
   the simulated modem; on hardware it waits for a locked module, which is also how the locked
   values get captured.
@@ -294,15 +305,16 @@ Everything goes through `AT+GTACT` (spec: [`AT-COMMANDS.md` §5](AT-COMMANDS.md#
 - The modem's adapter is found through the device it belongs to: its `PnPDeviceID` is the
   instance ID of the modem's RNDIS function (`MI_00`, ARCHITECTURE → *Drivers*), never a name or
   an index.
-- **What the modem's DHCP gives is kept.** If the adapter got a usable address from the modem by
-  DHCP, the app leaves address, gateway and DNS to it. Otherwise it configures the adapter from
-  the context: address and mask from `+CGCONTRDP`, a default route through its gateway, its DNS
-  servers. Which of the two the FM350 does is checked on the device (`AT-COMMANDS.md` §7,
-  question 6).
+- **Configured from the context.** The FM350 serves no DHCP (`AT-COMMANDS.md` §1), so the app
+  configures the adapter from the context: the IPv4 address — from `+CGCONTRDP`, or from
+  `+CGPADDR` when, as on the FM350, `+CGCONTRDP` leaves it out — with its mask, a default route
+  through its gateway, its DNS servers. **Without a mask the address is a /32, and without a
+  gateway the default route is on the link** (next hop `0.0.0.0`): the modem answers ARP for
+  every destination. Should a modem's DHCP give a usable address, it is kept, with its gateway
+  and DNS.
 - **A plan, then the changes.** `Resolve-AdapterConfiguration` (pure) compares the adapter as read
   with what the context and the settings ask, and lists only the changes needed — an adapter
-  already configured gives an empty plan — or says why it can't: no address, mask or gateway
-  reported. Leftovers of an earlier context (manual addresses, default routes) are removed.
+  already configured gives an empty plan — or says why it can't: no address reported. Leftovers of an earlier context (manual addresses, default routes) are removed.
   `Set-ModemAdapterConfiguration` applies a plan (administrator rights) and stops at the first
   change that fails; the next pass plans again.
 - The configuration is written to the **active store only** (`-PolicyStore ActiveStore`) —

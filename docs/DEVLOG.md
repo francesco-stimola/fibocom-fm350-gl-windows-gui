@@ -4,6 +4,39 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-01 — M2 on the device: the data context the FM350 really gives, and the SIM PIN
+
+The device session answered M2's open questions (`AT-COMMANDS.md` §1–§4, §7) and changed the code
+where the modem differs from its documents:
+- **The address comes from `+CGPADDR`.** For the app's context `+CGCONTRDP` gives the APN and the
+  DNS servers only — no address, mask or gateway — and the modem serves no DHCP. The observation
+  falls back on `+CGPADDR=1`, and the adapter plan, given no mask and no gateway, configures a /32
+  with a default route on the link: the modem answers ARP for every destination. Verified carrying
+  traffic. Of the plan's problems only a missing address remains.
+- **An empty APN is not always the internet.** On two operators' SIMs the network put a context
+  defined with an empty APN on the IMS APN — once without an IPv4 address, once with one. A
+  context without an address, or whose APN has the network identifier `ims`, counts as carrying no
+  internet: with an empty APN in the settings the pass stops with `ApnNeeded` (blocked, the user
+  gives an APN); with an APN given, that context — it carries nothing — is deactivated and set up
+  again as the settings say (`DeactivateContext`). The default stays empty: it works where the
+  network assigns its internet APN. Both paths verified on the device.
+- **A written context doesn't survive a reset** on our modem, contrary to the manual. The pass
+  already writes it when missing; the documents no longer promise persistence.
+- **`+C5GREG?` with `<n>` 0 answers `<n>` alone**, registered or not. Registration read answers are
+  parsed as such (`-ReadAnswer`), so a lone value is never taken for "not searching".
+- **Attempts left from `+EPINC`.** The FM350 has no `+CPINR`; the first value of `+EPINC?` went
+  from 3 to 2 after a wrong PIN. The observation and "remove the PIN" ask `+CPINR` first and fall
+  back on it, so the last-attempt rule works on this modem. The PIN rules held on the device: a
+  wrong PIN sent once and deleted, the right one entered once, the busy SIM waited out, the PIN
+  request turned off with one command.
+- **The FCC unlock sequence stays as it was done**, `AT+GTFCCEFFSTATUS=0,0` included and its
+  documented error tolerated (the maintainer's decision; the open decision is closed). Our module
+  took the mode write with no challenge-response; other sources pass the challenge first, so some
+  modules may refuse it.
+- **COM numbers change.** Removing or inserting the SIM can make the modem re-enumerate, and it
+  can come back as a new device instance with other COM numbers: the worker (M3) finds the port
+  and the adapter by PnP every time it opens them.
+
 ## 2026-10-01 — M2 code-complete: the connection, proven on the simulated modem
 
 Everything in M2 that doesn't need the device is built and tested; the device session remains.

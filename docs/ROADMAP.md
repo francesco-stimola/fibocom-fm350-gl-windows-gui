@@ -60,18 +60,18 @@ Everything needed to talk to the modem and understand its answers — no connect
 - [x] Read the PnP records `Resolve-ModemUsbDevice` classifies (`Get-PnpDevice`, one `Get-PnpDeviceProperty` call per device, the COM port name from the registry), in the worker: the AT port and the adapter are found with it. Brought forward from M6.
 - [x] Connection state machine as a pure transition function, with a matrix of tests.
 - [x] Per-command timeouts as a pure lookup: each command's worst-case duration from the vendor manual (`AT-COMMANDS.md` §2), never less than 3 s.
-- [x] Connect sequence: SIM check, data context definition (persistent on the FM350: written only when it differs from the settings), registration, attach, context activation.
+- [x] Connect sequence: SIM check, data context definition (written only when missing or different from the settings), registration, attach, context activation. A context that carries no internet — no IPv4 address, or the IMS APN the network gives an empty APN on some networks — asks for an APN (`ApnNeeded`) or, when it differs from the settings, is deactivated and set up again as they say.
 - [x] SIM PIN (design: ARCHITECTURE → *SIM PIN*): the decision as a pure function with a matrix of tests (SIM state × stored PIN and its SIM × attempts left × already tried → send, ask the user, report, continue); the PIN stored DPAPI-encrypted with the SIM it belongs to; at most one attempt per stored PIN; a PUK never entered by the app.
 - [x] FCC lock (design: ARCHITECTURE → *FCC lock*): read the three lock values in the connect sequence; the diagnosis as a pure function with a matrix of tests (lock values × registration state → locked or not; the vendor's unlock-status value decides, not a time limit) — it explains a registration that never starts and never stops a modem that registers; the unlock sequence, proven against the simulated modem.
-- [x] Network configuration of the modem's adapter (address, mask, gateway, DNS) in the active store.
+- [x] Network configuration of the modem's adapter (address, mask, gateway, DNS) in the active store; the address from `+CGPADDR` when `+CGCONTRDP` leaves it out, as a /32 with a default route on the link when no mask or gateway is reported (the FM350 serves no DHCP).
 - [x] Startup reconciliation: attach to an existing connection without re-dialing.
 - [x] Redacted rolling log.
-- [ ] On the device: `AT-COMMANDS.md` §7 questions 5, 6 and 12 — the app's own data context, DHCP on the adapter, whether a written context survives a power cycle, the `+CGAUTH` set form for APN credentials on that context — and the NR leg of an EN-DC cell under traffic (questions 3, 4). With a SIM whose PIN is enabled: the `+CPIN` states, `AT+CPIN=`, `+CPINR`, `AT+CLCK="SC"` (`AT-COMMANDS.md` §3). The modem stays a backup (high metric) during the session, so the machine's own traffic keeps its usual route.
+- [x] On the device: `AT-COMMANDS.md` §7 questions 5, 6 and 12 — the app's own data context (no address in `+CGCONTRDP`; `+CGPADDR` has it), no DHCP on the adapter (a /32 with an on-link route carries traffic), a written context lost at a reset, the `+CGAUTH` set form on that context — and the NR leg of an EN-DC cell under traffic (questions 3, 4, 10). With SIMs of two operators: an empty APN put on the IMS APN; the connect pass from nothing to a data context, attach without re-dialing, moving a context to the APN of the settings. With a SIM whose PIN is enabled: the `+CPIN` states, a wrong and a right PIN, `+CPINR` absent and `+EPINC` instead, `AT+CLCK="SC"` on and off (`AT-COMMANDS.md` §3).
 
 <a id="m3"></a>
 ## M3 — Tray app
 
-- [ ] Worker runspace + immutable state snapshots + command queue.
+- [ ] Worker runspace + immutable state snapshots + command queue. After a lost port the worker finds the AT port and the adapter again by PnP: the modem can come back as a new device instance under other COM numbers — a SIM removed or inserted can make it re-enumerate (`AT-COMMANDS.md` §1, §3).
 - [ ] Supervisor: heartbeat, worker restart that attaches instead of re-dialing.
 - [ ] Single instance (mutex; a second launch shows the first window).
 - [ ] Tray icon rendering with handle disposal; tooltip; menu.
@@ -96,7 +96,7 @@ Everything needed to talk to the modem and understand its answers — no connect
 - [ ] Read current mode and bands from the modem; supported values from `AT+GTACT=?`.
 - [ ] UI: mode selector (at least 4G + 5G / 4G only) and per-RAT band checkboxes.
 - [ ] Apply inside a maintenance window, writing every managed RAT's band list (the modem keeps one list per RAT); persist in settings; re-apply on every connect.
-- [ ] On the device: `AT-COMMANDS.md` §7 questions 7 (do NR codes restrict NSA?) and 10 (`+GTCAINFO` with LTE-A, NSA, SA), and why n77 drops out of the band list (§5).
+- [ ] On the device: `AT-COMMANDS.md` §7 questions 7 (do NR codes restrict NSA?) and 10 (`+GTCAINFO` on SA; LTE-A and NSA answered in M2), and why n77 drops out of the band list (§5).
 
 <a id="m6"></a>
 ## M6 — Driver installation
@@ -158,11 +158,7 @@ data is left (design: ARCHITECTURE → *SMS, USSD and data usage*; facts: `AT-CO
 Decisions that change what happens next and are the maintainer's to take. Remove a line when it is
 decided, and record the decision in `DEVLOG.md`.
 
-- **FCC unlock sequence** (ARCHITECTURE → *FCC lock*). The sequence that unlocked our module
-  includes `AT+GTFCCEFFSTATUS=0,0`, which the vendor manual documents as read-only, its set form
-  answering `ERROR` (`AT-COMMANDS.md` §4). Implemented for now: the sequence as it was done, that
-  one command's error tolerated. The alternatives: leave the command out; or stop at its error as at
-  any other (then, if the manual is right, the unlock never reaches the restart).
+*None at the moment.*
 
 ---
 
