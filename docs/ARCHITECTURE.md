@@ -97,7 +97,9 @@ Everything the worker says to the modem goes through one **AT channel** per port
   typically a late answer after a timeout, and is discarded. Without the anchor, one late answer
   would shift every later answer by one command — for as long as the process runs.
   `Initialize-AtChannel` turns the echo back on (`ATE1`) and sets numeric error codes
-  (`AT+CMEE=1`); the worker runs it after opening a channel and after a timeout.
+  (`AT+CMEE=1`); the worker runs it after opening a channel and after a timeout, and keeps
+  running it while it times out: the port has been seen silent for most of a minute after it was
+  first opened (`AT-COMMANDS.md` §2), which is no reason to close it.
 - **Late answers stay answers.** After a timeout the channel remembers the command (up to the
   last 10 of them) until its late answer ends — a stale final result closes the oldest — or the
   next echo arrives; meanwhile those answers' lines are discarded, not passed on as unsolicited

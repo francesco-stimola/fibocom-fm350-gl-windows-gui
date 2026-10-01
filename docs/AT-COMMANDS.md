@@ -76,13 +76,18 @@ When a source is added, record its exact version or commit here.
 | Fact | Status | Source |
 |---|---|---|
 | Commands end with `CR`; responses are framed by `CR LF` and end with a final result code: `OK`, `ERROR`, or `+CME ERROR: <err>`. Result codes are verbose by default; unsolicited codes are framed the same way. | 📄 | `[V.250]`, `[27.007]`, `[FIBOCOM]` §2.4 p.13–14 |
-| Command echo is **on** by default (`ATE1`) and comes back on after a reset; `ATE0` turns it off. The echo ends with CR alone. | 📄 | `[V.250]`, `[FIBOCOM]` §4.1 p.47 |
+| Command echo is **on** by default (`ATE1`) and comes back on after a reset; `ATE0` turns it off. The echo ends with CR alone. | ✅ | `[V.250]`, `[FIBOCOM]` §4.1 p.47; `[DEVICE]` (every captured exchange: `AT\r` echoed, then `\r\nOK\r\n`) |
 | **We keep echo on and anchor every answer on it**: a command's answer starts after its echo, so anything else arriving before the echo is left over from an earlier command (a late answer after a timeout) and is discarded. The modem runs one command at a time, so a late answer always comes out before the next command's echo. | — | Project design (ARCHITECTURE → *AT channel*) |
 | `AT+CMEE=1` makes `+CME ERROR` and `+CMS ERROR` carry a **number**, `=2` verbose text; default `0`: plain `ERROR`. **We use `1`** and map the numbers ourselves, rather than depend on firmware wording. | 📄 | `[27.007]`, `[FIBOCOM]` §20.1.1 p.324 |
 | The port speaks the 7-bit IRA character set by default (`+CSCS`); PDUs and UCS-2 strings travel as hex. So the channel reads bytes as text and drops anything outside printable ASCII as line noise. | 📄 | `[FIBOCOM]` §8.1.1 p.85 |
+| **Our device answers `+CSCS: "UCS2"`, not `"IRA"`**, after an `AT+CFUN=15` reset too. Supported: `"IRA"`, `"GSM"`, `"HEX"`, `"PCCP437"`, `"8859-1"`, `"UCS2"`, `"UCS2_0X81"`. Whatever the set shapes (text-mode SMS, USSD strings, alphanumeric operator names) arrives hex-encoded unless the app chooses the set itself. | ✅ | `[DEVICE]` (read before and after the reset) |
 | Unsolicited codes the app enables, told apart from answers by their prefix: `+CREG`, `+CGREG`, `+CEREG`, `+C5GREG`, `+CSCON`, `+CMTI`, `+CDSI`, `+CUSD`, `+CGEV`. A prefix equal to the pending command's own is read as the answer when the command is a read, test or execute form (`+CEREG:` after `AT+CEREG?`); a set form (`AT+CEREG=2`, `AT+CUSD=1,…`) answers only with a final result, so a line with its prefix is unsolicited. Two-line codes (`+CMT`, `+CDS`) are never enabled. | 📄 | `[27.007]`, `[27.005]`; the FM350's actual URCs are a device question (§7) |
-| DTR and RTS asserted on the USB virtual port, as a modem expects from a ready terminal. | ❓ | `[DEVICE]` — does the FM350 answer without them? |
+| DTR and RTS asserted on the USB virtual port, as a modem expects from a ready terminal. The FM350 answers with any combination of the two, and its port reports DSR, CTS and CD always low: the lines carry nothing either way. | ✅ | `[DEVICE]` (`AT` answered with DTR/RTS off/off, on/off, off/on, on/on) |
+| **The port can stay silent after it is first opened**: once, right after the serial driver was installed, the modem answered nothing for about 45 s — no echo, no result — then delivered a burst of 20 lines and answered normally from then on. Later opens, the first one after an `AT+CFUN=15` reset (2.5 min after it) included, answered at once. Cause not known (ARCHITECTURE → *AT channel* says how the worker copes). | ❓ | `[DEVICE]` |
+| **A port that disappears is reported, not hung**: after the cable is pulled, the next write fails at once with "the device does not exist" — never a write timeout — and the transport marks the port lost; after `AT+CFUN=15`, a pending read ends with "the operation was canceled" when the USB device drops. `pwsh` survives both, the release of the port and its finalizers included. | ✅ | `[DEVICE]` (question 14 below) |
+| `SerialPort.GetPortNames()` (the registry's `SERIALCOMM`) keeps listing a port that was open when its device left, until the device is back: the app tells whether the modem is present from PnP, never from the list of port names. | ✅ | `[DEVICE]` (COM9 listed during the whole reset) |
 | Error codes worth recognizing: CME `14` and CMS `314` = SIM busy; CME `149` = PDP authentication failure. `+CEER` gives the reason for the last failure, attach and activation errors included. | 📄 | `[27.007]`, `[FIBOCOM]` §20.1.2 p.325, §20.2 p.327, §20.3 p.332 |
+| Codes seen on the device: CME `10` (SIM not inserted) for `+CPIN?` without a SIM, and CMS `310` for SMS commands then; CME `100` (unknown) for a command it doesn't take in that state; CME `0` for a read of an undefined context (`+CGPADDR=1`, `+CGCONTRDP=1`, `+GTDNS=1`) and for `+GTDIPCMODE?` and `+SIMTYPE?`. `+CEER` with nothing to report: `+CEER: 0,NONE`. | ✅ | `[DEVICE]` `cpin.nosim.txt`, `cgauth.test.txt` |
 | Unsolicited result codes (URCs) can arrive **between** a command and its final result code. The reader must separate them from the response. | 📄 | `[27.007]` |
 | Commands have documented worst-case durations — `+COPS` up to 3 min, `+CMGS` 60 s, `+CGACT` 30 s, `+CGATT` 15 s, `+CUSD` 10 s, `+CMGL` 5 s, `+CMGR` and `+CSIM` 2 s, most others under 3 s. **Each command's timeout is its documented duration, never less than 3 s** (decided 2026-09-29). | 📄 | `[FIBOCOM]` (each command's attribute table) |
 | Baud rate and flow control settings are irrelevant on the USB virtual COM port. | ❓ | `[DEVICE]` |
@@ -94,18 +99,18 @@ Each is 📄 `[27.007]` until a capture makes it ✅. The notes record what the 
 
 | Purpose | Command | Notes |
 |---|---|---|
-| Identify manufacturer / model / firmware | `+CGMI`, `+CGMM`, `+CGMR` | `[FIBOCOM]` §3.1–3.6 p.17–21. See §4 for the quoted `?` forms. |
+| Identify manufacturer / model / firmware | `+CGMI`, `+CGMM`, `+CGMR` | `[FIBOCOM]` §3.1–3.6 p.17–21. See §4 for the quoted `?` forms. ✅ `identity.txt`; plain `AT+CGMR` answers the bare firmware string. |
 | IMEI | `+CGSN` | **Identifier — never logged, redacted in fixtures.** `[FIBOCOM]` §3.7 p.21: `=2` IMEISV, `=3` SVN. |
 | IMSI | `+CIMI` | **Identifier.** Needs the SIM unlocked (`[FIBOCOM]` §3.9 p.25). |
-| SIM state | `+CPIN?` | `READY` or the code of what the SIM is waiting for. `[FIBOCOM]` §10.1.1 p.132. |
-| Radio power / reset | `+CFUN=<fun>[,<rst>]` | `1` full, `4` RF off, `0` minimum. `<rst>=1` resets the MT before applying `<fun>`. `[FIBOCOM]` §4.2 p.48 adds `15` = **reset** (no `<rst>` with it); after `0` or `15` the `OK` may never arrive. The read form is `+CFUN: <power_mode>,<STK_mode>`. |
-| Operator selection | `+COPS` | `=0` automatic, `=2` deregister, `=3,<format>` sets the name format for the read. `?` returns `<mode>,<format>,<oper>,<AcT>`. Up to 3 min (`[FIBOCOM]` §11.1.6 p.160). |
-| Registration status | `+CREG`, `+CGREG`, `+CEREG`, `+C5GREG` | `<stat>`: `1` home, `5` roaming, `2` searching, `3` denied, `0` not searching. `[FIBOCOM]` §11.1.3–11.1.5 p.150–157 documents the first three; `+CEREG` gives TAC and cell ID as quoted hex strings and, for `<n>` 3–5, the reject cause of a denied registration. **`+C5GREG` is in neither manual** ❓. |
+| SIM state | `+CPIN?` | `READY` or the code of what the SIM is waiting for. `[FIBOCOM]` §10.1.1 p.132. ✅ Without a SIM: `+CME ERROR: 10` (`cpin.nosim.txt`). |
+| Radio power / reset | `+CFUN=<fun>[,<rst>]` | `1` full, `4` RF off, `0` minimum. `<rst>=1` resets the MT before applying `<fun>`. `[FIBOCOM]` §4.2 p.48 adds `15` = **reset** (no `<rst>` with it); after `0` or `15` the `OK` may never arrive. The read form is `+CFUN: <power_mode>,<STK_mode>`. ✅ On the device the read form carries one value (`+CFUN: 1`); `=?` gives `(0,1,4,15),(0-1)`. **`AT+CFUN=15` answers `OK` at once, the USB device drops about 49 s later, and every port is back about 28 s after that, with the same COM numbers** (question 8). |
+| Operator selection | `+COPS` | `=0` automatic, `=2` deregister, `=3,<format>` sets the name format for the read. `?` returns `<mode>,<format>,<oper>,<AcT>`. Up to 3 min (`[FIBOCOM]` §11.1.6 p.160). ✅ Unregistered, the device answers `+COPS:0,255,"",0` — no blank after the colon, and a format and an `<AcT>` that mean nothing without an operator (`cops.nosim.txt`). |
+| Registration status | `+CREG`, `+CGREG`, `+CEREG`, `+C5GREG` | `<stat>`: `1` home, `5` roaming, `2` searching, `3` denied, `0` not searching. `[FIBOCOM]` §11.1.3–11.1.5 p.150–157 documents the first three; `+CEREG` gives TAC and cell ID as quoted hex strings and, for `<n>` 3–5, the reject cause of a denied registration. **`+C5GREG` is in neither manual**, but the device takes it (`=?` gives `(0-3)`). ✅ Without a SIM: `+CEREG: 0,0` (and the same for `+CREG`, `+CGREG`), while `+C5GREG?` answers a single value, `+C5GREG: 0` (`cereg.nosim.txt`, `c5greg.nosim.txt`) — whether it carries `<stat>` when registered: ❓. |
 | Registration report layout | `+CREG`, `+CGREG`, `+CEREG`, `+C5GREG` | The read answer starts with `<n>`, the unsolicited code doesn't: `+CEREG: <n>,<stat>[,…]` versus `+CEREG: <stat>[,…]`. After `<stat>`: `+CREG`/`+CEREG` `<lac or tac>,<ci>,<AcT>[,<cause_type>,<reject_cause>]`; `+CGREG` puts `<rac>` before the cause; `+C5GREG` puts `<Allowed_NSSAI_length>,<Allowed_NSSAI>` before it. Location fields are quoted hex. |
-| Legacy signal quality | `+CSQ` | `<rssi>` 0–31, `99` unknown: `0` is −113 dBm or less, `1` −111, `2`–`30` −109 to −53 dBm in 2 dB steps, `31` −51 dBm or more. Not meaningful for LTE/NR quality. |
-| Extended signal quality | `+CESQ` | RSRQ/RSRP for LTE and SS-RSRQ/SS-RSRP/SS-SINR for NR — the **standard** way to read LTE/NR quality. `[FIBOCOM]` §11.1.2 p.145: nine fields; the NR fields are valid on NR **and EN-DC** (so NSA reports them), the LTE ones on LTE and EN-DC; `<ber>` is always 99. |
-| Define data context | `+CGDCONT=<cid>,<PDP_type>,<APN>` | `<PDP_type>` `IP`, `IPV6`, `IPV4V6`. **Persistent** on the FM350 (`[FIBOCOM]` §12.2.1 p.193): the connect sequence reads `+CGDCONT?` and writes only what differs. An empty APN means the subscription's own. |
-| APN authentication | `+CGAUTH=<cid>,<auth_prot>,<user>,<password>` | **Password — never logged.** **In neither vendor manual** ❓: probe with `AT+CGAUTH=?`. The only documented alternative is `+EIAAPN` (§4), which writes persistent state. |
+| Legacy signal quality | `+CSQ` | `<rssi>` 0–31, `99` unknown: `0` is −113 dBm or less, `1` −111, `2`–`30` −109 to −53 dBm in 2 dB steps, `31` −51 dBm or more. Not meaningful for LTE/NR quality. ✅ The device puts a blank after the comma: `+CSQ: 99, 99` (`csq.nosim.txt`). |
+| Extended signal quality | `+CESQ` | RSRQ/RSRP for LTE and SS-RSRQ/SS-RSRP/SS-SINR for NR — the **standard** way to read LTE/NR quality. `[FIBOCOM]` §11.1.2 p.145: nine fields; the NR fields are valid on NR **and EN-DC** (so NSA reports them), the LTE ones on LTE and EN-DC; `<ber>` is always 99. ✅ Nine fields, all "not known" without a SIM (`cesq.nosim.txt`). |
+| Define data context | `+CGDCONT=<cid>,<PDP_type>,<APN>` | `<PDP_type>` `IP`, `IPV6`, `IPV4V6`. **Persistent** on the FM350 (`[FIBOCOM]` §12.2.1 p.193): the connect sequence reads `+CGDCONT?` and writes only what differs. An empty APN means the subscription's own. ✅ `=?` gives `<cid>` `0`–`49` and the three types (`cgdcont.test.txt`); our device has **no context defined**, before and after `AT+CFUN=15` (`cgdcont.empty.txt`). |
+| APN authentication | `+CGAUTH=<cid>,<auth_prot>,<user>,<password>` | **Password — never logged.** **In neither vendor manual** ❓: probe with `AT+CGAUTH=?`. The only documented alternative is `+EIAAPN` (§4), which writes persistent state. Without a SIM both `AT+CGAUTH=?` and `AT+EIAAPN?` answer `+CME ERROR: 100` (`cgauth.test.txt`). |
 | PS attach | `+CGATT` | Up to 15 s (`[FIBOCOM]` §12.2.2 p.198). |
 | Activate context | `+CGACT=<state>,<cid>` | Attaches first if needed; deactivating the last EPS context is refused. Up to 30 s (`[FIBOCOM]` §12.2.4 p.202). |
 | Context address | `+CGPADDR=<cid>` | With dual stack, the first address is IPv4 and the second IPv6 (`[FIBOCOM]` §12.2.5 p.204). |
@@ -152,19 +157,19 @@ allows it (`[3GINFO]`, `[MODEMBAND]`) — never from unlicensed code.
 | RAT mode, preference and band lock | `+GTACT` | 📄 `[FIBOCOM]` §11.1.14 p.175 | See §5. |
 | Serving and neighbour cells | `+GTCCINFO?` | 📄 `[FIBOCOM]` §11.1.15 p.179, `[3GINFO]` | Layout in §4.1. **Cell identity + TAC is a location — redact.** |
 | Carrier aggregation | `+GTCAINFO?` | 📄 `[FIBOCOM]` §11.1.16 p.187, `[3GINFO]` | Layout in §4.2. Can be queried together with the above: `AT+GTCCINFO?;+GTCAINFO?`. |
-| Current access technology | `+ERAT?` | 📄 `[FIBOCOM]` §11.1.11 p.169 | `<AcT>` `11` NR on a 5G core (SA), `12` NR on EPC, `13` NG-RAN, **`14` EN-DC (NSA)**, `255` unknown. |
+| Current access technology | `+ERAT?` | 📄 `[FIBOCOM]` §11.1.11 p.169 | `<AcT>` `11` NR on a 5G core (SA), `12` NR on EPC, `13` NG-RAN, **`14` EN-DC (NSA)**, `255` unknown. Unregistered, the device answers five values: `+ERAT: 255,0,3,0,0`. |
 | Signalling connection | `+CSCON` | 📄 `[FIBOCOM]` §12.2.13 p.223 | Standard command, FM350 values: an unsolicited `+CSCON: <mode>[,<state>[,<access>[,<core>]]]` — `<mode>` `0` idle, `1` connected; `<state>` `7` LTE connected, `8` NR connected, `9` NR inactive; `<access>` `3`/`4` LTE TDD/FDD, `5` NR; `<core>` `0` EPC, `1` 5G core. Under EN-DC the read form lists the master RAT, then the secondary. |
-| SIM slot | `+GTDUALSIM` | 📄 `[FIBOCOM]` §4.3 p.50 | Slot `0` = SIM1 (default), `1` = SIM2. **Persistent**, takes effect immediately. Read form: `+GTDUALSIM: <slot>,<SUB1 or SUB2>,<service: No Service, N, L or W>`. See §8 for the eSIM. |
+| SIM slot | `+GTDUALSIM` | 📄 `[FIBOCOM]` §4.3 p.50 | Slot `0` = SIM1 (default), `1` = SIM2. **Persistent**, takes effect immediately. Read form: `+GTDUALSIM: <slot>,<SUB1 or SUB2>,<service: No Service, N, L or W>`. See §8 for the eSIM. The device writes a blank **before** the colon and quotes the strings: `+GTDUALSIM : 0, "SUB1", "NO SERVICE"`. |
 | DNS servers | `+GTDNS=<cid>` | 📄 `[FIBOCOM]` §12.2.17 p.230 | Answers `<cid>,<DNS 1>,<DNS 2>`. A fallback if `+CGCONTRDP` leaves DNS empty. |
-| Module temperature | `AT+GTSENRDTEMP=<id>` | 📄 `[FIBOCOM]` §18.3 p.310, `[3GINFO]` | `0` lists every sensor, one line each; `1`–`23` one sensor (1–22 in `[FIBOCOM-2.2]`): `1` SoC maximum, `10` 5G modem, `11` 4G modem, `14` LTE PA, `15` NR PA, `16` RF, `19` PMIC, `23` crystal. Answers `+GTSENRDTEMP: <sensor>,<value>`. The manual gives no unit; `[3GINFO]` reads thousandths of °C, consistent with the manual's thermal thresholds (e.g. `32000`). |
-| Model / manufacturer / firmware | `AT+CGMM?`, `AT+CGMI?`, `AT+GMR?` | 📄 `[FIBOCOM]` §3.1–3.6 p.17–21, `[3GINFO]` `[MODEMBAND]` | Values are **quoted**: `+CGMI: "<manufacturer>"`, `+CGMM: "<model>","<short name>"`. The firmware answer's prefix is `+CGMR:` in V2.10 and `+GMR:` in `[FIBOCOM-2.2]`: accept both, strip the quotes. |
-| Firmware package version | `+GTPKGVER?` | 📄 `[FIBOCOM]` §3.21 p.38 | `+GTPKGVER: "<package>"` — a different string from `+CGMR`. |
-| Identification | `ATI<n>` | 📄 `[FIBOCOM]` §3.18 p.35 | `0` build time, `3`/`7` product name, `5` platform, `8` software version, `9` hardware version. |
-| Supported commands | `+CLAC` | 📄 `[FIBOCOM]` §3.14 p.31 | Lists the commands this firmware accepts — the first thing to capture. |
+| Module temperature | `AT+GTSENRDTEMP=<id>` | ✅ `[FIBOCOM]` §18.3 p.310, `[3GINFO]`; `[DEVICE]` `gtsenrdtemp.all.txt` | `0` lists every sensor, one line each; `1`–`23` one sensor (1–22 in `[FIBOCOM-2.2]`): `1` SoC maximum, `10` 5G modem, `11` 4G modem, `14` LTE PA, `15` NR PA, `16` RF, `19` PMIC, `23` crystal. Answers `+GTSENRDTEMP: <sensor>,<value>`. The manual gives no unit; `[3GINFO]` reads thousandths of °C, consistent with the manual's thermal thresholds (e.g. `32000`). The device lists all 23 sensors at 31–36 °C in thousandths, except `17` and `18`, which answer `0`: no sensor there. |
+| Model / manufacturer / firmware | `AT+CGMM?`, `AT+CGMI?`, `AT+GMR?` | ✅ `[FIBOCOM]` §3.1–3.6 p.17–21, `[3GINFO]` `[MODEMBAND]`; `[DEVICE]` `identity.txt` | Values are **quoted**: `+CGMI: "<manufacturer>"`, `+CGMM: "<model>","<short name>"`. The firmware answer's prefix is `+CGMR:` in V2.10 and `+GMR:` in `[FIBOCOM-2.2]`: accept both, strip the quotes. The device answers `+CGMM: "FM350-GL"` with **no short name**, `+GMR:` to `AT+GMR?` and `+CGMR:` to `AT+CGMR?`. Our device: `Fibocom Wireless Inc.`, firmware `81600.0000.00.29.22.06`. |
+| Firmware package version | `+GTPKGVER?` | ✅ `[FIBOCOM]` §3.21 p.38; `[DEVICE]` `identity.txt` | `+GTPKGVER: "<package>"` — a different string from `+CGMR` (`81600.0000.00.29.22.06_5006.0000.065.006.048_E09`). |
+| Identification | `ATI<n>` | ✅ `[FIBOCOM]` §3.18 p.35; `[DEVICE]` | `0` build time, `3`/`7` product name, `5` platform, `8` software version, `9` hardware version — quoted on the device: `"2023/03/09 16:59"`, `"FM350"`, `"MT6880"`, the firmware, `"V1.0.6"`. **Plain `ATI` prints the IMEI** (after manufacturer, model, revision and SVN lines): an identifier, so the app doesn't send it. |
+| Supported commands | `+CLAC` | ✅ `[FIBOCOM]` §3.14 p.31; `[DEVICE]` | Documented as the list of the commands this firmware accepts; on the device it lists **37 MediaTek extended commands only** (`+ERAT`, `+E5GOPT`, `+EPBSE`…), not even `+CGDCONT`. A command's `=?` form is the way to probe it. |
 | Module serial number | `+CFSN?` | 📄 `[FIBOCOM]` §3.16 p.33 | `+CFSN: "<10 characters>"`. **Identifier.** |
 | ICCID | `AT+ICCID` | 📄 `[FIBOCOM]` §3.12 p.29, `[3GINFO]` | Answers `+ICCID: <iccid>`, unquoted; works with the SIM locked. `+CCID` (§3.11) is the same. **Identifier.** |
 | Vendor reset | `AT+CFUN=15` | 📄 `[FIBOCOM]` §4.2 p.48 | Also `+CFUN=<fun>,1`. Whether the USB device re-enumerates, and under which COM number: ❓. `+CPWROFF` (§4.8) switches the modem off with no documented way back — never used. |
-| FCC lock state | `+GTFCCEFFSTATUS?` | 📄 `[FIBOCOM]` §17.3 p.304 | Read-only: `0` locked, `1` unlocked. The lock itself lives in NVRAM and is unlocked by a vendor challenge-response — **never** touched by this app. |
+| FCC lock state | `+GTFCCEFFSTATUS?` | 📄 `[FIBOCOM]` §17.3 p.304 | Read-only: `0` locked, `1` unlocked. The lock itself lives in NVRAM and is unlocked by a vendor challenge-response — **never** touched by this app. The device answers **two** values, `+GTFCCEFFSTATUS: 0,1`, which the manual doesn't explain ❓; the radio works over USB regardless (`+CFUN: 1`). |
 
 **Persistent settings the app only reads** (writing any of them is a human decision, see
 `CLAUDE.md`): `+E5GOPT` — which of LTE, 5G SA ("option 2") and 5G NSA ("option 3") are enabled, as
@@ -175,6 +180,12 @@ hardware pins are honoured (§13.1.2 p.233); `+MSMPD` — SIM hot-plug detection
 (§4.7 p.60); `+GTUSBMODE`, `+GTDIPCMODE` (§1); `+GTDUALSIM` (above); `+GTESIMCFG` (§8).
 `+EPBSEH` (§11.1.12 p.171) shows the band selection as MediaTek bitmaps, a cross-check for
 `+GTACT`.
+
+What our device answers to them (`[DEVICE]`, read only): `+GTUSBMODE: 41`, with `=?` offering
+`(40,41)`; `+E5GOPT: 7`, a value the manual doesn't list (presumably all three of LTE, SA and NSA
+❓); `+GTFMODE: 1,0`; `+MSMPD: 1`; `+GTESIMCFG: 0,0,0`; `+EPBSEH:` four quoted hex bitmaps;
+`+EIAAPN?` `+CME ERROR: 100` without a SIM; `+GTDIPCMODE?` `+CME ERROR: 0`, so this firmware has
+no USB/PCIe mode to read.
 
 ### 4.1 `+GTCCINFO` layout
 
@@ -200,6 +211,9 @@ lines, LTE then NR, followed by the LTE neighbours. Answers in under 3 s.
 - The level field uses the RSRP index scale; how it differs from the RSRP field is not stated ❓.
 - The bandwidth field has no code table in this section; presumably the codes of §4.3 ❓.
 - `255` = not known or not detectable. Conversions in §6.
+- ✅ With no network the device answers a bare `+GTCCINFO:` header and no cell line; to
+  `AT+GTCCINFO?;+GTCAINFO?` it adds nothing for `+GTCAINFO` — not even its header — before the
+  `OK` (`gtccinfo.nosim.txt`).
 
 ### 4.2 `+GTCAINFO` layout
 
@@ -257,12 +271,14 @@ combinations: no preference, one, or two different ones; anything else is reject
 | **NR band N is written `"50"` followed by N** (n1 → `501`, n9 → `509`, n10 → `5010`, n78 → `5078`, up to n512 → `50512`). | 📄 | `[FIBOCOM]`, `[MODEMBAND]` |
 | UMTS band N is written N (`1`–`10`). The app doesn't manage UMTS bands and keeps their codes as read. | 📄 | `[FIBOCOM]` |
 | **Band lists are per RAT.** Writing LTE codes changes only the LTE list; the UMTS and NR lists stay as they were. `AT+GTACT=20,6,3,103,107` restricts LTE to B3 and B7 and leaves NR as it was. | 📄 | `[FIBOCOM]` (note 5); `[UPSTREAM-README]` shows the command |
-| `AT+GTACT?` answers `+GTACT: <rat>,<pref1>,<pref2>,<band>,<band>,…` with the band codes currently set. | 📄 | `[FIBOCOM]`, `[MODEMBAND]` |
-| `AT+GTACT=?` lists the supported values: RATs, first and second preference, then GSM, UMTS, LTE, CDMA, EVDO and NR band codes. | 📄 | `[FIBOCOM]` |
+| `AT+GTACT?` answers `+GTACT: <rat>,<pref1>,<pref2>,<band>,<band>,…` with the band codes currently set. | ✅ | `[FIBOCOM]`, `[MODEMBAND]`; `[DEVICE]` `gtact.lteonly.txt` |
+| With every band of a RAT enabled, `AT+GTACT?` lists **each code**, not `0`: our device answers `2,3,3` (LTE only) followed by all 31 LTE codes, and no NR code. | ✅ | `[DEVICE]` `gtact.lteonly.txt` |
+| `AT+GTACT=?` lists the supported values: RATs, first and second preference, then GSM, UMTS, LTE, CDMA, EVDO and NR band codes. | ✅ | `[FIBOCOM]`; `[DEVICE]` `gtact.test.txt` — nine parenthesized groups: `(1,2,4,10,14,16,17,20)`, `(2,3,6)`, `(2,3,6)`, `()`, `(1,2,4,5,8)`, the LTE codes, `()`, `()`, the NR codes |
 | To change bands without changing the mode: read `AT+GTACT?`, keep its first three values, and write them back followed by the new codes. | 📄 | `[MODEMBAND]` |
-| Band lists supported by the FM350-GL — LTE: 1 2 3 4 5 7 8 12 13 14 17 18 19 20 25 26 28 29 30 32 34 38 39 40 41 42 43 46 48 66 71; 5G: n1 n2 n3 n5 n7 n8 n20 n25 n28 n30 n38 n40 n41 n48 n66 n71 n77 n78 n79; UMTS: 1 2 4 5 8. | 📄 | `[MODEMBAND]` (its default lists), `[FIBOCOM]` §13.1.6 p.241 (the same bands); ❓ confirm with `AT+GTACT=?` — firmware variants differ (the FM350-GL-16 has no NR) |
+| Band lists supported by the FM350-GL — LTE: 1 2 3 4 5 7 8 12 13 14 17 18 19 20 25 26 28 29 30 32 34 38 39 40 41 42 43 46 48 66 71; 5G: n1 n2 n3 n5 n7 n8 n20 n25 n28 n30 n38 n40 n41 n48 n66 n71 n77 n78 n79; UMTS: 1 2 4 5 8. | ✅ | `[MODEMBAND]` (its default lists), `[FIBOCOM]` §13.1.6 p.241 (the same bands); `[DEVICE]` `gtact.test.txt` — exactly these on our firmware (other variants differ: the FM350-GL-16 has no NR) |
 | The `OK` comes back at once; the modem then **registers again** with the new setting. | 📄 | `[FIBOCOM]` |
 | **Not persistent**: a reset loses the setting. | 📄 | `[FIBOCOM]` (attribute table) — the app re-applies it on every connect regardless. |
+| **Contradicted on the device: the setting survives `AT+CFUN=15`.** Our modem came in LTE-only mode, set before this project touched it, and was still in it after the reset. Whether it survives a power cycle: ❓. Either way the app writes it on every connect, so the difference only matters for what the modem does **without** the app: a mode the app sets may stay. | ✅ | `[DEVICE]` `gtact.lteonly.txt` (read before and after the reset) |
 | How one RAT goes back to all bands while another stays restricted: `0` applies to every RAT named, so presumably by listing every supported band of that RAT. | ❓ | Inferred; verify on `[DEVICE]` |
 | Whether LTE and NR codes can be listed in one command. | ❓ | Not stated; verify on `[DEVICE]` |
 | Whether NR band codes also restrict NR in **NSA** mode, or only SA. `[MODEMBAND]` handles them as SA bands. | ❓ | `[DEVICE]` |
@@ -302,20 +318,20 @@ index `0` also covers *not detectable*.
 Collected here so one session with the modem answers all of them. Each answer becomes a fixture
 and flips a row above to ✅.
 
-1. `AT+CLAC` — which commands this firmware accepts, in particular `+CGAUTH`, `+C5GREG`, `+CCHO`/`+CGLA`/`+CCHC`, and any undocumented traffic-statistics command. Then `ATI`, `+CGMM?`, `+CGMR`, `+GTPKGVER?` — which exact model and firmware.
+1. `AT+CLAC` — which commands this firmware accepts, in particular `+CGAUTH`, `+C5GREG`, `+CCHO`/`+CGLA`/`+CCHC`, and any undocumented traffic-statistics command. Then `ATI`, `+CGMM?`, `+CGMR`, `+GTPKGVER?` — which exact model and firmware. *Answered (§4): `+CLAC` lists only 37 MediaTek commands, so the `=?` forms decide — `+C5GREG` and the logical-channel commands are there; `+CGAUTH` answered `+CME ERROR: 100` without a SIM. Firmware `81600.0000.00.29.22.06`.*
 2. Which USB composition (`7126`/`7127`), which COM port is "MD AT", which driver serves the network adapter, and whether it shares a container ID with the AT port. *Answered in §1.*
 3. `+COPS?` on LTE, on 5G NSA and on 5G SA — does `<AcT>` follow `[27.007]` or the vendor table (§3)? Compare with `+ERAT?`.
 4. `+CESQ` on LTE, NSA and SA — confirm the documented NR fields.
 5. `+CGCONTRDP=1` — confirm the documented layout (address and mask in one string, gateway, DNS).
 6. Does the network adapter answer DHCP, or must the address be configured statically?
-7. `AT+GTACT=?` and `AT+GTACT?` — the actual values; whether LTE and NR codes can be combined in one write; how to return one RAT to all bands; whether NR codes apply in NSA.
-8. `+CFUN=1,1` and `+CFUN=15` — does the device re-enumerate on USB, and under the same COM number?
+7. `AT+GTACT=?` and `AT+GTACT?` — the actual values; whether LTE and NR codes can be combined in one write; how to return one RAT to all bands; whether NR codes apply in NSA. *The read and test forms are answered (§5); the writes remain.*
+8. `+CFUN=1,1` and `+CFUN=15` — does the device re-enumerate on USB, and under the same COM number? *Answered for `+CFUN=15` (§3): yes, with the same numbers.*
 9. URCs seen during registration and during a drop, with `+CSCON` enabled.
 10. `AT+GTCCINFO?;+GTCAINFO?` on LTE, LTE-A, NSA and SA — confirm §4.1/§4.2: hex or decimal TAC and cell ID, the bandwidth codes in `+GTCCINFO`, the NR block of `+GTCAINFO` under EN-DC.
 11. APN credentials: if `+CGAUTH` is missing, the only documented route is `+EIAAPN`, which writes persistent state — a human decision then.
 12. `+CGDCONT?` before and after a power cycle — is it persistent, as documented?
-13. The serial port: does the FM350 answer with DTR and RTS asserted (and without)? Which URCs arrive unprompted after power-on, and with which prefixes?
-14. Unplugging the modem while the app holds the AT port: does the `pwsh` process survive? `System.IO.Ports` has a history of crashing the process from its background thread when a USB serial device disappears; if it happens, the transport needs a different implementation.
+13. The serial port: does the FM350 answer with DTR and RTS asserted (and without)? Which URCs arrive unprompted after power-on, and with which prefixes? *DTR and RTS: answered (§2), they make no difference.*
+14. Unplugging the modem while the app holds the AT port: does the `pwsh` process survive? `System.IO.Ports` has a history of crashing the process from its background thread when a USB serial device disappears; if it happens, the transport needs a different implementation. *Answered (§2): it survives, and the port is reported lost at once.*
 
 ## 8. eSIM (M8)
 
@@ -328,6 +344,8 @@ eUICC over the AT port it already owns.
 |---|---|---|
 | The eUICC is reached through **logical channels**: `AT+CCHO=<AID>` opens one and returns `<sessionid>`; `AT+CGLA=<sessionid>,<length>,<command>` exchanges an APDU and answers `+CGLA: <length>,<response>`; `AT+CCHC=<sessionid>` closes it. | 📄 | `[27.007]`, `[LPAC-WRAPPER]` |
 | `+CCHO`/`+CGLA`/`+CCHC` are **in neither vendor manual**; `AT+CSIM=<length>,<command>` is (`<length>` counts hex characters). Without the logical-channel commands, a channel could be opened with a MANAGE CHANNEL APDU sent through `+CSIM`. | ❓ | `[FIBOCOM]` §10.1.4 p.139; `[DEVICE]` |
+| The firmware takes the test forms `AT+CCHO=?`, `AT+CGLA=?`, `AT+CCHC=?` and `AT+CSIM=?` (`OK`, no values). Whether the commands themselves work needs a SIM. | ✅ | `[DEVICE]` |
+| Without a SIM, `AT+EID?` answers an empty `+EID:` and `+SIMTYPE?` / `+SIMTYPE=?` answer `+CME ERROR: 0`. | ✅ | `[DEVICE]` |
 | The FM350 needs the eSIM slot selected first: `AT+GTDUALSIM=1`. The manual only calls the slots SIM1 and SIM2 and says the setting is **persistent** (§4) — switching slots writes persistent modem state. | 📄 | `[LPAC-WRAPPER]`, `[FIBOCOM]` §4.3 p.50 |
 | `AT+SIMTYPE?` tells which kind of SIM is in use: `0` USIM (default), `1` eSIM. | 📄 | `[FIBOCOM]` §3.15 p.32 |
 | `AT+EID?` answers the EID quoted, 32 digits, or an empty string when there is none; needs the SIM unlocked. **Identifier.** | 📄 | `[FIBOCOM]` §3.13 p.30 |
@@ -357,7 +375,8 @@ Standard commands from `[27.005]` (SMS) and `[27.007]` (USSD), message formats f
 | `+CMGF`: `0` PDU (the default), `1` text. This app uses PDU mode. | 📄 | `[FIBOCOM]` §8.1.4 p.89 |
 | `+CSCS`: `"IRA"` (the default), `"GSM"`, `"UCS2"`, `"HEX"`. It shapes text-mode strings and USSD strings, not PDUs. | 📄 | `[FIBOCOM]` §8.1.1 p.85 |
 | `+CPMS=<mem1>,<mem2>,<mem3>` selects the storage for reading and deleting, writing, and receiving: `"SM"` (SIM), `"ME"` (modem), `"BM"` (broadcast), `"SR"` (status reports). The setting **may revert to `"SM"` after a power cycle**, so the app sets it on every connect. | 📄 | `[FIBOCOM]` §8.1.3 p.87 |
-| Which storages the FM350 accepts, and their sizes. | ❓ | `[DEVICE]` |
+| Which storages the FM350 accepts, and their sizes. | ❓ | `[DEVICE]` — without a SIM, `AT+CPMS=?` offers `("SM"), ("SM"), ("SM")` only, `AT+CPMS?` and `AT+CMGF?` answer `+CMS ERROR: 310`, and `AT+CMGD=?` gives indexes `(1-50)` and flags `(0-4)` |
+| `AT+CNMI=?` on the device: `(0-3), (0-3), (0,2,3), (0,1), (0,1)`; the read form starts at `0, 0, 0, 0, 0`, blanks after the commas. | ✅ | `[DEVICE]` |
 | `+CNMI=<mode>,<mt>,<bm>,<ds>,<bfr>`: every value **defaults to `0`** — no new-message notice until the app sets one. `<mt>=1`: the message is stored and announced as `+CMTI: <mem>,<index>`. `<mt>=2`: the message goes straight to the port as `+CMT: [<alpha>],<length>` with the PDU on the next line, **without being stored**, and the modem waits up to **15 s** for `+CNMA`, sending the notice again until it arrives. Class 2 messages are stored and announced with `+CMTI` either way. | 📄 | `[FIBOCOM]` §8.1.8 p.96, §8.1.9 p.101 |
 | Which AT port the notices go to, and whether they arrive while data is up. | ❓ | Not stated; `[DEVICE]` |
 | `+CMGL=<stat>`: `0` unread, `1` read, `2` stored unsent, `3` stored sent, `4` all; indexes `1`–`352`. Listing marks unread messages as read. In PDU mode each entry is `+CMGL: <index>,<stat>,[<alpha>],<length>` followed by the PDU. | 📄 | `[FIBOCOM]` §8.1.10 p.103; PDU-mode layout `[27.005]` |
@@ -375,6 +394,7 @@ Standard commands from `[27.005]` (SMS) and `[27.007]` (USSD), message formats f
 | Fact | Status | Source |
 |---|---|---|
 | `AT+CUSD=[<n>[,<str>[,<dcs>]]]`: `<n>` `0` notices off, `1` on, `2` cancel the session; `<dcs>` defaults to `15`. Up to 10 s for the command; needs the SIM unlocked. | 📄 | `[FIBOCOM]` §5.3.1 p.65, `[27.007]` |
+| On the device `AT+CUSD=?` gives `(0-2)` and the read form is `+CUSD: 1` — notices on — before the app sets anything, after a reset too. | ✅ | `[DEVICE]` |
 | The reply arrives **later**, as an unsolicited `+CUSD: <m>[,<str>,<dcs>]` after the command's `OK`. `<m>`: `0` done, `1` the network expects an answer, `2` ended by the network, `3` answered by another local client, `4` not supported, `5` network timeout. | 📄 | `[FIBOCOM]` §5.3.1, `[27.007]` |
 | How `<str>` is written: with a 7-bit data coding scheme it follows `+CSCS` (`"HEX"`: two hex digits per GSM character, unpacked); 8-bit data takes two hex digits per octet; UCS-2 four hex digits per character. | 📄 | `[FIBOCOM]` §5.3.1 |
 | A reply can be split over several lines, and some modems report a 7-bit coding scheme on a UCS-2 payload, so a robust decoder checks the payload too. | 📄 | `[SMS-TOOL]` — behaviour seen across modems, not specific to the FM350 |
