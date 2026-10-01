@@ -149,8 +149,9 @@ function Resolve-SimPinAction {
         - AttemptsLeft: PIN attempts left, $null when the modem can't tell.
 
         Returns Action and Reason:
-        - Continue: the SIM is ready. Reason 'PinAccepted' when an attempt was pending: the
-          caller then clears it.
+        - Continue: the SIM is ready. Reason 'PinAccepted' when an attempt was pending and this
+          is the stored PIN's SIM: the caller then clears it. Another SIM, or one that can't be
+          identified, leaves the attempt pending.
         - SendPin: enter the stored PIN - once.
         - AskUser: the SIM waits for its PIN and the app may not send one. Reason: 'NoPin',
           'PinForOtherSim', 'SimNotIdentified', 'PinUnconfirmed' (the earlier attempt's outcome
@@ -178,7 +179,7 @@ function Resolve-SimPinAction {
     )
 
     $action, $reason = switch ($SimState) {
-        'Ready' { 'Continue', $(if ($PinStored -and $PinAttempted) { 'PinAccepted' } else { $null }) }
+        'Ready' { 'Continue', $(if ($PinStored -and $PinAttempted -and $PinForThisSim -eq $true) { 'PinAccepted' } else { $null }) }
         'Busy' { 'Wait', 'SimBusy' }
         'Absent' { 'Report', 'NoSim' }
         'PukRequired' { 'Report', 'PukRequired' }
@@ -290,7 +291,8 @@ function Set-SimPinAttempt {
     .DESCRIPTION
         -Attempted $true is written before AT+CPIN is sent, so that an attempt whose answer never
         arrives - a timeout, a crash - is never followed by a second one. -Attempted $false once
-        the SIM is seen ready. Does nothing when no PIN is stored.
+        the SIM is seen ready. Does nothing when no PIN is stored; throws when the file can't be
+        read or written.
     .EXAMPLE
         Set-SimPinAttempt -Attempted $true
     #>
@@ -305,7 +307,8 @@ function Set-SimPinAttempt {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         return
     }
-    $content = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    # A failure here must stop the caller: the PIN is never sent unless the attempt is recorded.
+    $content = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
     $content.Attempted = $Attempted
     if ($PSCmdlet.ShouldProcess($Path, "Mark the SIM PIN as $(if ($Attempted) { 'attempted' } else { 'accepted' })")) {
         Write-AppFile -Path $Path -Content ($content | ConvertTo-Json)
@@ -343,7 +346,9 @@ function Disable-SimPin {
 
         Returns Result: 'Disabled', 'AlreadyOff' (nothing sent), 'PinRejected' (the PIN was
         wrong: an attempt was spent), 'LastAttempt' or 'SimNotReady' (nothing sent), 'Declined'
-        (not confirmed), 'Failed' or 'PortLost'; and AttemptsLeft when the modem tells it.
+        (not confirmed), 'Failed' (the PIN request couldn't be read - nothing sent - or the
+        command failed) or 'PortLost'; and AttemptsLeft when the modem tells it. Throws, without
+        the value, for a PIN that isn't 4 to 8 digits.
     .EXAMPLE
         Disable-SimPin -Channel $channel -Pin $pin
     #>
@@ -357,6 +362,11 @@ function Disable-SimPin {
         [securestring] $Pin
     )
 
+    # 4 to 8 digits, as Save-SimPin stores: anything else would only spend an attempt. The
+    # message never carries the value.
+    if ([System.Net.NetworkCredential]::new('', $Pin).Password -notmatch '^\d{4,8}$') {
+        throw [System.ArgumentException]::new('A SIM PIN is 4 to 8 digits.', 'Pin')
+    }
     $attemptsLeft = $null
     $outcome = {
         param($result)
@@ -373,6 +383,10 @@ function Disable-SimPin {
     $enabled = ConvertFrom-AtFacilityLock -Lines (Invoke-AtCommand -Channel $Channel -Command 'AT+CLCK="SC",2').Lines
     if ($enabled -eq $false) {
         return & $outcome 'AlreadyOff'
+    }
+    if ($enabled -ne $true) {
+        # Only a request known to be on is turned off.
+        return & $outcome 'Failed'
     }
     $attemptsLeft = Get-SimPinAttemptsLeft -Ask { param($command) Invoke-AtCommand -Channel $Channel -Command $command }
     if ($null -ne $attemptsLeft -and $attemptsLeft -le 1) {

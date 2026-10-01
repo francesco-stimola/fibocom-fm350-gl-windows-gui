@@ -119,6 +119,30 @@ Describe 'Resolve-AdapterConfiguration' {
         if ($Expected) { $plan.Actions[-1].Metric | Should -Be $Metric }
     }
 
+    It 'leaves alone the IPv6 servers Windows lists by itself when only IPv4 ones are wanted' {
+        $context = $script:context | Select-Object -Property *
+        $context.Dns = @('203.0.113.53', '203.0.113.54')
+        $adapter = Get-TestConfiguredAdapter -Change @{ DnsServers = @('203.0.113.53', '203.0.113.54', 'fec0:0:0:ffff::1', 'fec0:0:0:ffff::2', 'fec0:0:0:ffff::3') }
+        (Resolve-AdapterConfiguration -Context $context -Adapter $adapter -Settings $script:settings).Configured | Should -BeTrue
+    }
+
+    It 'still sets the IPv4 servers when only IPv6 ones are listed' {
+        $context = $script:context | Select-Object -Property *
+        $context.Dns = @('203.0.113.53')
+        $adapter = Get-TestConfiguredAdapter -Change @{ DnsServers = @('fec0:0:0:ffff::1') }
+        $plan = Resolve-AdapterConfiguration -Context $context -Adapter $adapter -Settings $script:settings
+        $plan.Actions.Action | Should -Be @('SetDns')
+        $plan.Actions[0].Servers | Should -Be @('203.0.113.53')
+    }
+
+    It 'takes an override listed IPv6 first as Windows reads it back: IPv4 first' {
+        $settings = (ConvertTo-AppSetting -InputObject @{ DnsServers = @('2001:db8::99', '203.0.113.99') }).Settings
+        $fresh = Resolve-AdapterConfiguration -Context $script:context -Adapter (Get-TestConfiguredAdapter) -Settings $settings
+        ($fresh.Actions | Where-Object Action -EQ 'SetDns').Servers | Should -Be @('203.0.113.99', '2001:db8::99')
+        $after = Get-TestConfiguredAdapter -Change @{ DnsServers = @('203.0.113.99', '2001:db8::99') }
+        (Resolve-AdapterConfiguration -Context $script:context -Adapter $after -Settings $settings).Configured | Should -BeTrue
+    }
+
     It 'rewrites DNS servers in the wrong order' {
         $adapter = Get-TestConfiguredAdapter -Change @{ DnsServers = @('203.0.113.54', '203.0.113.53', '2001:db8::53') }
         (Resolve-AdapterConfiguration -Context $script:context -Adapter $adapter -Settings $script:settings).Actions.Action | Should -Be @('SetDns')

@@ -35,11 +35,21 @@ Describe 'ConvertFrom-AtSimState: the SIM state' {
         @{ Code = 12; State = 'PukRequired' }
         @{ Code = 13; State = 'Failure' }
         @{ Code = 14; State = 'Busy' }
-        @{ Code = 100; State = 'Other' }
+        @{ Code = 15; State = 'Other' }
+        @{ Code = 17; State = 'Other' }
+        @{ Code = 18; State = 'Other' }
     ) {
         $sim = ConvertFrom-AtSimState -Lines @() -ErrorCode $Code
         $sim.State | Should -Be $State
         $sim.Ready | Should -BeFalse
+    }
+
+    It 'reads CME <Code>, a failure of the modem, as no SIM state at all' -ForEach @(
+        @{ Code = 0 }
+        @{ Code = 3 }
+        @{ Code = 100 }
+    ) {
+        ConvertFrom-AtSimState -Lines @() -ErrorCode $Code | Should -BeNullOrEmpty
     }
 
     It 'reads the captured missing SIM through the channel: CME 10, Absent' {
@@ -152,6 +162,9 @@ Describe 'Resolve-SimPinAction' {
         @{ SimState = 'Ready'; Stored = $false; ForThisSim = $null; Attempted = $false; Left = $null; Action = 'Continue'; Reason = $null }
         @{ SimState = 'Ready'; Stored = $true; ForThisSim = $true; Attempted = $false; Left = 3; Action = 'Continue'; Reason = $null }
         @{ SimState = 'Ready'; Stored = $true; ForThisSim = $true; Attempted = $true; Left = 3; Action = 'Continue'; Reason = 'PinAccepted' }
+        # Only the stored PIN's SIM confirms its attempt.
+        @{ SimState = 'Ready'; Stored = $true; ForThisSim = $false; Attempted = $true; Left = $null; Action = 'Continue'; Reason = $null }
+        @{ SimState = 'Ready'; Stored = $true; ForThisSim = $null; Attempted = $true; Left = $null; Action = 'Continue'; Reason = $null }
         # The SIM waits for its PIN.
         @{ SimState = 'PinRequired'; Stored = $true; ForThisSim = $true; Attempted = $false; Left = 3; Action = 'SendPin'; Reason = $null }
         @{ SimState = 'PinRequired'; Stored = $true; ForThisSim = $true; Attempted = $false; Left = 2; Action = 'SendPin'; Reason = $null }

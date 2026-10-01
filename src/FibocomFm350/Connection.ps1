@@ -32,8 +32,11 @@ function Resolve-ConnectionState {
         - Registered, RegistrationState: from +CEREG / +C5GREG.
         - ContextDefined: the app's context is defined as the settings say. ContextActive,
           ContextAddress, ContextApn: it is active, with this IPv4 address, on this APN (as the
-          network reports it). ApnSet: the settings name an APN (empty: the subscription's own).
-        - Adapter: 'Present' or 'Absent' (the modem's network adapter). AdapterConfigured: its
+          network reports it); ContextActive $null: its activation couldn't be read.
+          ContextRead: $false when the active context's parameters couldn't be read. ApnSet: the
+          settings name an APN (empty: the subscription's own).
+        - Adapter: 'Present', 'Disabled' (by the user) or 'Absent' (the modem's network
+          adapter). AdapterConfigured: its
           configuration matches the context and the settings. AdapterProblem: why it can't be
           configured from what the modem reports.
         - DataPath: the last data-path probe passed ($null: not probed).
@@ -46,8 +49,9 @@ function Resolve-ConnectionState {
           'ConfigureAdapter' - or 'None'.
         - Reason: why there is no step to take, or $null.
         - Blocked: $true when what stops the connection is out of the app's reach - no device or
-          driver, a SIM waiting for the user, an FCC lock, an APN the user must give: no
-          recovery step changes it, so none is escalated (ARCHITECTURE -> Health checks).
+          driver, a SIM waiting for the user, an FCC lock, an APN the user must give, an adapter
+          missing or disabled: no recovery step changes it, so none is escalated (ARCHITECTURE ->
+          Health checks).
 
         A context that is active without an IPv4 address, or on the IMS APN, carries no internet
         traffic. With an empty APN in the settings, the network chose the APN - on some networks
@@ -131,8 +135,9 @@ function Resolve-ConnectionState {
     if ((& $fact 'OperatorMode') -eq 2) {
         return & $outcome 'SimReady' 'AutoRegister' $null $false
     }
-    $contextActive = (& $fact 'ContextActive') -eq $true
-    if ((& $fact 'ContextDefined') -eq $false -and -not $contextActive) {
+    # Written only over a context known to be inactive: what the modem does with a definition
+    # written under an active context is not known.
+    if ((& $fact 'ContextDefined') -eq $false -and (& $fact 'ContextActive') -eq $false) {
         return & $outcome 'SimReady' 'DefineContext' $null $false
     }
     if (-not $registered) {
@@ -140,8 +145,16 @@ function Resolve-ConnectionState {
         return & $outcome 'SimReady' 'None' $(if ($state) { $state } else { 'NotRegistered' }) $false
     }
 
-    if (-not $contextActive) {
+    # A context whose activation or parameters couldn't be read is neither activated nor
+    # replaced: the next pass reads it again.
+    if ($null -eq (& $fact 'ContextActive')) {
+        return & $outcome 'Registered' 'None' 'ContextUnknown' $false
+    }
+    if ((& $fact 'ContextActive') -eq $false) {
         return & $outcome 'Registered' 'ActivateContext' $null $false
+    }
+    if ((& $fact 'ContextRead') -eq $false) {
+        return & $outcome 'Registered' 'None' 'ContextUnknown' $false
     }
     # -match compares without case: APNs are not case-sensitive.
     if (-not (& $fact 'ContextAddress') -or [string](& $fact 'ContextApn') -match $script:ImsApnPattern) {
@@ -154,6 +167,9 @@ function Resolve-ConnectionState {
         return & $outcome 'Registered' 'None' 'NoAddress' $false
     }
 
+    if ((& $fact 'Adapter') -eq 'Disabled') {
+        return & $outcome 'DataActive' 'None' 'AdapterDisabled' $true
+    }
     if ((& $fact 'Adapter') -ne 'Present') {
         return & $outcome 'DataActive' 'None' 'NoAdapter' $true
     }
@@ -177,9 +193,9 @@ function Get-ModemObservation {
     .DESCRIPTION
         The thin I/O in front of the state machine: it reads the modem's state and the adapter's,
         and changes nothing. It reads only as far as the state allows: the SIM, then - with the
-        SIM ready - the radio, the registration, the context definition, and - while not
-        registered - the operator selection and the FCC lock; once registered, the context's
-        activation and parameters, and the adapter.
+        SIM ready - the radio, the registration, the context's definition and activation, and -
+        while not registered - the operator selection and the FCC lock; once registered, the
+        active context's parameters, and the adapter. A read that fails leaves its fact unknown.
 
         Returns Facts (the observation for Resolve-ConnectionState), and what the steps need:
         Context (the app's context parameters), AdapterState and AdapterPlan. The ICCID is read
@@ -208,7 +224,7 @@ function Get-ModemObservation {
     $facts = [ordered]@{
         Device = 'Present'; PortOpen = $true; Responsive = $null; Sim = $null; Fcc = $null
         RadioOn = $null; OperatorMode = $null; Registered = $null; RegistrationState = $null
-        ContextDefined = $null; ContextActive = $null; ContextAddress = $null; ContextApn = $null; ApnSet = [bool]$Settings.Apn
+        ContextDefined = $null; ContextActive = $null; ContextAddress = $null; ContextApn = $null; ContextRead = $null; ApnSet = [bool]$Settings.Apn
         Adapter = $null; AdapterConfigured = $null; AdapterProblem = $null; DataPath = $null
     }
     $result = [pscustomobject]@{ Facts = $null; Context = $null; AdapterState = $null; AdapterPlan = $null }
@@ -241,10 +257,14 @@ function Get-ModemObservation {
     }
     $stored = Get-SimPin -Path $SimPinPath
     $attemptsLeft = $null
-    if ($sim.State -eq 'PinRequired' -and $stored) {
+    # The SIM is identified when a PIN may be sent to it, and when a ready SIM could confirm a
+    # pending attempt - only the stored PIN's SIM does.
+    if ($stored -and ($sim.State -eq 'PinRequired' -or ($sim.State -eq 'Ready' -and $stored.Attempted))) {
         $iccid = ConvertFrom-AtIccid -Lines (& $ask 'AT+ICCID').Lines
         $stored = Get-SimPin -Path $SimPinPath -Iccid $iccid
-        $attemptsLeft = Get-SimPinAttemptsLeft -Ask $ask
+        if ($sim.State -eq 'PinRequired') {
+            $attemptsLeft = Get-SimPinAttemptsLeft -Ask $ask
+        }
         if (& $stopped) {
             return & $finish
         }
@@ -279,8 +299,11 @@ function Get-ModemObservation {
         $facts.Fcc = Resolve-FccLock -Fcc $lock -Registered:$false
     }
 
-    # The app's data context.
+    # The app's data context: its definition and whether it is active, read together, so a
+    # definition is never written over a context whose activation is not known. A read that
+    # fails leaves its fact unknown ($null), never "no".
     $definitions = & $ask 'AT+CGDCONT?'
+    $activations = & $ask 'AT+CGACT?'
     if (& $stopped) {
         return & $finish
     }
@@ -289,24 +312,36 @@ function Get-ModemObservation {
         # -eq compares text without case: APNs are not case-sensitive.
         $facts.ContextDefined = [bool]$ours -and $ours.PdpType -eq $Settings.PdpType -and $ours.Apn -eq $Settings.Apn
     }
-    if (-not $facts.Registered) {
+    if ($activations.Status -eq 'OK') {
+        $activation = ConvertFrom-AtContextActivation -Lines $activations.Lines | Where-Object Cid -EQ $script:DataContextId | Select-Object -First 1
+        $facts.ContextActive = [bool]$activation -and $activation.Active
+    }
+    if (-not $facts.Registered -or $facts.ContextActive -ne $true) {
         return & $finish
     }
-    $activation = ConvertFrom-AtContextActivation -Lines (& $ask 'AT+CGACT?').Lines | Where-Object Cid -EQ $script:DataContextId | Select-Object -First 1
-    $facts.ContextActive = [bool]$activation -and $activation.Active
-    if (-not $facts.ContextActive -or (& $stopped)) {
-        return & $finish
+    $parameters = & $ask "AT+CGCONTRDP=$script:DataContextId"
+    $context = if ($parameters.Status -eq 'OK') {
+        ConvertFrom-AtContextParameter -Lines $parameters.Lines | Where-Object Cid -EQ $script:DataContextId | Select-Object -First 1
     }
-    $context = ConvertFrom-AtContextParameter -Lines (& $ask "AT+CGCONTRDP=$script:DataContextId").Lines | Where-Object Cid -EQ $script:DataContextId | Select-Object -First 1
     if ($context -and -not $context.IPv4Address) {
         # The FM350 leaves the address out of +CGCONTRDP for a data context; +CGPADDR has it
         # (AT-COMMANDS section 3).
-        $address = ConvertFrom-AtContextAddress -Lines (& $ask "AT+CGPADDR=$script:DataContextId").Lines | Where-Object Cid -EQ $script:DataContextId | Select-Object -First 1
-        if ($address) {
-            $context.IPv4Address = $address.IPv4Address
+        $addresses = & $ask "AT+CGPADDR=$script:DataContextId"
+        if ($addresses.Status -eq 'OK') {
+            $address = ConvertFrom-AtContextAddress -Lines $addresses.Lines | Where-Object Cid -EQ $script:DataContextId | Select-Object -First 1
+            if ($address) {
+                $context.IPv4Address = $address.IPv4Address
+            }
+        }
+        else {
+            $context = $null
         }
     }
-    if ($context -and @($context.Dns).Count -eq 0) {
+    $facts.ContextRead = [bool]$context
+    if (-not $context -or (& $stopped)) {
+        return & $finish
+    }
+    if (@($context.Dns).Count -eq 0) {
         $servers = ConvertFrom-AtDnsServer -Lines (& $ask "AT+GTDNS=$script:DataContextId").Lines | Where-Object Cid -EQ $script:DataContextId | Select-Object -First 1
         if ($servers) {
             $context.Dns = $servers.Dns
@@ -318,8 +353,8 @@ function Get-ModemObservation {
 
     # The adapter.
     $adapter = if ($AdapterInstanceId) { Get-ModemAdapterState -InstanceId $AdapterInstanceId } else { $null }
-    $facts.Adapter = if ($adapter) { 'Present' } else { 'Absent' }
-    if ($adapter) {
+    $facts.Adapter = if (-not $adapter -or $adapter.Status -eq 'Not Present') { 'Absent' } elseif ($adapter.Status -eq 'Disabled') { 'Disabled' } else { 'Present' }
+    if ($facts.Adapter -eq 'Present') {
         $plan = Resolve-AdapterConfiguration -Context $context -Adapter $adapter -Settings $Settings
         $result.AdapterState = $adapter
         $result.AdapterPlan = $plan
@@ -364,14 +399,30 @@ function Invoke-ConnectionStep {
         }
         'EnterPin' {
             $stored = Get-SimPin -Path $SimPinPath
+            # Recorded before sending, and read back: an answer that never comes is never
+            # followed by a second attempt, and a PIN whose attempt can't be recorded is not sent.
+            $recorded = $false
             if ($stored) {
-                # Recorded before sending: an answer that never comes is never followed by a
-                # second attempt.
-                Set-SimPinAttempt -Attempted $true -Path $SimPinPath -Confirm:$false
+                try {
+                    Set-SimPinAttempt -Attempted $true -Path $SimPinPath -Confirm:$false -ErrorAction Stop
+                    $check = Get-SimPin -Path $SimPinPath
+                    $recorded = [bool]$check -and $check.Attempted
+                }
+                catch {
+                    $recorded = $false
+                }
+            }
+            if ($recorded) {
                 $answer = & $send ('AT+CPIN="{0}"' -f [System.Net.NetworkCredential]::new('', $stored.Pin).Password)
                 if ($answer.Status -eq 'OK') {
-                    Set-SimPinAttempt -Attempted $false -Path $SimPinPath -Confirm:$false
                     $result = 'Done'
+                    try {
+                        Set-SimPinAttempt -Attempted $false -Path $SimPinPath -Confirm:$false -ErrorAction Stop
+                    }
+                    catch {
+                        # Left pending: the SIM seen ready by a later observation clears it.
+                        Write-Verbose "The accepted PIN couldn't be recorded: $($_.Exception.Message)"
+                    }
                 }
                 elseif ($answer.Status -eq 'CmeError' -and $answer.ErrorCode -eq 16) {
                     # Wrong: never tried again.
@@ -493,7 +544,13 @@ function Invoke-ModemConnect {
     while ($true) {
         $observation = Get-ModemObservation -Channel $Channel -Settings $Settings -AdapterInstanceId $AdapterInstanceId -SimPinPath $SimPinPath
         if ($observation.Facts.Sim -and $observation.Facts.Sim.Reason -eq 'PinAccepted') {
-            Set-SimPinAttempt -Attempted $false -Path $SimPinPath -Confirm:$false
+            try {
+                Set-SimPinAttempt -Attempted $false -Path $SimPinPath -Confirm:$false -ErrorAction Stop
+            }
+            catch {
+                # Still pending: cleared at a later pass.
+                Write-Verbose "The accepted PIN couldn't be recorded: $($_.Exception.Message)"
+            }
         }
         $decision = Resolve-ConnectionState -Observation $observation.Facts @previousState
         # Opening the port is the worker's, before a pass.

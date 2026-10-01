@@ -43,8 +43,16 @@ function Write-AppFile {
         [void](New-Item -ItemType Directory -Path $folder -Force)
     }
     $temporary = "$Path.tmp"
-    [System.IO.File]::WriteAllText($temporary, $Content, [System.Text.UTF8Encoding]::new($false))
-    [System.IO.File]::Move($temporary, $Path, $true)
+    try {
+        [System.IO.File]::WriteAllText($temporary, $Content, [System.Text.UTF8Encoding]::new($false))
+        [System.IO.File]::Move($temporary, $Path, $true)
+    }
+    catch {
+        # Thrown on, whatever the caller's error preference: a file that wasn't written must
+        # never pass for written. No temporary file is left behind.
+        [System.IO.File]::Delete($temporary)
+        throw
+    }
 }
 
 function Test-AtStringValue {

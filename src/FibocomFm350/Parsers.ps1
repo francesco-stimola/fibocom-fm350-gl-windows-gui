@@ -138,8 +138,9 @@ function ConvertFrom-AtSimState {
         'SIM PUK', ...), or $null when it is ready - and State: 'Ready', 'PinRequired',
         'PukRequired', 'Absent', 'Busy', 'Failure' or 'Other'.
         A missing or busy SIM answers '+CME ERROR' instead: pass its number as -ErrorCode (10 no
-        SIM, 11 PIN required, 12 PUK required, 13 SIM failure, 14 busy; any other is 'Other').
-        Returns $null for an answer with no '+CPIN:' line and no error code.
+        SIM, 11 PIN required, 12 PUK required, 13 SIM failure, 14 busy; 15 wrong SIM, 17 PIN2
+        and 18 PUK2 required are 'Other'). Returns $null for an answer with no '+CPIN:' line and
+        no error code, and for any other error code - a failure of the modem, not a SIM state.
     .EXAMPLE
         ConvertFrom-AtSimState -Lines '+CPIN: SIM PIN'
     .EXAMPLE
@@ -172,17 +173,17 @@ function ConvertFrom-AtSimState {
         }
     }
     elseif ($null -ne $ErrorCode) {
-        [pscustomobject]@{
-            Ready   = $false
-            Waiting = $null
-            State   = switch ($ErrorCode) {
-                10 { 'Absent' }
-                11 { 'PinRequired' }
-                12 { 'PukRequired' }
-                13 { 'Failure' }
-                14 { 'Busy' }
-                default { 'Other' }
-            }
+        $state = switch ($ErrorCode) {
+            10 { 'Absent' }
+            11 { 'PinRequired' }
+            12 { 'PukRequired' }
+            13 { 'Failure' }
+            14 { 'Busy' }
+            { $_ -in 15, 17, 18 } { 'Other' }
+        }
+        # Any other code is the modem's failure, not the SIM's: the state is not known.
+        if ($state) {
+            [pscustomobject]@{ Ready = $false; Waiting = $null; State = $state }
         }
     }
 }

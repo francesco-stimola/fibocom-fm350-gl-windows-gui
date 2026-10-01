@@ -82,8 +82,16 @@ Describe 'Resolve-ConnectionState' {
         @{ Name = 'context on the IMS APN, the APN of the settings'; Change = @{ ContextApn = 'ims.mnc001.mcc001.gprs' }; State = 'Registered'; Action = 'None'; Reason = 'NoAddress'; Blocked = $false }
         @{ Name = 'context on an APN that only starts with ims'; Change = @{ ContextApn = 'ims.example.mnc001.mcc001.gprs'; ApnSet = $false }; State = 'Online'; Action = 'None'; Reason = $null; Blocked = $false }
         @{ Name = 'context on the internet APN, no APN set'; Change = @{ ContextApn = 'internet.mnc001.mcc001.gprs'; ApnSet = $false }; State = 'Online'; Action = 'None'; Reason = $null; Blocked = $false }
+        # What couldn't be read is never taken for "no": nothing is written over it.
+        @{ Name = 'activation not read, not registered'; Change = @{ Registered = $false; RegistrationState = 'Searching'; ContextDefined = $false; ContextActive = $null }; State = 'SimReady'; Action = 'None'; Reason = 'Searching'; Blocked = $false }
+        @{ Name = 'active context differing from the settings, registration lost a moment'; Change = @{ Registered = $false; RegistrationState = 'Searching'; ContextDefined = $false }; State = 'SimReady'; Action = 'None'; Reason = 'Searching'; Blocked = $false }
+        @{ Name = 'activation not read'; Change = @{ ContextActive = $null; ContextAddress = $null }; State = 'Registered'; Action = 'None'; Reason = 'ContextUnknown'; Blocked = $false }
+        @{ Name = 'parameters not read'; Change = @{ ContextRead = $false; ContextAddress = $null }; State = 'Registered'; Action = 'None'; Reason = 'ContextUnknown'; Blocked = $false }
+        @{ Name = 'parameters not read, settings differ'; Change = @{ ContextRead = $false; ContextAddress = $null; ContextDefined = $false }; State = 'Registered'; Action = 'None'; Reason = 'ContextUnknown'; Blocked = $false }
+        @{ Name = 'parameters not read, no APN set'; Change = @{ ContextRead = $false; ContextAddress = $null; ApnSet = $false }; State = 'Registered'; Action = 'None'; Reason = 'ContextUnknown'; Blocked = $false }
         # The adapter.
         @{ Name = 'no network adapter'; Change = @{ Adapter = 'Absent'; AdapterConfigured = $null }; State = 'DataActive'; Action = 'None'; Reason = 'NoAdapter'; Blocked = $true }
+        @{ Name = 'network adapter disabled'; Change = @{ Adapter = 'Disabled'; AdapterConfigured = $null }; State = 'DataActive'; Action = 'None'; Reason = 'AdapterDisabled'; Blocked = $true }
         @{ Name = 'adapter to configure'; Change = @{ AdapterConfigured = $false }; State = 'DataActive'; Action = 'ConfigureAdapter'; Reason = $null; Blocked = $false }
         @{ Name = 'adapter that cannot be configured'; Change = @{ AdapterConfigured = $false; AdapterProblem = 'NoGateway' }; State = 'DataActive'; Action = 'None'; Reason = 'NoGateway'; Blocked = $false }
         @{ Name = 'data path failing'; Change = @{ DataPath = $false }; State = 'DataActive'; Action = 'None'; Reason = 'DataPathFailed'; Blocked = $false }

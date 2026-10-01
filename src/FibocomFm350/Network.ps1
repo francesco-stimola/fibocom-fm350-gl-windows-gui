@@ -30,6 +30,8 @@ function Resolve-AdapterConfiguration {
           0.0.0.0) - the configuration that carried traffic on the device. Manual addresses and
           default routes left on the adapter from an earlier context are removed.
         - The DNS override, when set, replaces whichever DNS servers the adapter would have.
+          Servers are compared per family, IPv4 then IPv6, and a family only when servers of it
+          are wanted: the IPv6 servers Windows lists on its own never ask for a change.
         - The interface metric is the settings' one, never automatic.
 
         Returns Configured ($true when nothing needs to change), Actions - in order, each with
@@ -102,8 +104,20 @@ function Resolve-AdapterConfiguration {
     if ($override.Count -gt 0) {
         $dnsWanted = $override
     }
-    if ($null -ne $dnsWanted -and $dnsWanted.Count -gt 0 -and (@($Adapter.DnsServers) -join ',') -ne ($dnsWanted -join ',')) {
-        $actions.Add([pscustomobject]@{ Action = 'SetDns'; Servers = [string[]]$dnsWanted })
+    if ($null -ne $dnsWanted -and $dnsWanted.Count -gt 0) {
+        # Compared per family, and a family only when servers of it are wanted: Windows reads
+        # the IPv4 servers before the IPv6 ones, and lists IPv6 servers nobody set
+        # (fec0:0:0:ffff::1 to 3, or ones from router advertisements) - a list compared whole
+        # would never match.
+        $wanted4 = @($dnsWanted | Where-Object { $_ -notmatch ':' })
+        $wanted6 = @($dnsWanted | Where-Object { $_ -match ':' })
+        $have4 = @($Adapter.DnsServers | Where-Object { $_ -and $_ -notmatch ':' })
+        $have6 = @($Adapter.DnsServers | Where-Object { $_ -match ':' })
+        $differs4 = $wanted4.Count -gt 0 -and ($have4 -join ',') -ne ($wanted4 -join ',')
+        $differs6 = $wanted6.Count -gt 0 -and ($have6 -join ',') -ne ($wanted6 -join ',')
+        if ($differs4 -or $differs6) {
+            $actions.Add([pscustomobject]@{ Action = 'SetDns'; Servers = [string[]]($wanted4 + $wanted6) })
+        }
     }
 
     if ($Adapter.AutomaticMetric -or $Adapter.InterfaceMetric -ne $Settings.InterfaceMetric) {

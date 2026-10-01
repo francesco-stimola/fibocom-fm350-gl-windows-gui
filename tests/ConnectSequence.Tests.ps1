@@ -58,6 +58,9 @@ BeforeAll {
         $secret
     }
 
+    # +CGPADDR on the IMS APN of a network that gives it no IPv4 address: an IPv6 one only.
+    $script:imsIPv6Only = @('+CGPADDR: 1,"0.0.0.0.0.0.0.0.32.1.13.184.0.0.0.1",""', 'OK')
+
     # Commands that change the modem's state.
     function Get-WriteCommand {
         param($Modem)
@@ -167,7 +170,7 @@ Describe 'Invoke-ModemConnect' {
         }
 
         It 'asks for the APN when the network put the app''s context on the IMS APN, and writes nothing' {
-            $modem = Get-OnlineModem -Answers @{ 'AT+CGCONTRDP=1' = Get-FixtureLine 'device/cgcontrdp.app-ims.txt' }
+            $modem = Get-OnlineModem -Answers @{ 'AT+CGCONTRDP=1' = Get-FixtureLine 'device/cgcontrdp.app-ims.txt'; 'AT+CGPADDR=1' = $script:imsIPv6Only }
             $pass = & $script:connect $modem
             $pass.State | Should -Be 'Registered'
             $pass.Reason | Should -Be 'ApnNeeded'
@@ -191,7 +194,7 @@ Describe 'Invoke-ModemConnect' {
 
         It 'moves a context without an address to the APN of the settings: deactivate, define, activate' {
             $script:settings = (ConvertTo-AppSetting -InputObject @{ Apn = 'internet.example' }).Settings
-            $modem = Get-OnlineModem -Answers @{ 'AT+CGCONTRDP=1' = Get-FixtureLine 'device/cgcontrdp.app-ims.txt' }
+            $modem = Get-OnlineModem -Answers @{ 'AT+CGCONTRDP=1' = Get-FixtureLine 'device/cgcontrdp.app-ims.txt'; 'AT+CGPADDR=1' = $script:imsIPv6Only }
             $modem.Script('AT+CGACT=0,1', @{ Lines = @('OK'); Then = @{ 'AT+CGACT?' = @('OK') } })
             $modem.Script('AT+CGDCONT=1,"IPV4V6","internet.example"', @{ Lines = @('OK'); Then = @{ 'AT+CGDCONT?' = @('+CGDCONT: 1,"IPV4V6","internet.example","",0,0', 'OK') } })
             $modem.Script('AT+CGACT=1,1', @{ Lines = @('OK'); Then = @{
@@ -332,11 +335,37 @@ Describe 'Invoke-ModemConnect' {
             @($modem.Received | Where-Object { $_ -like 'AT+CPIN=*' }).Count | Should -Be 1
         }
 
-        It 'confirms an unconfirmed attempt once the SIM is seen ready' {
+        It 'confirms an unconfirmed attempt once its SIM is seen ready' {
             Set-SimPinAttempt -Attempted $true -Path $script:pinPath
-            $modem = Get-OnlineModem
+            $modem = Get-OnlineModem -Answers @{ 'AT+ICCID' = Get-FixtureLine 'documented/iccid.txt' }
             (& $script:connect $modem).State | Should -Be 'Online'
             (Get-SimPin -Path $script:pinPath).Attempted | Should -BeFalse
+        }
+
+        It 'keeps an attempt pending when <Name> is seen ready' -ForEach @(
+            @{ Name = 'another SIM'; Iccid = @('+ICCID: 8900100000000000001', 'OK') }
+            @{ Name = 'a SIM it cannot identify'; Iccid = @('+CME ERROR: 100') }
+        ) {
+            Set-SimPinAttempt -Attempted $true -Path $script:pinPath
+            $modem = Get-OnlineModem -Answers @{ 'AT+ICCID' = $Iccid }
+            (& $script:connect $modem).State | Should -Be 'Online'
+            (Get-SimPin -Path $script:pinPath).Attempted | Should -BeTrue
+        }
+
+        It 'sends no PIN when its attempt cannot be recorded' {
+            $modem = Get-OnlineModem -Answers $script:locked
+            (Get-Item -LiteralPath $script:pinPath).IsReadOnly = $true
+            try {
+                $pass = & $script:connect $modem
+            }
+            finally {
+                (Get-Item -LiteralPath $script:pinPath).IsReadOnly = $false
+            }
+            $pass.Steps[-1].Action | Should -Be 'EnterPin'
+            $pass.Steps[-1].Result | Should -Be 'Failed'
+            $pass.Steps[-1].Commands | Should -BeNullOrEmpty
+            @($modem.Received | Where-Object { $_ -like 'AT+CPIN=*' }).Count | Should -Be 0
+            Get-ChildItem -LiteralPath (Split-Path $script:pinPath) -Filter '*.tmp' | Should -BeNullOrEmpty
         }
 
         It 'sends nothing with one attempt left' {
@@ -485,6 +514,60 @@ Describe 'Invoke-ModemConnect' {
             $pass.Reason | Should -Be 'NoAddress'
         }
 
+        It 'takes a failed address read for unknown, not for no address: <Name>' -ForEach @(
+            @{ Name = 'an active context with other settings is not deactivated'; Apn = 'other.example' }
+            @{ Name = 'no APN is asked for'; Apn = '' }
+        ) {
+            $script:settings = (ConvertTo-AppSetting -InputObject @{ Apn = $Apn }).Settings
+            $modem = Get-OnlineModem -Answers @{
+                'AT+CGCONTRDP=1' = Get-FixtureLine 'device/cgcontrdp.app.txt'
+                'AT+CGPADDR=1'   = @('+CME ERROR: 100')
+            }
+            $pass = & $script:connect $modem
+            $pass.State | Should -Be 'Registered'
+            $pass.Reason | Should -Be 'ContextUnknown'
+            $pass.Blocked | Should -BeFalse
+            Get-WriteCommand -Modem $modem | Should -BeNullOrEmpty
+        }
+
+        It 'takes a failed +CGCONTRDP read for unknown too' {
+            $modem = Get-OnlineModem -Answers @{ 'AT+CGCONTRDP=1' = @('+CME ERROR: 0') }
+            $pass = & $script:connect $modem
+            $pass.Reason | Should -Be 'ContextUnknown'
+            Get-WriteCommand -Modem $modem | Should -BeNullOrEmpty
+        }
+
+        It 'never writes a definition over a context whose activation is <Name>' -ForEach @(
+            @{ Name = 'not known'; Activation = @('+CME ERROR: 100') }
+            @{ Name = 'active, while the registration is lost a moment'; Activation = @('+CGACT: 1,1', 'OK') }
+        ) {
+            $script:settings = (ConvertTo-AppSetting -InputObject @{ Apn = 'new.example' }).Settings
+            $modem = Get-OnlineModem -Answers @{
+                'AT+CEREG?;+C5GREG?' = @('+CEREG: 0,2', '+C5GREG: 0,2', 'OK')
+                'AT+CGACT?'          = $Activation
+            }
+            $pass = & $script:connect $modem
+            $pass.Reason | Should -Be 'Searching'
+            Get-WriteCommand -Modem $modem | Should -BeNullOrEmpty
+        }
+
+        It 'stops at a disabled adapter, blocked, and leaves it alone' {
+            $script:adapterState = $script:freshAdapter | Select-Object -Property *
+            $script:adapterState.Status = 'Disabled'
+            $pass = & $script:connect (Get-OnlineModem)
+            $pass.State | Should -Be 'DataActive'
+            $pass.Reason | Should -Be 'AdapterDisabled'
+            $pass.Blocked | Should -BeTrue
+            Should -Invoke -ModuleName FibocomFm350 Set-ModemAdapterConfiguration -Times 0 -Exactly
+        }
+
+        It 'takes a modem error on +CPIN? for an unknown SIM state, not a blocked one' {
+            $pass = & $script:connect (Get-OnlineModem -Answers @{ 'AT+CPIN?' = @('+CME ERROR: 100') })
+            $pass.State | Should -Be 'Identified'
+            $pass.Reason | Should -Be 'SimUnknown'
+            $pass.Blocked | Should -BeFalse
+        }
+
         It 'takes the DNS servers from +GTDNS when the context has none' {
             $script:adapterState = $script:freshAdapter
             $modem = Get-OnlineModem -Answers @{
@@ -549,6 +632,29 @@ Describe 'Disable-SimPin' {
         $script:modem.SetAnswer($Command, $Answer)
         (Disable-SimPin -Channel $script:channel -Pin $script:pin -Confirm:$false).Result | Should -Be $Result
         $script:modem.Received | Should -Not -Contain 'AT+CLCK="SC",0,"1234"'
+    }
+
+    It 'sends nothing when the PIN request cannot be read' {
+        $script:modem.SetAnswer('AT+CLCK="SC",2', @('+CME ERROR: 100'))
+        (Disable-SimPin -Channel $script:channel -Pin $script:pin -Confirm:$false).Result | Should -Be 'Failed'
+        $script:modem.Received | Should -Not -Contain 'AT+CLCK="SC",0,"1234"'
+    }
+
+    It 'refuses a PIN that is not 4 to 8 digits, without sending it or showing it: <Name>' -ForEach @(
+        @{ Name = 'a letter outside ASCII'; Pin = "98$([char]0x00E9)7" }
+        @{ Name = 'a double quote'; Pin = '12"34' }
+        @{ Name = 'too short'; Pin = '987' }
+    ) {
+        $message = $null
+        try {
+            [void](Disable-SimPin -Channel $script:channel -Pin (ConvertTo-TestSecret $Pin) -Confirm:$false -ErrorAction Stop)
+        }
+        catch {
+            $message = $_.Exception.Message
+        }
+        $message | Should -Not -BeNullOrEmpty
+        $message | Should -Not -Match ([regex]::Escape($Pin))
+        @($script:modem.Received | Where-Object { $_ -like 'AT+CLCK*' }).Count | Should -Be 0
     }
 
     It 'sends nothing without a confirmation' {
