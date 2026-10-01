@@ -1,3 +1,3 @@
-# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06; no SIM: CME 100 (unknown).
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06; the test form answers CME 100 (unknown), with or without a SIM - the read form works (cgauth.read.txt).
 AT+CGAUTH=?
 +CME ERROR: 100
