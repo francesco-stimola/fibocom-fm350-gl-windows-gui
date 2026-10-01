@@ -34,8 +34,10 @@ changed the code or the design:
 - **`+GTACT` is persistent on this firmware**, against the manual: it survives `+CFUN=15` and a
   power cycle. LTE and NR codes go in one write, the lists are per RAT, and n77 drops out of the
   list by itself after a registration attempt (cause unknown, carried by M5).
-- **No working route for APN credentials**: `+CGAUTH=?` and `+EIAAPN?` both answer
-  `+CME ERROR: 100` — an open decision in the ROADMAP.
+- **APN credentials go through `+CGAUTH`**, though the manual doesn't list it and its test form
+  answers `+CME ERROR: 100`: the read form works. `+EIAAPN`, the documented alternative that
+  writes persistent state, is absent from this firmware. Probing a command by its test form alone
+  is not enough: the read form decides.
 - Carried forward on purpose: the app's own data context, DHCP and context persistence go to M2,
   which builds that sequence; NSA, SA and LTE-A observations to M5; `+CFUN=1,1` to M4; the eSIM
   questions to a module with an eUICC (this one has none).

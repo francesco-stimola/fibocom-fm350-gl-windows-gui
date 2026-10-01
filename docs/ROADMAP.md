@@ -63,7 +63,7 @@ Everything needed to talk to the modem and understand its answers — no connect
 - [ ] Network configuration of the modem's adapter (address, mask, gateway, DNS) in the active store.
 - [ ] Startup reconciliation: attach to an existing connection without re-dialing.
 - [ ] Redacted rolling log.
-- [ ] On the device: `AT-COMMANDS.md` §7 questions 5, 6 and 12 — the app's own data context, DHCP on the adapter, whether a written context survives a power cycle — and the NR leg of an EN-DC cell under traffic (questions 3, 4).
+- [ ] On the device: `AT-COMMANDS.md` §7 questions 5, 6 and 12 — the app's own data context, DHCP on the adapter, whether a written context survives a power cycle, the `+CGAUTH` set form for APN credentials on that context — and the NR leg of an EN-DC cell under traffic (questions 3, 4).
 
 <a id="m3"></a>
 ## M3 — Tray app
@@ -153,11 +153,7 @@ data is left (design: ARCHITECTURE → *SMS, USSD and data usage*; facts: `AT-CO
 Decisions that change what happens next and are the maintainer's to take. Remove a line when it is
 decided, and record the decision in `DEVLOG.md`.
 
-- **APN credentials (M2 settings).** On firmware `81600.0000.00.29.22.06` neither `AT+CGAUTH=?`
-  nor `AT+EIAAPN?` answers (`AT-COMMANDS.md` §3), so the setting "optional APN credentials" has no
-  known route. Options: (1) drop it from M2 — most APNs need none — and say so in the README;
-  (2) probe the set form `AT+EIAAPN=…` on the device, which writes persistent modem state;
-  (3) keep the setting and report it as unsupported on this firmware.
+*None open.*
 
 ---
 
