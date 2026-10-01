@@ -1,0 +1,3 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06; no context defined (unchanged by AT+CFUN=15).
+AT+CGDCONT?
+OK

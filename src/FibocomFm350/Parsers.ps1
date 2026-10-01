@@ -219,7 +219,9 @@ function ConvertFrom-AtOperator {
     .DESCRIPTION
         '+COPS: <mode>[,<format>,<oper>[,<AcT>]]'. Returns Mode, Automatic ($true for mode 0),
         Format, Operator ($null when not registered), AcT and Technology ('LTE', 'EN-DC' for 5G
-        NSA, 'NR-SA' for 5G SA, ...: the 27.007 table). Returns $null without a '+COPS:' line.
+        NSA, 'NR-SA' for 5G SA, ...: the 27.007 table). Format, AcT and Technology are $null
+        without an operator, whatever the answer carries in their place. Returns $null without a
+        '+COPS:' line.
     .EXAMPLE
         ConvertFrom-AtOperator -Lines '+COPS: 0,0,"Operator",13'
     #>
@@ -239,13 +241,16 @@ function ConvertFrom-AtOperator {
     $arguments = @(Split-AtArgument -Text $text)
     $value = { param($i) if ($arguments.Count -gt $i -and $arguments[$i].Value) { $arguments[$i].Value } }
     $mode = ConvertTo-AtInteger -Text (& $value 0)
-    $act = ConvertTo-AtInteger -Text (& $value 3)
+    # Format and access technology describe the operator: without one they mean nothing (the
+    # FM350 answers '+COPS:0,255,"",0' when not registered).
+    $operator = & $value 2
+    $act = if ($operator) { ConvertTo-AtInteger -Text (& $value 3) } else { $null }
 
     [pscustomobject]@{
         Mode       = $mode
         Automatic  = $mode -eq 0
-        Format     = ConvertTo-AtInteger -Text (& $value 1)
-        Operator   = & $value 2
+        Format     = if ($operator) { ConvertTo-AtInteger -Text (& $value 1) } else { $null }
+        Operator   = $operator
         AcT        = $act
         Technology = if ($null -ne $act) { $script:AccessTechnologies[$act] } else { $null }
     }
@@ -304,8 +309,9 @@ function ConvertFrom-AtTemperature {
         Reads the module's temperature sensors from the answer to AT+GTSENRDTEMP.
     .DESCRIPTION
         One '+GTSENRDTEMP: <sensor>,<value>' line per sensor; the value is in thousandths of a
-        degree Celsius (AT-COMMANDS section 4: inferred, to be confirmed on the device). Returns
-        one object per sensor: Sensor, Name (the vendor's, or $null), Celsius.
+        degree Celsius (AT-COMMANDS section 4). A sensor the module doesn't have answers 0, so 0
+        gives Celsius $null. Returns one object per sensor: Sensor, Name (the vendor's, or $null),
+        Celsius.
     .EXAMPLE
         ConvertFrom-AtTemperature -Lines '+GTSENRDTEMP: 1,45000'
     #>
@@ -331,7 +337,7 @@ function ConvertFrom-AtTemperature {
         [pscustomobject]@{
             Sensor  = $sensor
             Name    = $script:TemperatureSensors[$sensor]
-            Celsius = $value / 1000
+            Celsius = if ($value -ne 0) { $value / 1000 } else { $null }
         }
     }
 }

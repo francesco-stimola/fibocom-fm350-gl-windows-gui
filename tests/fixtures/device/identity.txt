@@ -1,0 +1,7 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06; compound read; +CGMM carries one value.
+AT+CGMI?;+CGMM?;+GMR?;+GTPKGVER?
++CGMI: "Fibocom Wireless Inc."
++CGMM: "FM350-GL"
++GMR: "81600.0000.00.29.22.06"
++GTPKGVER: "81600.0000.00.29.22.06_5006.0000.065.006.048_E09"
+OK

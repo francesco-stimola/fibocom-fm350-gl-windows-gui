@@ -1,5 +1,6 @@
 BeforeAll {
     Import-Module "$PSScriptRoot/../src/FibocomFm350/FibocomFm350.psd1" -Force
+    . "$PSScriptRoot/FixtureAnswer.ps1"
 }
 
 AfterAll {
@@ -141,5 +142,34 @@ Describe 'Band code round trip' {
             }
         }
         $failures | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Band codes the device reports' {
+    BeforeAll {
+        # AT-COMMANDS section 5: the bands documented for the FM350-GL.
+        $script:documentedLte = 1, 2, 3, 4, 5, 7, 8, 12, 13, 14, 17, 18, 19, 20, 25, 26, 28, 29, 30, 32, 34, 38, 39, 40, 41, 42, 43, 46, 48, 66, 71
+        $script:documentedNr = 1, 2, 3, 5, 7, 8, 20, 25, 28, 30, 38, 40, 41, 48, 66, 71, 77, 78, 79
+    }
+
+    It 'decodes the supported lists of AT+GTACT=? to the documented LTE and NR bands' {
+        $line = (Get-FixtureAnswer -Name 'gtact.test.txt' -Folder device)[0]
+        # Groups: RATs, pref1, pref2, GSM, UMTS, LTE, CDMA, EVDO, NR.
+        $groups = @([regex]::Matches($line, '\(([^)]*)\)') | ForEach-Object { $_.Groups[1].Value })
+        $groups.Count | Should -Be 9
+        $lte = $groups[5] -split ',' | ConvertFrom-GtactBandCode
+        $nr = $groups[8] -split ',' | ConvertFrom-GtactBandCode
+        @($lte.Kind | Sort-Object -Unique) | Should -Be @('LTE')
+        @($nr.Kind | Sort-Object -Unique) | Should -Be @('NR')
+        $lte.Band | Should -Be $script:documentedLte
+        $nr.Band | Should -Be $script:documentedNr
+    }
+
+    It 'decodes AT+GTACT? in LTE-only mode, which lists every LTE band' {
+        $fields = ((Get-FixtureAnswer -Name 'gtact.lteonly.txt' -Folder device)[0] -replace '^\+GTACT:\s*', '') -split ','
+        $fields[0..2] | Should -Be @('2', '3', '3')
+        $bands = $fields | Select-Object -Skip 3 | ConvertFrom-GtactBandCode
+        @($bands.Kind | Sort-Object -Unique) | Should -Be @('LTE')
+        $bands.Band | Should -Be $script:documentedLte
     }
 }

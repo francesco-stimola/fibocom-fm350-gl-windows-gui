@@ -1,0 +1,4 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06; no SIM: nothing measured.
+AT+CESQ
++CESQ: 99,99,255,255,255,255,255,255,255
+OK

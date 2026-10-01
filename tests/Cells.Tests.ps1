@@ -178,3 +178,11 @@ Describe 'ConvertFrom-AtCarrierAggregation' {
         ConvertFrom-AtCarrierAggregation -Lines '', 'PCC:103,123,1300,100' | Should -HaveCount 1
     }
 }
+
+Describe 'Cells and carriers on the device without a SIM' {
+    It 'reads no cell from an empty +GTCCINFO: header and no carrier from a missing +GTCAINFO:' {
+        $lines = Get-FixtureAnswer -Name 'gtccinfo.nosim.txt' -Folder device
+        ConvertFrom-AtCellInfo -Lines $lines | Should -BeNullOrEmpty
+        ConvertFrom-AtCarrierAggregation -Lines $lines | Should -BeNullOrEmpty
+    }
+}

@@ -1,4 +1,5 @@
-# Status parsers, fed by documented fixtures played through the simulated modem and the channel.
+# Status parsers, fed by documented and captured fixtures played through the simulated modem and
+# the channel.
 
 BeforeAll {
     Import-Module "$PSScriptRoot/../src/FibocomFm350/FibocomFm350.psd1" -Force
@@ -29,6 +30,15 @@ Describe 'ConvertFrom-AtIdentity' {
         $identity.ModelShortName | Should -BeNullOrEmpty
         $identity.Manufacturer | Should -BeNullOrEmpty
     }
+
+    It 'reads the captured identity: one model value, +GMR: prefix' {
+        $identity = ConvertFrom-AtIdentity -Lines (Get-FixtureAnswer -Name 'identity.txt' -Folder device)
+        $identity.Manufacturer | Should -Be 'Fibocom Wireless Inc.'
+        $identity.Model | Should -Be 'FM350-GL'
+        $identity.ModelShortName | Should -BeNullOrEmpty
+        $identity.Firmware | Should -Be '81600.0000.00.29.22.06'
+        $identity.Package | Should -Be '81600.0000.00.29.22.06_5006.0000.065.006.048_E09'
+    }
 }
 
 Describe 'ConvertFrom-AtSimState' {
@@ -46,6 +56,13 @@ Describe 'ConvertFrom-AtSimState' {
 
     It 'gives nothing without a +CPIN: line' {
         ConvertFrom-AtSimState -Lines @() | Should -BeNullOrEmpty
+    }
+
+    It 'leaves a missing SIM to the error code: CME 10 on the device' {
+        $answer = Get-FixtureResult -Name 'cpin.nosim.txt' -Folder device
+        $answer.Status | Should -Be 'CmeError'
+        $answer.ErrorCode | Should -Be 10
+        ConvertFrom-AtSimState -Lines @($answer.Lines) | Should -BeNullOrEmpty
     }
 }
 
@@ -91,6 +108,17 @@ Describe 'ConvertFrom-AtRegistration' {
     ) {
         ConvertFrom-AtRegistration -Line $Line | Should -BeNullOrEmpty
     }
+
+    It 'reads the captured <Fixture> as not searching' -ForEach @(
+        @{ Fixture = 'cereg.nosim.txt'; Domain = 'EPS' }
+        # One value only: read as the state, which "not searching" makes right either way.
+        @{ Fixture = 'c5greg.nosim.txt'; Domain = '5GS' }
+    ) {
+        $registration = ConvertFrom-AtRegistration -Line (Get-FixtureAnswer -Name $Fixture -Folder device)[0]
+        $registration.Domain | Should -Be $Domain
+        $registration.State | Should -Be 'NotSearching'
+        $registration.Registered | Should -BeFalse
+    }
 }
 
 Describe 'ConvertFrom-AtOperator' {
@@ -115,6 +143,16 @@ Describe 'ConvertFrom-AtOperator' {
 
     It 'keeps a comma inside the operator name' {
         (ConvertFrom-AtOperator -Lines '+COPS: 1,0,"Op, Inc.",7').Operator | Should -Be 'Op, Inc.'
+    }
+
+    It 'reads no technology without an operator, as the device answers unregistered' {
+        $operator = ConvertFrom-AtOperator -Lines (Get-FixtureAnswer -Name 'cops.nosim.txt' -Folder device)
+        $operator.Mode | Should -Be 0
+        $operator.Automatic | Should -BeTrue
+        $operator.Operator | Should -BeNullOrEmpty
+        $operator.Format | Should -BeNullOrEmpty
+        $operator.AcT | Should -BeNullOrEmpty
+        $operator.Technology | Should -BeNullOrEmpty
     }
 }
 
@@ -143,6 +181,17 @@ Describe 'ConvertFrom-AtSignalQuality' {
 
     It 'gives no RSSI when it is not known' {
         (ConvertFrom-AtSignalQuality -Lines '+CSQ: 99,99').Rssi | Should -BeNullOrEmpty
+    }
+
+    It 'reads nothing from the device without a SIM (+CSQ with a space after the comma)' {
+        $lines = @(Get-FixtureAnswer -Name 'csq.nosim.txt' -Folder device) + @(Get-FixtureAnswer -Name 'cesq.nosim.txt' -Folder device)
+        $signal = ConvertFrom-AtSignalQuality -Lines $lines
+        $signal.Rssi | Should -BeNullOrEmpty
+        $signal.LteRsrp | Should -BeNullOrEmpty
+        $signal.LteRsrq | Should -BeNullOrEmpty
+        $signal.NrRsrp | Should -BeNullOrEmpty
+        $signal.NrRsrq | Should -BeNullOrEmpty
+        $signal.NrSinr | Should -BeNullOrEmpty
     }
 }
 
@@ -175,5 +224,12 @@ Describe 'ConvertFrom-AtTemperature' {
         $sensor = ConvertFrom-AtTemperature -Lines '+GTSENRDTEMP: 5,40000'
         $sensor.Name | Should -BeNullOrEmpty
         $sensor.Celsius | Should -Be 40
+    }
+
+    It 'reads the 23 sensors of the device, with no temperature where a sensor answers 0' {
+        $sensors = @(ConvertFrom-AtTemperature -Lines (Get-FixtureAnswer -Name 'gtsenrdtemp.all.txt' -Folder device))
+        $sensors.Sensor | Should -Be (1..23)
+        ($sensors | Where-Object Sensor -EQ 1).Celsius | Should -Be 35.839
+        ($sensors | Where-Object { $null -eq $_.Celsius }).Sensor | Should -Be @(17, 18)
     }
 }

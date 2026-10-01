@@ -1,0 +1,4 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06; no SIM, not searching.
+AT+CEREG?
++CEREG: 0,0
+OK
