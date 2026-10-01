@@ -84,6 +84,15 @@ function ConvertTo-AtInteger {
     if ([int]::TryParse($Text, [ref]$value)) { $value } else { $null }
 }
 
+function ConvertFrom-AtLocationField {
+    # A TAC, LAC or cell identity as reported, or $null when the modem fills it with its "not
+    # known" pattern - all F after leading zeros, or all zeros - as the FM350 does while searching
+    # and for neighbour cells (AT-COMMANDS section 3).
+    param([AllowEmptyString()] [string] $Text)
+
+    if ($Text -and $Text -notmatch '^(0*F+|0+)$') { $Text } else { $null }
+}
+
 function ConvertFrom-AtIdentity {
     <#
     .SYNOPSIS
@@ -163,9 +172,9 @@ function ConvertFrom-AtRegistration {
         the second: an unquoted number means the read form.
         Returns Domain ('CS', 'PS', 'EPS', '5GS'), Stat and State (27.007 names: 'Home',
         'Roaming', 'Searching', 'Denied', ...), Registered ($true for home or roaming, SMS-only
-        and CSFB-not-preferred included), Tac and CellId as reported (location data), AcT and
-        Technology, and RejectCause when the report carries one. Returns $null if the line is not
-        a registration report.
+        and CSFB-not-preferred included), Tac and CellId as reported (location data; $null for
+        the modem's "not known" pattern of F digits), AcT and Technology, and RejectCause when the
+        report carries one. Returns $null if the line is not a registration report.
     .EXAMPLE
         ConvertFrom-AtRegistration -Line '+CEREG: 2,1,"ABCD","0ABCDEF0",7'
     #>
@@ -203,8 +212,8 @@ function ConvertFrom-AtRegistration {
             Stat        = $stat
             State       = $script:RegistrationStates[$stat] ?? 'Unknown'
             Registered  = $stat -in 1, 5, 6, 7, 9, 10
-            Tac         = & $value 1
-            CellId      = & $value 2
+            Tac         = ConvertFrom-AtLocationField -Text (& $value 1)
+            CellId      = ConvertFrom-AtLocationField -Text (& $value 2)
             AcT         = $act
             Technology  = if ($null -ne $act) { $script:AccessTechnologies[$act] } else { $null }
             RejectCause = ConvertTo-AtInteger -Text (& $value $causeAt)

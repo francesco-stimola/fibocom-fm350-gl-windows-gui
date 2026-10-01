@@ -1,0 +1,4 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06, SIM in, LTE-only mode, registered; LTE only: NR fields 255; rxlev filled in.
+AT+CESQ
++CESQ: 28,99,255,255,14,44,255,255,255
+OK

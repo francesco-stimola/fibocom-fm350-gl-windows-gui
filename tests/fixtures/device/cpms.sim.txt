@@ -1,0 +1,4 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06, SIM in, LTE-only mode, registered; storage "MT", which AT+CPMS=? does not list.
+AT+CPMS?
++CPMS: "MT", 0, 70, "MT", 0, 70, "MT", 0, 70
+OK

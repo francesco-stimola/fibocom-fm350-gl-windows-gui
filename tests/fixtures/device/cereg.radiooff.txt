@@ -1,0 +1,6 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06, SIM in, registered on LTE; after AT+CFUN=4: state 4 (unknown), location not known, no operator.
+AT+CEREG?;+C5GREG?;+COPS?
++CEREG: 2,4,"FFFF","0FFFFFFF",0
++C5GREG: 2,4,"00FFFF","000FFFFFFF",0
++COPS:0,255,"",0
+OK

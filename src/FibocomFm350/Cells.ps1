@@ -35,6 +35,22 @@ function Get-AtBandName {
     }
 }
 
+function Get-AtArfcnBand {
+    # The band of a channel number, for a cell whose band the modem leaves out: the 3GPP tables
+    # (Arfcn.ps1). An NR channel that falls in several bands gives $null: no guessing.
+    param([string] $Technology, $Arfcn)
+
+    if ($null -eq $Arfcn) { return }
+    if ($Technology -eq 'LTE') {
+        $channel = ConvertFrom-Earfcn -Earfcn $Arfcn
+        if ($channel) { $channel.Name }
+    }
+    else {
+        $channel = ConvertFrom-NrArfcn -Arfcn $Arfcn
+        if ($channel -and @($channel.Bands).Count -eq 1) { @($channel.Bands)[0] }
+    }
+}
+
 function ConvertFrom-AtCellInfo {
     <#
     .SYNOPSIS
@@ -46,8 +62,10 @@ function ConvertFrom-AtCellInfo {
         bandwidth. Lines for other technologies (WCDMA) are skipped: the app manages LTE and NR.
 
         Returns one object per cell: Serving, Technology ('LTE' or 'NR'), Mcc, Mnc, Tac and
-        CellId as reported (location data: never logged), Arfcn, Pci, BandCode, Band ('B3',
-        'n78'), BandwidthMHz, and Sinr, Rsrp, Rsrq as ConvertFrom-MeasurementIndex objects
+        CellId as reported (location data: never logged; $null for the "not known" pattern of F
+        digits that neighbour lines carry), Arfcn, Pci, BandCode, Band ('B3', 'n78': from the
+        band code, or from the channel number when the line has none - for NR only when one band
+        contains it), BandwidthMHz, and Sinr, Rsrp, Rsrq as ConvertFrom-MeasurementIndex objects
         ($null when not reported).
     .EXAMPLE
         ConvertFrom-AtCellInfo -Lines '+GTCCINFO:', '1,4,001,01,ABCD,0ABCDEF0,1300,123,103,100,40,60,60,20'
@@ -98,18 +116,24 @@ function ConvertFrom-AtCellInfo {
             }
         }
         $bandCode = if ($at.Band -ge 0) { & $number $at.Band } else { $null }
+        $arfcn = & $number 6
+        # The device leaves the serving cell's band empty: the channel number tells it.
+        $band = Get-AtBandName -Code $bandCode
+        if (-not $band) {
+            $band = Get-AtArfcnBand -Technology $technology -Arfcn $arfcn
+        }
 
         [pscustomobject]@{
             Serving      = $serving
             Technology   = $technology
             Mcc          = & $text 2
             Mnc          = & $text 3
-            Tac          = & $text 4
-            CellId       = & $text 5
-            Arfcn        = & $number 6
+            Tac          = ConvertFrom-AtLocationField -Text (& $text 4)
+            CellId       = ConvertFrom-AtLocationField -Text (& $text 5)
+            Arfcn        = $arfcn
             Pci          = & $number 7
             BandCode     = $bandCode
-            Band         = Get-AtBandName -Code $bandCode
+            Band         = $band
             BandwidthMHz = if ($at.Bandwidth -ge 0) { ConvertFrom-AtBandwidthCode -Code (& $number $at.Bandwidth) } else { $null }
             Sinr         = & $measure $at.Sinr 'Sinr'
             Rsrp         = & $measure $at.Rsrp 'Rsrp'
@@ -125,12 +149,15 @@ function ConvertFrom-AtCarrierAggregation {
     .DESCRIPTION
         A 'PCC:' line for each technology's primary carrier and an 'SCC<n>:' (or 'SCC <n>:') line
         per secondary carrier. Fields are read from the start of the line: the tail changed
-        between firmware versions. The technology comes from the band code.
+        between firmware versions. A primary line of ten fields or more carries an uplink
+        bandwidth after the downlink one, as the device sends it; a shorter one is read as the
+        manual lays it out. The technology comes from the band code.
 
         Returns one object per carrier: Carrier ('PCC', 'SCC1', ...), Primary, Active (a primary
         always; a secondary when configured and activated), UplinkCa (secondaries), Technology,
-        BandCode, Band, Pci, Arfcn, DlBandwidthMHz, UlBandwidthMHz (secondaries), DlMimoLayers,
-        UlMimoLayers, DlModulation and UlModulation ('256QAM', ...; $null when unknown).
+        BandCode, Band, Pci, Arfcn, DlBandwidthMHz, UlBandwidthMHz ($null when the line has
+        none), DlMimoLayers, UlMimoLayers, DlModulation and UlModulation ('256QAM', ...; $null
+        when unknown).
     .EXAMPLE
         ConvertFrom-AtCarrierAggregation -Lines 'PCC:103,123,1300,100,2,1,4,3,60'
     #>
@@ -153,8 +180,12 @@ function ConvertFrom-AtCarrierAggregation {
         $number = { param($i) if ($i -ge 0 -and $fields.Count -gt $i) { ConvertTo-AtInteger -Text $fields[$i] } }
 
         # Positions (0-based): a secondary line starts with <scell_state>,<ul_configured>, and has
-        # an uplink bandwidth after the downlink one.
-        $at = if ($primary) {
+        # an uplink bandwidth after the downlink one. So does a primary line of ten fields or more,
+        # as the device sends it; a shorter one follows the manual (AT-COMMANDS section 4.2).
+        $at = if ($primary -and $fields.Count -ge 10) {
+            @{ Band = 0; Pci = 1; Arfcn = 2; DlBw = 3; UlBw = 4; DlMimo = 5; UlMimo = 6; DlMod = 7; UlMod = 8 }
+        }
+        elseif ($primary) {
             @{ Band = 0; Pci = 1; Arfcn = 2; DlBw = 3; UlBw = -1; DlMimo = 4; UlMimo = 5; DlMod = 6; UlMod = 7 }
         }
         else {

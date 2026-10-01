@@ -37,10 +37,11 @@ Describe 'ConvertFrom-AtCellInfo' {
             $serving.Rsrq.Value | Should -Be -10
         }
 
-        It 'reads an LTE neighbour: bandwidth, no band, no SINR' {
+        It 'reads an LTE neighbour: bandwidth, no band code, no SINR' {
             $neighbour = $script:cells[1]
             $neighbour.Pci | Should -Be 45
-            $neighbour.Band | Should -BeNullOrEmpty
+            $neighbour.BandCode | Should -BeNullOrEmpty
+            $neighbour.Band | Should -Be 'B3' -Because 'the band comes from the channel number'
             $neighbour.BandwidthMHz | Should -Be 20
             $neighbour.Sinr | Should -BeNullOrEmpty
             $neighbour.Rsrp.Value | Should -Be -86
@@ -88,13 +89,13 @@ Describe 'ConvertFrom-AtCellInfo' {
         $cells[0].Technology | Should -Be 'LTE'
     }
 
-    It 'survives band code <Code>' -ForEach @(
+    It 'survives band code <Code>, falling back on the channel number' -ForEach @(
         @{ Code = '-1' }
         @{ Code = '1000000000' }
         @{ Code = '2147483647' }
     ) {
         $cell = ConvertFrom-AtCellInfo -Lines "1,4,001,01,ABCD,0ABCDEF0,1300,123,$Code,100,40,60,60,20"
-        $cell.Band | Should -BeNullOrEmpty
+        $cell.Band | Should -Be 'B3'
         $cell.Rsrp.Value | Should -Be -81
     }
 
@@ -176,6 +177,86 @@ Describe 'ConvertFrom-AtCarrierAggregation' {
 
     It 'accepts empty lines' {
         ConvertFrom-AtCarrierAggregation -Lines '', 'PCC:103,123,1300,100' | Should -HaveCount 1
+    }
+}
+
+Describe 'Cells on the device, LTE' {
+    BeforeAll {
+        $script:cells = @(ConvertFrom-AtCellInfo -Lines (Get-FixtureAnswer -Name 'gtccinfo.lte.txt' -Folder device))
+    }
+
+    It 'reads the serving cell, whose band comes from its channel number' {
+        $serving = $script:cells[0]
+        $serving.Serving | Should -BeTrue
+        $serving.Technology | Should -Be 'LTE'
+        $serving.Mcc | Should -Be '001'
+        $serving.Tac | Should -Be 'ABCD'
+        $serving.CellId | Should -Be '00ABCDEF0'
+        $serving.Arfcn | Should -Be 1850
+        $serving.BandCode | Should -BeNullOrEmpty
+        $serving.Band | Should -Be 'B3'
+        $serving.BandwidthMHz | Should -BeNullOrEmpty
+        $serving.Sinr.Value | Should -Be 0.5
+        $serving.Rsrp.Value | Should -Be -97
+        $serving.Rsrq.Value | Should -Be -14
+    }
+
+    It 'reads nine neighbours with no location, each band from its channel number' {
+        $neighbours = @($script:cells | Where-Object { -not $_.Serving })
+        $neighbours.Count | Should -Be 9
+        @($neighbours.Tac | Where-Object { $_ }) | Should -BeNullOrEmpty
+        @($neighbours.CellId | Where-Object { $_ }) | Should -BeNullOrEmpty
+        @($neighbours.Mcc | Where-Object { $_ }) | Should -BeNullOrEmpty
+        $neighbours.Band | Should -Be @('B20', 'B20', 'B3', 'B1', 'B28', 'B7', 'B7', 'B1', 'B28')
+        $neighbours[0].Rsrp.Value | Should -Be -86
+        $neighbours[0].Rsrq.Value | Should -Be -12
+    }
+}
+
+Describe 'Cells and carrier on the device while connected' {
+    BeforeAll {
+        $script:lines = Get-FixtureAnswer -Name 'gtccinfo.connected.txt' -Folder device
+    }
+
+    It 'reads the serving cell with the band and bandwidth it reports when connected' {
+        $serving = @(ConvertFrom-AtCellInfo -Lines $script:lines)[0]
+        $serving.BandCode | Should -Be 103
+        $serving.Band | Should -Be 'B3'
+        $serving.BandwidthMHz | Should -Be 20
+    }
+
+    It 'leaves out a neighbour RSRQ index beyond the documented range' {
+        $neighbour = @(ConvertFrom-AtCellInfo -Lines $script:lines)[1]
+        $neighbour.Rsrp.Value | Should -Be -99
+        $neighbour.Rsrq | Should -BeNullOrEmpty
+    }
+
+    It 'reads a primary carrier of ten fields, with the uplink bandwidth after the downlink one' {
+        $carrier = ConvertFrom-AtCarrierAggregation -Lines $script:lines
+        $carrier.Carrier | Should -Be 'PCC'
+        $carrier.Band | Should -Be 'B3'
+        $carrier.Pci | Should -Be 123
+        $carrier.Arfcn | Should -Be 1850
+        $carrier.DlBandwidthMHz | Should -Be 20
+        $carrier.UlBandwidthMHz | Should -Be 20
+        $carrier.DlMimoLayers | Should -Be 1
+        $carrier.UlMimoLayers | Should -Be 1
+        $carrier.DlModulation | Should -Be '16QAM'
+        $carrier.UlModulation | Should -Be 'QPSK'
+    }
+}
+
+Describe 'A band from the channel number' {
+    It 'is left out for an NR channel that two bands share' {
+        # NR-ARFCN 632448 (3486.72 MHz) lies in both n77 and n78.
+        $cell = ConvertFrom-AtCellInfo -Lines '1,9,001,01,00ABCD,000ABCDEF0,632448,123,,,40,60,60,20'
+        $cell.Band | Should -BeNullOrEmpty
+    }
+
+    It 'is taken from the band code when the line has one' {
+        # Band code 120 (B20) on an EARFCN of band 3: the modem's word wins.
+        $cell = ConvertFrom-AtCellInfo -Lines '1,4,001,01,ABCD,0ABCDEF0,1850,123,120,50,1,44,44,12'
+        $cell.Band | Should -Be 'B20'
     }
 }
 

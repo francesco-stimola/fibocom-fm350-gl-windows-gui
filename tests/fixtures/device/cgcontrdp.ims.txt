@@ -1,0 +1,5 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06, SIM in, LTE-only mode, registered; the attach bearer, on the IMS APN: an IPv4 line, then an IPv6 one; addresses replaced by documentation ones, operator by 001/01.
+AT+CGCONTRDP
++CGCONTRDP: 0,5,"ims.mnc001.mcc001.gprs","","","192.0.2.53","","","",0,,1500,,,,,,,,,,,,0
++CGCONTRDP: 0,5,"ims.mnc001.mcc001.gprs","","","","","32.1.13.184.0.0.0.0.0.0.0.0.0.0.0.1","32.1.13.184.0.0.0.0.0.0.0.0.0.0.0.1",0,,1500,,,,,,,,,,,,0
+OK

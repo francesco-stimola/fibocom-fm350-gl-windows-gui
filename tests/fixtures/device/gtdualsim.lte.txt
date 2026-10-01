@@ -1,0 +1,4 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06, SIM in, LTE-only mode, registered; service "NR" with NR disabled; a blank before the colon.
+AT+GTDUALSIM?
++GTDUALSIM : 0, "SUB1", "NR"
+OK

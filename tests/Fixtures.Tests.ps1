@@ -28,11 +28,12 @@ BeforeAll {
         if ($Line -match '^\s*\+CFSN\s*:\s*"([^"]*)"' -and $Matches[1] -notin $script:fakes.SerialNumbers) {
             "serial number '$($Matches[1])'"
         }
-        # Registration reports: every quoted hex field is a TAC or a cell identity.
+        # Registration reports: every quoted hex field is location data (TAC, cell identity, RAC).
         if ($Line -match '^\+C(5G|E|G)?REG:') {
             foreach ($match in [regex]::Matches($Line, '"([0-9A-Fa-f]+)"')) {
-                if ($match.Groups[1].Value -notin ($script:fakes.Tac + $script:fakes.CellId)) {
-                    "location field '$($match.Groups[1].Value)'"
+                $value = $match.Groups[1].Value
+                if ($value -notin ($script:fakes.Tac + $script:fakes.CellId) -and $value -notmatch $script:fakes.LocationNotKnown) {
+                    "location field '$value'"
                 }
             }
         }
@@ -40,10 +41,10 @@ BeforeAll {
         if ($Line -match '^[12],\d+,') {
             $fields = $Line.Split(',')
             if ($fields.Count -ge 6) {
-                if ($fields[4] -notin $script:fakes.Tac) {
+                if ($fields[4] -notin $script:fakes.Tac -and $fields[4] -notmatch $script:fakes.LocationNotKnown) {
                     "TAC '$($fields[4])'"
                 }
-                if ($fields[5] -notin $script:fakes.CellId) {
+                if ($fields[5] -notin $script:fakes.CellId -and $fields[5] -notmatch $script:fakes.LocationNotKnown) {
                     "cell identity '$($fields[5])'"
                 }
             }
@@ -103,6 +104,8 @@ Describe 'The identifier check itself' {
         @{ Name = 'a generated PnP instance'; Line = '"InstanceId": "USB\\VID_0E8D&PID_7127\\7&2a3b4c5d&0&1",' }
         @{ Name = 'a USB serial number in a PnP instance'; Line = '"Parent": "USB\\VID_0E8D&PID_7127\\A1B2C3D4E5",' }
         @{ Name = 'a real container ID'; Line = '"ContainerId": "{3f2504e0-4f89-11d3-9a0c-0305e82c3301}",' }
+        @{ Name = 'a real nine-digit cell identity in +CREG'; Line = '+CREG: 2,6,"ABCD","001C2D3E4",13' }
+        @{ Name = 'a real neighbour TAC in +GTCCINFO'; Line = '2,4,,,5A1F,00FFFFFFF,6400,100,,55,55,16' }
     ) {
         Find-UnredactedValue -Line $Line | Should -Not -BeNullOrEmpty
     }
@@ -116,6 +119,9 @@ Describe 'The identifier check itself' {
         @{ Name = 'a fake PnP instance'; Line = '"InstanceId": "USB\\VID_0E8D&PID_7127&MI_06\\8&00000000&0&0006",' }
         @{ Name = 'a hardware ID'; Line = '"USB\\VID_0E8D&PID_7127&REV_0001&MI_06",' }
         @{ Name = 'a fake container ID'; Line = '"ContainerId": "{00000000-0000-0000-0000-000000000001}",' }
+        @{ Name = 'location not known in +CREG'; Line = '+CREG: 2,"FFFF","00FFFFFFF",0' }
+        @{ Name = 'location not known in a +GTCCINFO neighbour'; Line = '2,4,,,FFFF,00FFFFFFF,6400,100,,55,55,16' }
+        @{ Name = 'padded fakes in +C5GREG'; Line = '+C5GREG: 2,1,"00ABCD","000ABCDEF0",13' }
     ) {
         Find-UnredactedValue -Line $Line | Should -BeNullOrEmpty
     }

@@ -1,0 +1,4 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06, SIM in, registered on LTE; after AT+GTACT=20,6,3,103,120,5078: LTE and NR codes in one write, the UMTS list kept.
+AT+GTACT?
++GTACT: 20,6,3,1,2,4,5,8,103,120,5078
+OK

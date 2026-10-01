@@ -109,6 +109,41 @@ Describe 'ConvertFrom-AtRegistration' {
         ConvertFrom-AtRegistration -Line $Line | Should -BeNullOrEmpty
     }
 
+    It 'reads the captured registration <Fixture> on LTE, location padded per domain' -ForEach @(
+        @{ Fixture = 'creg.lte.txt'; Domain = 'CS'; State = 'HomeSmsOnly'; Tac = 'ABCD'; CellId = '00ABCDEF0' }
+        @{ Fixture = 'cgreg.lte.txt'; Domain = 'PS'; State = 'Home'; Tac = 'ABCD'; CellId = '0ABCDEF0' }
+        @{ Fixture = 'cereg.lte.txt'; Domain = 'EPS'; State = 'Home'; Tac = 'ABCD'; CellId = '0ABCDEF0' }
+        # The FM350 reports the EPS registration in the 5GS domain too, NR disabled or not.
+        @{ Fixture = 'c5greg.lte.txt'; Domain = '5GS'; State = 'Home'; Tac = '00ABCD'; CellId = '000ABCDEF0' }
+    ) {
+        $registration = ConvertFrom-AtRegistration -Line (Get-FixtureAnswer -Name $Fixture -Folder device)[0]
+        $registration.Domain | Should -Be $Domain
+        $registration.State | Should -Be $State
+        $registration.Registered | Should -BeTrue
+        $registration.Tac | Should -Be $Tac
+        $registration.CellId | Should -Be $CellId
+        $registration.AcT | Should -Be 13
+    }
+
+    It 'reads the radio switched off (AT+CFUN=4) as state 4, unknown, with no location' {
+        $lines = Get-FixtureAnswer -Name 'cereg.radiooff.txt' -Folder device
+        $registrations = @($lines | ConvertFrom-AtRegistration)
+        $registrations.Domain | Should -Be @('EPS', '5GS')
+        $registrations.State | Should -Be @('Unknown', 'Unknown')
+        $registrations.Registered | Should -Be @($false, $false)
+        @($registrations.Tac | Where-Object { $_ }) | Should -BeNullOrEmpty
+        (ConvertFrom-AtOperator -Lines $lines).Operator | Should -BeNullOrEmpty
+    }
+
+    It 'reads no location from the not-known pattern of a search: <Line>' -ForEach @(
+        @{ Line = '+CREG: 2,"FFFF","00FFFFFFF",0' }
+        @{ Line = '+C5GREG: 0,"000000","000FFFFFFF",0' }
+    ) {
+        $registration = ConvertFrom-AtRegistration -Line $Line
+        $registration.Tac | Should -BeNullOrEmpty
+        $registration.CellId | Should -BeNullOrEmpty
+    }
+
     It 'reads the captured <Fixture> as not searching' -ForEach @(
         @{ Fixture = 'cereg.nosim.txt'; Domain = 'EPS' }
         # One value only: read as the state, which "not searching" makes right either way.
@@ -143,6 +178,14 @@ Describe 'ConvertFrom-AtOperator' {
 
     It 'keeps a comma inside the operator name' {
         (ConvertFrom-AtOperator -Lines '+COPS: 1,0,"Op, Inc.",7').Operator | Should -Be 'Op, Inc.'
+    }
+
+    It 'reads the captured operator: numeric format, AcT 13' {
+        $operator = ConvertFrom-AtOperator -Lines (Get-FixtureAnswer -Name 'cops.lte.txt' -Folder device)
+        $operator.Format | Should -Be 2
+        $operator.Operator | Should -Be '00101'
+        $operator.AcT | Should -Be 13
+        $operator.Technology | Should -Be 'EN-DC'
     }
 
     It 'reads no technology without an operator, as the device answers unregistered' {
@@ -181,6 +224,16 @@ Describe 'ConvertFrom-AtSignalQuality' {
 
     It 'gives no RSSI when it is not known' {
         (ConvertFrom-AtSignalQuality -Lines '+CSQ: 99,99').Rssi | Should -BeNullOrEmpty
+    }
+
+    It 'reads the captured LTE signal: +CSQ and +CESQ, no NR' {
+        $lines = @(Get-FixtureAnswer -Name 'csq.lte.txt' -Folder device) + @(Get-FixtureAnswer -Name 'cesq.lte.txt' -Folder device)
+        $signal = ConvertFrom-AtSignalQuality -Lines $lines
+        $signal.Rssi.Value | Should -Be -91
+        $signal.LteRsrq.Value | Should -Be -13
+        $signal.LteRsrp.Value | Should -Be -97
+        $signal.NrRsrp | Should -BeNullOrEmpty
+        $signal.NrSinr | Should -BeNullOrEmpty
     }
 
     It 'reads nothing from the device without a SIM (+CSQ with a space after the comma)' {

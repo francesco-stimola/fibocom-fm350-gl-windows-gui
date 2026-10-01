@@ -20,9 +20,14 @@
     )
 
     # Location: the TAC and cell identity of registration reports (+CREG, +CGREG, +CEREG,
-    # +C5GREG) and of +GTCCINFO cell lines, in hexadecimal and in decimal.
-    Tac          = @('ABCD', '43981')
-    CellId       = @('0ABCDEF0', 'ABCDEF0', '180150000')
+    # +C5GREG) and of +GTCCINFO cell lines, in hexadecimal and in decimal, padded to the lengths
+    # the FM350 uses (TAC 4 or 6 digits, cell identity 8, 9 or 10).
+    Tac          = @('ABCD', '00ABCD', '43981')
+    CellId       = @('0ABCDEF0', 'ABCDEF0', '00ABCDEF0', '000ABCDEF0', '180150000')
+
+    # The modem's "not known" location pattern (all F after leading zeros, or all zeros) is no
+    # identifier and stays as captured.
+    LocationNotKnown = '^0*F*$'
 
     # PnP instance IDs (USB\<device ID>\<instance>): the instance part is the USB serial number,
     # one of SerialNumbers above, or a Windows-generated '<n>&<hash>&<n>&<port>' with this hash.

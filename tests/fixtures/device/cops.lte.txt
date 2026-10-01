@@ -1,0 +1,4 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06, SIM in, LTE-only mode, registered; numeric format by default; AcT 13 with NR disabled; operator replaced by 00101.
+AT+COPS?
++COPS:0,2,"00101",13
+OK

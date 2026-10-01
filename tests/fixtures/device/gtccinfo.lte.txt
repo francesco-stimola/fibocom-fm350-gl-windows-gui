@@ -1,0 +1,14 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06, SIM in, LTE-only mode, registered; LTE serving cell without band or bandwidth, nine neighbours with TAC and cell identity not known; serving location replaced by fakes, PCIs invented, operator replaced by 001/01.
+AT+GTCCINFO?
++GTCCINFO:
+1,4,001,01,ABCD,00ABCDEF0,1850,123,,,1,44,44,12
+2,4,,,FFFF,00FFFFFFF,6400,100,,55,55,16
+2,4,,,FFFF,00FFFFFFF,6400,107,,53,53,15
+2,4,,,FFFF,00FFFFFFF,1850,114,,42,42,13
+2,4,,,FFFF,00FFFFFFF,525,121,,41,41,18
+2,4,,,FFFF,00FFFFFFF,9460,128,,38,38,10
+2,4,,,FFFF,00FFFFFFF,3025,135,,36,36,9
+2,4,,,FFFF,00FFFFFFF,3025,142,,34,34,4
+2,4,,,FFFF,00FFFFFFF,525,149,,34,34,2
+2,4,,,FFFF,00FFFFFFF,9460,156,,34,34,1
+OK

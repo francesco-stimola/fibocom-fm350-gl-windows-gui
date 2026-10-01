@@ -1,0 +1,8 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06, SIM in, registered on LTE; RRC connected: the serving line carries band and bandwidth, +GTCAINFO a primary carrier of ten fields; location replaced by fakes, PCIs invented, operator replaced by 001/01.
+AT+GTCCINFO?;+GTCAINFO?
++GTCCINFO:
+1,4,001,01,ABCD,00ABCDEF0,1850,123,103,100,1,44,44,12
+2,4,,,FFFF,00FFFFFFF,1850,100,,42,42,82
++GTCAINFO:
+PCC:103,123,1850,100,100,1,1,2,1,-96
+OK

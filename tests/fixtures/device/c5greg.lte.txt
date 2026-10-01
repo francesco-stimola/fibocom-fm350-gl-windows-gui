@@ -1,0 +1,4 @@
+# Source: captured 2026-10-01, FM350-GL firmware 81600.0000.00.29.22.06, SIM in, LTE-only mode, registered; location fields replaced by fakes of the same length.
+AT+C5GREG?
++C5GREG: 2,1,"00ABCD","000ABCDEF0",13
+OK

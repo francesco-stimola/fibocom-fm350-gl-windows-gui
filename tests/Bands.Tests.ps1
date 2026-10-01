@@ -165,6 +165,20 @@ Describe 'Band codes the device reports' {
         $nr.Band | Should -Be $script:documentedNr
     }
 
+    It 'decodes <Fixture>: <Case>' -ForEach @(
+        @{ Fixture = 'gtact.combined.txt'; Case = 'LTE and NR codes written together'; Lte = @(3, 20); Nr = @(78) }
+        @{ Fixture = 'gtact.ltefull-n78.txt'; Case = 'every LTE code written, NR kept on n78'; Lte = $null; Nr = @(78) }
+        @{ Fixture = 'gtact.auto.txt'; Case = 'automatic, every NR band but n77'; Lte = $null; Nr = @(1, 2, 3, 5, 7, 8, 20, 25, 28, 30, 38, 40, 41, 48, 66, 71, 78, 79) }
+    ) {
+        $fields = ((Get-FixtureAnswer -Name $Fixture -Folder device)[0] -replace '^\+GTACT:\s*', '') -split ','
+        $fields[0..2] | Should -Be @('20', '6', '3')
+        $bands = $fields | Select-Object -Skip 3 | ConvertFrom-GtactBandCode
+        # UMTS codes 1-10 are kept as Unknown, with their raw value (AT-COMMANDS section 5).
+        ($bands | Where-Object Kind -EQ 'Unknown').Code | Should -Be @(1, 2, 4, 5, 8)
+        ($bands | Where-Object Kind -EQ 'LTE').Band | Should -Be $(if ($Lte) { $Lte } else { $script:documentedLte })
+        ($bands | Where-Object Kind -EQ 'NR').Band | Should -Be $Nr
+    }
+
     It 'decodes AT+GTACT? in LTE-only mode, which lists every LTE band' {
         $fields = ((Get-FixtureAnswer -Name 'gtact.lteonly.txt' -Folder device)[0] -replace '^\+GTACT:\s*', '') -split ','
         $fields[0..2] | Should -Be @('2', '3', '3')
