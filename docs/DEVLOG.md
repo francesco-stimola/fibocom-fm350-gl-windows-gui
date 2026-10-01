@@ -4,6 +4,55 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-01 — M2 code-complete: the connection, proven on the simulated modem
+
+Everything in M2 that doesn't need the device is built and tested; the device session remains.
+What it is, in ARCHITECTURE → *Connection state machine*, *SIM PIN*, *FCC lock*, *Network
+configuration*, *Settings and logs*. The decisions taken while building it:
+- **A pass, not a script.** `Invoke-ModemConnect` observes, lets the pure state machine pick the
+  first missing step, runs it, observes again — and never runs a step twice in one pass. Startup
+  reconciliation is the same pass: on a connection that is up it changes nothing, which a test
+  proves by counting the commands that write. Opening the port and the cadence between passes are
+  the worker's (M3).
+- **Blocked versus waiting.** When there is no step to take, the state machine says why, and
+  whether it is out of the app's reach (no device or driver, a SIM waiting for the user, an FCC
+  lock, no adapter): M4 escalates none of those.
+- **The app's context is context 1**, beside the modem's own attach context 0. A context that is
+  active but differs from the settings is left alone: settings apply at the next connect.
+- **SIM PIN**: the attempt is written down before `AT+CPIN` is sent, so a lost answer is never
+  followed by a second one; a SIM whose ICCID can't be read is sent nothing; the PIN file keeps a
+  SHA-256 of the ICCID, encrypted, never the ICCID itself.
+- **The FCC diagnosis needs no time limit.** The vendor manual documents `+GTFCCEFFSTATUS` as
+  *effective mode, unlock status*, and one locked module was found on record answering `2`, `0`,
+  `2,0` with its radio refused (`AT-COMMANDS.md` §4). So "locked" is a documented value on a modem
+  that doesn't register, not a registration that took too long — which also removes a threshold
+  the maintainer would have had to set. The rule stands: the values never stop a modem that
+  registers. The unlock reads the lock first and writes nothing to a module that isn't locked.
+- **Network**: an address the modem hands out by DHCP is kept; otherwise the adapter is configured
+  from `+CGCONTRDP`, in the active store, from a plan that is empty once the adapter is right.
+  IPv4 only: IPv6 is left to router advertisements, so `IPV6` alone is not offered as a PDP type.
+  DNS servers have no active store: they are rewritten at every connect.
+- **Settings are read leniently and written strictly**: a bad value falls back to its default
+  and is reported, so a damaged file never stops the app; a bad value is never written.
+- **The log redacts every line on its way in**, secrets included (`AT+CPIN=`, `AT+CLCK=`,
+  `+CGAUTH`); one file a day, 14 kept, 10 MB a day at most. Tests check that the PIN and the APN
+  password appear neither in a pass's result nor in the log.
+- **Timeouts come from the lookup by default**: `Invoke-AtCommand` without `-TimeoutMs` waits the
+  command's documented worst case; a compound line gets the sum.
+- **Reading PnP: one call per device, given the device object.** Given several devices,
+  `Get-PnpDeviceProperty -InputObject` sometimes labelled one device's properties with another's
+  instance ID — on the real modem the network function then lost its parent and showed up as a
+  second modem (once in 20 reads); one call per device was right in 200 reads and costs about
+  50 ms each, against a second each given an instance ID. The `Hardware` test that caught it reads
+  PnP only, so it can run while the app holds the AT port.
+- The simulated modem gained answers that change once a command has run (a context activated, a
+  SIM unlocked), which the connect-sequence tests are built on.
+
+FCC facts added to `AT-COMMANDS.md` §4 from the vendor manual §17 and three sources new to the
+project (`[4PDA]`, `[MM-FCC]`, `[FOUNDATA]`), facts only. One finding is the maintainer's to settle
+(ROADMAP → *Open decisions*): the unlock sequence that worked on our module includes a command
+the manual documents as answering `ERROR`.
+
 ## 2026-10-01 — Decided: detect the FCC lock, and offer to unlock it
 
 Modules taken from laptops are often locked by the laptop's maker and never search for networks;

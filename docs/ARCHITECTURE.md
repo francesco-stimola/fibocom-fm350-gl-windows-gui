@@ -127,10 +127,11 @@ Everything the worker says to the modem goes through one **AT channel** per port
   functions; the I/O loop around them is thin.
 - **Bounded.** Unterminated text is capped at 4096 characters and the unsolicited-code queue at
   1000 entries (oldest dropped): nothing grows without limit over weeks.
-- **Timeouts** are given per command by the caller: each command's worst-case duration as
-  documented by the vendor manual, never less than 3 s (margin for USB latency and a busy
-  modem). A stuck modem is noticed at most that long after the command — 3 min only for
-  `AT+COPS`, which is rare.
+- **Timeouts** come from a lookup (`Get-AtCommandTimeout`), unless the caller gives one: each
+  command's worst-case duration as documented by the vendor manual, never less than 3 s (margin
+  for USB latency and a busy modem); a compound line gets the sum of its commands'. A stuck modem
+  is noticed at most that long after the command — 3 min only for `AT+COPS`, which the connect
+  sequence reads only while the modem is not registered.
 
 ## Connection state machine (M2)
 
@@ -141,9 +142,22 @@ Everything the worker says to the modem goes through one **AT channel** per port
 ```
 
 - `Online` means: data context active with an address, the adapter configured with that address,
-  and the last data-path probe passed.
+  and the last data-path probe passed (the probe is M4's H7; until it runs, it counts as passed).
 - Each transition is decided by a **pure function** of (current state, observed facts) → next
-  state + actions. The worker loop only gathers facts and executes actions.
+  state + actions (`Resolve-ConnectionState`). The state is the furthest one the facts support;
+  the action is the first missing step: open the port, initialize the channel, enter the SIM PIN,
+  turn the radio on, select the operator automatically, define the app's context, activate it,
+  configure the adapter. With no step to take, a **reason** says why — searching, SIM busy, a PIN
+  the user must give, an FCC lock — and **blocked** says whether it is out of the app's reach: no
+  device or driver, a SIM waiting for the user, an FCC lock, no network adapter. No recovery step
+  changes those, so none is escalated (M4).
+- **A pass** (`Invoke-ModemConnect`) observes, takes the missing step, observes again, until no
+  step is left — and never runs the same step twice in one pass: a step that didn't take waits for
+  the next pass, on the worker's cadence. The observation reads only as far as the state allows
+  (no context reads before registration, no lock reads after it). The worker loop only gathers
+  facts and executes actions.
+- **The app's data context is context 1.** Context 0 is the modem's own attach context
+  (`AT-COMMANDS.md` §3).
 
 ### Startup reconciliation
 Before running any connect sequence, the worker **observes**: is the device present, is the SIM
@@ -153,7 +167,9 @@ steps are executed.
 
 The data context definition (`+CGDCONT`) is **persistent** on the FM350 (`AT-COMMANDS.md` §3): the
 connect sequence reads it and writes it only when the APN or PDP type differ from the settings.
-It is the APN the user configured, written once — not rewritten at every connect.
+It is the APN the user configured, written once — not rewritten at every connect. A context that
+is **active** but not as the settings say is left alone (the pass says `SettingsPending`): new
+settings apply at the next connect, never by breaking a connection that works.
 
 ### SIM PIN (M2; dialog in M3)
 A SIM whose PIN is enabled asks for it at every power-on, so a modem that restarts would stay
@@ -165,15 +181,20 @@ let it lock the SIM (facts: `AT-COMMANDS.md` §3):
 - **Storage.** The user types the PIN once in the main window. It is kept encrypted with DPAPI for
   the current user (`ConvertFrom-SecureString`, no extra dependency) in its own file next to the
   settings — the elevated task runs as the same user, so it can read it — together with the
-  identity of the SIM it belongs to (its ICCID, read with the SIM still locked), so another SIM is
-  never sent it. Never logged, never in a snapshot: the UI only learns whether a PIN is stored.
+  identity of the SIM it belongs to, so another SIM is never sent it: a SHA-256 of its ICCID (read
+  with the SIM still locked, `AT+ICCID`), itself encrypted — the ICCID is kept nowhere. A SIM that
+  can't be identified is sent nothing. Never logged, never in a snapshot: the UI only learns
+  whether a PIN is stored.
 - **One attempt per stored PIN.** The worker sends `AT+CPIN="<pin>"` at most once for a given
   stored PIN. Rejected, the PIN is deleted and the app asks for it again — never a second try:
   three wrong PINs lock the SIM behind its PUK. When the remaining attempts can be read and only
-  one is left, nothing is sent automatically.
-- **"Remove the PIN from the SIM"** (M3): `AT+CLCK="SC",0,"<pin>"` turns the SIM's PIN request off
-  for good, after a confirmation that says it changes the SIM, not the app. It spends an attempt
-  like any PIN entry and follows the same rule.
+  one is left, nothing is sent automatically. The attempt is **recorded before** `AT+CPIN` goes
+  out, and cleared once the SIM is seen ready: an answer that never arrives — a timeout, a crash —
+  is never followed by a second attempt; the user is asked instead.
+- **"Remove the PIN from the SIM"** (logic M2, dialog M3): `AT+CLCK="SC",0,"<pin>"` turns the
+  SIM's PIN request off for good, after a confirmation that says it changes the SIM, not the app.
+  It spends an attempt like any PIN entry and follows the same rules: only on a ready SIM whose PIN
+  request is on, never with one attempt left (`Disable-SimPin`).
 - The decision — SIM state, stored PIN and its SIM, attempts left, already tried → send, ask the
   user, report, continue — is a **pure function** with a matrix of tests. A locked SIM is not a
   fault the recovery ladder can fix: H3 failing for a PIN or PUK escalates nothing; the tray
@@ -183,19 +204,29 @@ let it lock the SIM (facts: `AT-COMMANDS.md` §3):
 FM350 modules taken from laptops are often locked by the laptop's maker: a locked module answers
 AT commands but never searches for networks (`AT-COMMANDS.md` §4). Left alone, the app would read
 that as a fault and climb the recovery ladder for nothing.
-- **Read, never assumed.** The connect sequence reads `+GTFCCLOCKMODE?;+GTFCCLOCKSTATE?;
-  +GTFCCEFFSTATUS?` before waiting for registration. Only the unlocked state of our firmware is
-  known (`0`, `0`, `0,1`), so the values **explain a registration that never starts; they never
-  stop a modem that registers**. The diagnosis — FCC values × registration state and how long it
-  has lasted → locked or not — is a pure function with a matrix of tests.
+- **Read, never assumed.** While the modem is not registered, the connect sequence reads
+  `+GTFCCLOCKMODE?;+GTFCCLOCKSTATE?;+GTFCCEFFSTATUS?`. The vendor documents the second value of
+  `+GTFCCEFFSTATUS` as the unlock status, `0` meaning locked; the one locked module on record
+  answered `2`, `0`, `2,0` and refused to turn its radio on, so it could never search (ours, unlocked:
+  `0`, `0`, `0,1`). The values **explain a registration that never starts; they never stop a modem
+  that registers.** The diagnosis (`Resolve-FccLock`) is a pure function: locked when not
+  registered and the unlock status says locked; unknown when the values can't be read; not locked
+  otherwise. A documented value, not a time limit, decides: no threshold to wait out.
 - **No escalation.** A modem diagnosed as locked is not reset by the recovery ladder: no reset
-  unlocks it. The tray and the window say what it is.
+  unlocks it. The connect sequence doesn't even try to turn its radio on. The tray and the window
+  say what it is.
 - **Unlock, only when asked.** For a modem diagnosed as locked the window offers *Unlock*, behind
   a confirmation that says it writes the modem's non-volatile memory and lifts a restriction the
   laptop's maker set for its radio certification, at the user's responsibility. The app then runs
   the known sequence once — `AT+GTFCCLOCKMODE=0`, `AT+GTFCCLOCKSTATE=0`, `AT+GTFCCEFFSTATUS=0,0`,
   `AT&W`, `AT+CFUN=1,1` — waits for the modem to come back on USB, reads the three values again
-  and reports. Never automatic, never repeated by itself.
+  and reports. Never automatic, never repeated by itself (`Invoke-FccUnlock`). It reads the lock
+  first and writes nothing unless the modem says it is locked; it stops at the first command that
+  fails, before the restart — except `AT+GTFCCEFFSTATUS=0,0`, which the vendor documents as
+  read-only (its set form answers `ERROR`): its error doesn't stop the sequence. The vendor's own
+  unlock is a challenge-response with a secret of the laptop's maker, which the app never
+  implements; no source shows a locked module taking the mode write without it, so on some
+  modules the unlock may be refused.
 - **Tested where it can be.** Our module is already unlocked, so the unlock path is proven against
   the simulated modem; on hardware it waits for a locked module, which is also how the locked
   values get captured.
@@ -263,15 +294,30 @@ Everything goes through `AT+GTACT` (spec: [`AT-COMMANDS.md` §5](AT-COMMANDS.md#
 - The modem's adapter is found through the device it belongs to: its `PnPDeviceID` is the
   instance ID of the modem's RNDIS function (`MI_00`, ARCHITECTURE → *Drivers*), never a name or
   an index.
-- Address, mask, gateway and DNS come from the modem (`+CGCONTRDP` where supported). The
-  configuration is written to the **active store only** (`-PolicyStore ActiveStore`): it vanishes
-  at reboot instead of lingering as stale persistent configuration.
-- DHCP versus static configuration: checked on the device in M2 (`AT-COMMANDS.md` §7, question 6).
+- **What the modem's DHCP gives is kept.** If the adapter got a usable address from the modem by
+  DHCP, the app leaves address, gateway and DNS to it. Otherwise it configures the adapter from
+  the context: address and mask from `+CGCONTRDP`, a default route through its gateway, its DNS
+  servers. Which of the two the FM350 does is checked on the device (`AT-COMMANDS.md` §7,
+  question 6).
+- **A plan, then the changes.** `Resolve-AdapterConfiguration` (pure) compares the adapter as read
+  with what the context and the settings ask, and lists only the changes needed — an adapter
+  already configured gives an empty plan — or says why it can't: no address, mask or gateway
+  reported. Leftovers of an earlier context (manual addresses, default routes) are removed.
+  `Set-ModemAdapterConfiguration` applies a plan (administrator rights) and stops at the first
+  change that fails; the next pass plans again.
+- The configuration is written to the **active store only** (`-PolicyStore ActiveStore`) —
+  addresses, routes, DHCP, metric: it vanishes at reboot instead of lingering as stale persistent
+  configuration. **DNS servers have no active store**: they are set on the adapter, and rewritten
+  at every connect.
+- **IPv4 only.** The app configures the context's IPv4 address; IPv6 on the adapter is left to the
+  network's router advertisements, if the modem relays them. A context of type `IPV6` alone is
+  therefore not offered in the settings.
 - **The modem is a backup by default** (decided 2026-10-01): its adapter gets a fixed interface
   metric of 500, far above the automatic metrics Windows gives wired and wireless adapters, so
   plugging it in never takes the traffic of a connection that is already up; alone, it carries
   everything. The RNDIS adapter reports 1 Gbps, so the automatic metric would put it level with
-  Ethernet. A setting makes the modem preferred instead (a low metric).
+  Ethernet. A setting makes the modem preferred instead (a low metric). The metric is set for
+  IPv4 and IPv6 alike.
 - **DNS: the operator's by default** — from `+CGCONTRDP`, else `+GTDNS`. The DNS override is a
   setting, empty by default.
 - Every change is **scoped to the modem's adapter** and idempotent.
@@ -304,8 +350,10 @@ whether it is safe to install.
    ID (the adapter's `PnPDeviceID`). Instance IDs are not remembered across runs: the FM350's is
    generated from the USB port it sits in. The classification is a pure function
    (`Resolve-ModemUsbDevice`) over the PnP records; reading them is the thin part around it, in
-   the worker: one `Get-PnpDeviceProperty` call per device with every key, since each call costs
-   about a second whatever it reads, plus the COM port name from the device's registry parameters.
+   the worker (`Get-ModemPnpRecord`, M2): one `Get-PnpDeviceProperty` call per device with every
+   key, given the device object — about 50 ms; given an instance ID, about a second — plus the COM
+   port name from the device's registry parameters. Never several devices in one call: the cmdlet
+   then sometimes labels one device's properties with another's instance ID.
 2. **Guide.** A dialog explains that the project does not distribute the driver, shows where a
    known copy is published — a page pinned to a fixed commit, taken from the known-fingerprints
    manifest — and says plainly that it is a third party's copy of MediaTek's driver. Two actions:
@@ -413,12 +461,20 @@ values of the same shape in fixtures.
 ## Settings and logs (M2/M3)
 
 - Settings: a JSON file under `%APPDATA%\fibocom-fm350-gl-windows-gui\`. The elevated scheduled
-  task runs as the same user, so the path is the same elevated or not.
+  task runs as the same user, so the path is the same elevated or not. `Apn` (empty: the
+  subscription's own), `PdpType` (`IP` or `IPV4V6`), `ApnAuthentication` (`None`, `PAP`, `CHAP`)
+  with `ApnUser`, `DnsServers` (the override; empty keeps the operator's), `InterfaceMetric` (500:
+  the modem as a backup). Read leniently — an invalid value falls back to its default and is
+  reported, an unknown one is ignored: a bad file never stops the app — and written strictly: an
+  invalid value is refused. The file is replaced whole (a temporary file, then a move).
 - Secrets — the SIM PIN, an APN password — never go in the settings file: each is kept
   DPAPI-encrypted for the current user in a file of its own in the same folder (see *SIM PIN*).
-- Logs: rolling files under `%LOCALAPPDATA%\fibocom-fm350-gl-windows-gui\logs\`, **redacted**
-  (no IMEI, IMSI, ICCID, EID, MSISDN or other phone numbers, serials, cell identity + TAC, message
-  text, USSD replies).
+- Logs: rolling files under `%LOCALAPPDATA%\fibocom-fm350-gl-windows-gui\logs\`, one per day,
+  the 14 newest kept, at most 10 MB a day (then one line says so). **Every line is redacted on its
+  way in** (`ConvertTo-RedactedText`): no IMEI, IMSI, ICCID, EID, MSISDN or other phone numbers,
+  serials, cell identity + TAC, message text, USSD replies — and no secret: the PIN of `AT+CPIN=`
+  and `AT+CLCK=`, the credentials of `+CGAUTH`. The file is opened for each line: the log holds no
+  handle.
 - Data usage totals (M9): a JSON file under `%LOCALAPPDATA%\fibocom-fm350-gl-windows-gui\`.
 
 ## Module layout
@@ -430,6 +486,7 @@ src/
     FibocomFm350.psm1
     Bands.ps1            AT+GTACT band codes (M0)
     AtText.ps1           framing and classifying the lines on the AT port (M1, pure)
+    Timeouts.ps1         each command's documented worst case (M2, pure)
     Transport.ps1        the serial transport, and the shape every transport has (M1)
     SimulatedModem.ps1   the simulated modem: fixtures + scripted faults; fixture import (M1)
     AtChannel.ps1        the AT channel: commands, answers, unsolicited codes (M1)
@@ -437,9 +494,16 @@ src/
     Parsers.ps1          identity, SIM, registration, operator, signal, temperature (M1, pure)
     Cells.ps1            +GTCCINFO cells and +GTCAINFO carrier aggregation (M1, pure)
     Arfcn.ps1            channel number -> frequency and band (M1, pure)
-    Devices.ps1          the modem's USB functions: AT port, network adapter, driver state (M6, pure)
+    Contexts.ps1         data context: definition, activation, address, DNS, authentication (M2, pure)
+    Settings.ps1         settings file, APN password (M2)
+    Sim.ps1              SIM PIN: states, the decision, the encrypted store, removing it (M2)
+    Fcc.ps1              FCC lock: reads, diagnosis, unlock (M2)
+    Connection.ps1       state machine (pure), observation and connect pass (M2)
+    Network.ps1          modem adapter: configuration plan (pure), read and apply (M2)
+    Log.ps1              redaction (pure), rolling log (M2)
+    Devices.ps1          the modem's USB functions: classification (M6, pure), PnP reader (M2)
     Data/                3GPP band tables, transcribed (EutraBands.psd1, NrBands.psd1)
-    …                    state machine, recovery, network, drivers (M2–M6)
+    …                    recovery, drivers (M4–M6)
   App/                   tray app: UI thread, worker runspace, supervisor (M3)
 tests/
   *.Tests.ps1            Pester

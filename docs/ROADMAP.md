@@ -15,7 +15,7 @@ written `(planned)`.
 |---|---|
 | [M0 — Project setup](#m0) | ✅ complete |
 | [M1 — Modem protocol](#m1) | ✅ complete |
-| [M2 — Connection](#m2) | 📋 planned |
+| [M2 — Connection](#m2) | 🔨 code-complete |
 | [M3 — Tray app](#m3) | 📋 planned |
 | [M4 — Health & recovery](#m4) | 📋 planned |
 | [M5 — Modes & bands](#m5) | 📋 planned |
@@ -56,16 +56,16 @@ Everything needed to talk to the modem and understand its answers — no connect
 <a id="m2"></a>
 ## M2 — Connection
 
-- [ ] Settings file (APN, optional APN credentials, DNS override, route metric) with defaults and validation. Defaults (decided 2026-10-01): empty APN — the subscription's own — with PDP type `IPV4V6`; DNS from the operator, no override; the modem as a backup (interface metric 500).
-- [ ] Read the PnP records `Resolve-ModemUsbDevice` classifies (`Get-PnpDevice`, one `Get-PnpDeviceProperty` call per device, the COM port name from the registry), in the worker: the AT port and the adapter are found with it. Brought forward from M6.
-- [ ] Connection state machine as a pure transition function, with a matrix of tests.
-- [ ] Per-command timeouts as a pure lookup: each command's worst-case duration from the vendor manual (`AT-COMMANDS.md` §2), never less than 3 s.
-- [ ] Connect sequence: SIM check, data context definition (persistent on the FM350: written only when it differs from the settings), registration, attach, context activation.
-- [ ] SIM PIN (design: ARCHITECTURE → *SIM PIN*): the decision as a pure function with a matrix of tests (SIM state × stored PIN and its SIM × attempts left × already tried → send, ask the user, report, continue); the PIN stored DPAPI-encrypted with the SIM it belongs to; at most one attempt per stored PIN; a PUK never entered by the app.
-- [ ] FCC lock (design: ARCHITECTURE → *FCC lock*): read the three lock values in the connect sequence; the diagnosis as a pure function with a matrix of tests (lock values × registration state and its duration → locked or not) — it explains a registration that never starts and never stops a modem that registers; the unlock sequence, proven against the simulated modem.
-- [ ] Network configuration of the modem's adapter (address, mask, gateway, DNS) in the active store.
-- [ ] Startup reconciliation: attach to an existing connection without re-dialing.
-- [ ] Redacted rolling log.
+- [x] Settings file (APN, optional APN credentials, DNS override, route metric) with defaults and validation. Defaults (decided 2026-10-01): empty APN — the subscription's own — with PDP type `IPV4V6`; DNS from the operator, no override; the modem as a backup (interface metric 500).
+- [x] Read the PnP records `Resolve-ModemUsbDevice` classifies (`Get-PnpDevice`, one `Get-PnpDeviceProperty` call per device, the COM port name from the registry), in the worker: the AT port and the adapter are found with it. Brought forward from M6.
+- [x] Connection state machine as a pure transition function, with a matrix of tests.
+- [x] Per-command timeouts as a pure lookup: each command's worst-case duration from the vendor manual (`AT-COMMANDS.md` §2), never less than 3 s.
+- [x] Connect sequence: SIM check, data context definition (persistent on the FM350: written only when it differs from the settings), registration, attach, context activation.
+- [x] SIM PIN (design: ARCHITECTURE → *SIM PIN*): the decision as a pure function with a matrix of tests (SIM state × stored PIN and its SIM × attempts left × already tried → send, ask the user, report, continue); the PIN stored DPAPI-encrypted with the SIM it belongs to; at most one attempt per stored PIN; a PUK never entered by the app.
+- [x] FCC lock (design: ARCHITECTURE → *FCC lock*): read the three lock values in the connect sequence; the diagnosis as a pure function with a matrix of tests (lock values × registration state → locked or not; the vendor's unlock-status value decides, not a time limit) — it explains a registration that never starts and never stops a modem that registers; the unlock sequence, proven against the simulated modem.
+- [x] Network configuration of the modem's adapter (address, mask, gateway, DNS) in the active store.
+- [x] Startup reconciliation: attach to an existing connection without re-dialing.
+- [x] Redacted rolling log.
 - [ ] On the device: `AT-COMMANDS.md` §7 questions 5, 6 and 12 — the app's own data context, DHCP on the adapter, whether a written context survives a power cycle, the `+CGAUTH` set form for APN credentials on that context — and the NR leg of an EN-DC cell under traffic (questions 3, 4). With a SIM whose PIN is enabled: the `+CPIN` states, `AT+CPIN=`, `+CPINR`, `AT+CLCK="SC"` (`AT-COMMANDS.md` §3). The modem stays a backup (high metric) during the session, so the machine's own traffic keeps its usual route.
 
 <a id="m3"></a>
@@ -106,7 +106,7 @@ where a known copy is published and by whom; the user downloads it and hands it 
 verifies it and installs it (design: ARCHITECTURE → *Drivers*).
 
 - [x] Classify the modem's USB functions and their driver state (AT ports present without a driver) as a pure function, tested on a device capture: `Resolve-ModemUsbDevice`.
-- [ ] Read the PnP records it classifies: moved to M2, which needs it to find the AT port.
+- [x] Read the PnP records it classifies: done in M2 (`Get-ModemPnpRecord`), which needs it to find the AT port.
 - [ ] Driver dialog: the project does not distribute the driver; where a known copy is published (commit-pinned page from the manifest) and that it is a third party's copy of MediaTek's driver; actions *open that page* and *choose the downloaded package*.
 - [ ] Package intake: a zip or a folder chosen by the user; locate the INFs in it. Never run an executable from the package.
 - [ ] Verification as a pure decision function with a matrix of tests: catalog signed by Microsoft (WHQL) → required; INF covers the modem's hardware IDs → required; files match a known fingerprint → reported as a verified version.
@@ -158,7 +158,11 @@ data is left (design: ARCHITECTURE → *SMS, USSD and data usage*; facts: `AT-CO
 Decisions that change what happens next and are the maintainer's to take. Remove a line when it is
 decided, and record the decision in `DEVLOG.md`.
 
-*None open.*
+- **FCC unlock sequence** (ARCHITECTURE → *FCC lock*). The sequence that unlocked our module
+  includes `AT+GTFCCEFFSTATUS=0,0`, which the vendor manual documents as read-only, its set form
+  answering `ERROR` (`AT-COMMANDS.md` §4). Implemented for now: the sequence as it was done, that
+  one command's error tolerated. The alternatives: leave the command out; or stop at its error as at
+  any other (then, if the manual is right, the unlock never reaches the restart).
 
 ---
 
