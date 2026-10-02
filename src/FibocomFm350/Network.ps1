@@ -16,6 +16,14 @@ function Test-UsableIPv4Address {
     $Address -and $Address -notmatch '^169\.254\.' -and $Address -ne '0.0.0.0'
 }
 
+function Test-FailedIPv4Address {
+    # An address Windows refused: another host answered for it while Windows checked it
+    # ('Duplicate'), or it is no longer valid. Set again, it is checked again.
+    param([object] $Address)
+
+    $Address.PSObject.Properties['State'] -and $Address.State -in 'Duplicate', 'Invalid'
+}
+
 function Resolve-AdapterConfiguration {
     <#
     .SYNOPSIS
@@ -24,10 +32,10 @@ function Resolve-AdapterConfiguration {
     .DESCRIPTION
         A pure decision. -Context is ConvertFrom-AtContextParameter's object for the app's
         context; -Adapter the adapter as read: InterfaceIndex, Dhcp ('Enabled' or 'Disabled'),
-        InterfaceMetric, AutomaticMetric, Addresses (IPv4, each with Address, PrefixLength and
-        Origin: 'Manual', 'Dhcp', 'WellKnown'...), Gateways (next hops of the adapter's IPv4
-        default routes) and DnsServers; -Settings the app's settings (DnsServers,
-        InterfaceMetric).
+        InterfaceMetric, AutomaticMetric, Addresses (IPv4, each with Address, PrefixLength,
+        Origin: 'Manual', 'Dhcp', 'WellKnown'..., and State: 'Preferred', 'Tentative',
+        'Duplicate'...), Gateways (next hops of the adapter's IPv4 default routes) and
+        DnsServers; -Settings the app's settings (DnsServers, InterfaceMetric).
 
         - An address the modem handed out by DHCP is kept as it is, with its gateway and DNS.
         - Otherwise the adapter gets the context's IPv4 address and mask, a default route
@@ -35,7 +43,9 @@ function Resolve-AdapterConfiguration {
           for a data context, and answers ARP for every destination on its adapter: without a
           mask the address is a /32, without a gateway the default route is on-link (next hop
           0.0.0.0) - the configuration that carried traffic on the device. Manual addresses and
-          default routes left on the adapter from an earlier context are removed.
+          default routes left on the adapter from an earlier context are removed. An address
+          Windows refused ('Duplicate', 'Invalid') is removed and set again; one it is still
+          checking ('Tentative') is in place.
         - The DNS override, when set, replaces whichever DNS servers the adapter would have.
           Servers are compared per family, IPv4 then IPv6, and a family only when servers of it
           are wanted: the IPv6 servers Windows lists on its own never ask for a change.
@@ -88,11 +98,11 @@ function Resolve-AdapterConfiguration {
         $prefixLength = if ($null -ne $Context.IPv4PrefixLength) { $Context.IPv4PrefixLength } else { 32 }
         $gateway = if ($Context.IPv4Gateway) { $Context.IPv4Gateway } else { '0.0.0.0' }
         foreach ($address in $manual) {
-            if ($address.Address -ne $wanted -or $address.PrefixLength -ne $prefixLength) {
+            if ($address.Address -ne $wanted -or $address.PrefixLength -ne $prefixLength -or (Test-FailedIPv4Address -Address $address)) {
                 $actions.Add([pscustomobject]@{ Action = 'RemoveAddress'; Address = $address.Address })
             }
         }
-        if (-not ($manual | Where-Object { $_.Address -eq $wanted -and $_.PrefixLength -eq $prefixLength })) {
+        if (-not ($manual | Where-Object { $_.Address -eq $wanted -and $_.PrefixLength -eq $prefixLength -and -not (Test-FailedIPv4Address -Address $_) })) {
             if ($Adapter.Dhcp -eq 'Enabled') {
                 $actions.Insert(0, [pscustomobject]@{ Action = 'DisableDhcp' })
             }
@@ -133,6 +143,44 @@ function Resolve-AdapterConfiguration {
     & $plan $null
 }
 
+function Resolve-AdapterClearing {
+    <#
+    .SYNOPSIS
+        Plans the removal of the configuration the app gives the modem's network adapter.
+    .DESCRIPTION
+        A pure decision, for the recovery step R1: from -Adapter as Get-ModemAdapterState reads
+        it, the actions that remove its IPv4 default routes, then its usable IPv4 addresses that
+        no DHCP server gave - what Resolve-AdapterConfiguration sets. The next connect pass sets
+        them again from scratch. An adapter with no such address is left alone: a DHCP server
+        configured it, routes included. Returns a plan Set-ModemAdapterConfiguration applies:
+        Configured ($false), Actions and Problem ($null).
+    .EXAMPLE
+        Set-ModemAdapterConfiguration -InterfaceIndex 12 -Plan (Resolve-AdapterClearing -Adapter $adapter)
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [object] $Adapter
+    )
+
+    $manual = @($Adapter.Addresses | Where-Object { $_.Origin -ne 'Dhcp' -and (Test-UsableIPv4Address -Address $_.Address) })
+    # An adapter the modem's DHCP configured, as Resolve-AdapterConfiguration keeps it, carries
+    # nothing of the app's: its routes are DHCP's.
+    $actions = if ($manual.Count -eq 0) { @() } else {
+        @(
+            # Routes first: a route stands on an address.
+            foreach ($gateway in @($Adapter.Gateways | Where-Object { $_ })) {
+                [pscustomobject]@{ Action = 'RemoveGateway'; NextHop = $gateway }
+            }
+            foreach ($address in $manual) {
+                [pscustomobject]@{ Action = 'RemoveAddress'; Address = $address.Address }
+            }
+        )
+    }
+    [pscustomobject]@{ Configured = $false; Actions = [object[]]$actions; Problem = $null }
+}
+
 function Get-ModemAdapterState {
     <#
     .SYNOPSIS
@@ -141,7 +189,8 @@ function Get-ModemAdapterState {
         The adapter is found by its PnP instance ID - the modem's RNDIS function, from
         Resolve-ModemUsbDevice - never by name or index. Reads only; needs no administrator
         rights. Returns what Resolve-AdapterConfiguration takes: InterfaceIndex, Name, Status,
-        Dhcp, InterfaceMetric, AutomaticMetric, Addresses (IPv4: Address, PrefixLength, Origin),
+        Dhcp, InterfaceMetric, AutomaticMetric, Addresses (IPv4: Address, PrefixLength, Origin,
+        State),
         Gateways (next hops of its IPv4 default routes, 0.0.0.0 for an on-link one) and
         DnsServers (IPv4, then IPv6). Returns nothing when no adapter has that instance ID.
     .EXAMPLE
@@ -172,7 +221,7 @@ function Get-ModemAdapterState {
         InterfaceMetric = if ($interface) { [int]$interface.InterfaceMetric } else { $null }
         AutomaticMetric = $interface -and [string]$interface.AutomaticMetric -eq 'Enabled'
         Addresses       = [object[]]@($addresses | ForEach-Object {
-                [pscustomobject]@{ Address = [string]$_.IPAddress; PrefixLength = [int]$_.PrefixLength; Origin = [string]$_.PrefixOrigin }
+                [pscustomobject]@{ Address = [string]$_.IPAddress; PrefixLength = [int]$_.PrefixLength; Origin = [string]$_.PrefixOrigin; State = [string]$_.AddressState }
             })
         Gateways        = [string[]]@($routes | ForEach-Object { [string]$_.NextHop } | Where-Object { $_ })
         DnsServers      = [string[]]@(

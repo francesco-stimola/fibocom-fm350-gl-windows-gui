@@ -173,6 +173,7 @@ Describe 'Resolve-ModemPresence' {
         $presence.Device | Should -Be 'Present'
         $presence.PortName | Should -Be 'COM9'
         $presence.AdapterInstanceId | Should -BeLike 'USB\VID_0E8D&PID_7127&MI_00\*'
+        $presence.InstanceId | Should -Match '^USB\\VID_0E8D&PID_7127\\[^\\]+$' -Because 'the composite device is what R6 restarts'
         $presence.Modems | Should -Be 1
     }
 
@@ -197,10 +198,31 @@ Describe 'Resolve-ModemPresence' {
         $presence.Device | Should -Be $Device
         $presence.PortName | Should -Be $PortName
         $presence.Modems | Should -Be $modems.Count
+        if ($Device -eq 'Present') {
+            $presence.InstanceId | Should -Be 'USB\VID_0E8D&PID_7127\7&00000000&0&1'
+        }
+        else {
+            $presence.InstanceId | Should -BeNullOrEmpty
+        }
     }
 
     It 'gives no adapter for a modem without its network function' {
         (Resolve-ModemPresence -Modem @(Get-TestModem -NoNetwork)).AdapterInstanceId | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Restart-ModemUsbDevice' {
+    It 'restarts nothing but an FM350 composite device: <InstanceId>' -ForEach @(
+        @{ InstanceId = 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&1&0006' }
+        @{ InstanceId = 'USB\VID_8087&PID_0026\5&1&0&14' }
+        @{ InstanceId = 'PCI\VEN_14C3&DEV_4D75\4&1&0&00E8' }
+        @{ InstanceId = 'USB\VID_0E8D&PID_7127\7&1&0&1\extra' }
+    ) {
+        { Restart-ModemUsbDevice -InstanceId $InstanceId -WhatIf -ErrorAction Stop } | Should -Throw
+    }
+
+    It 'runs nothing with -WhatIf' {
+        Restart-ModemUsbDevice -InstanceId 'USB\VID_0E8D&PID_7127\7&00000000&0&1' -WhatIf | Should -BeNullOrEmpty
     }
 }
 

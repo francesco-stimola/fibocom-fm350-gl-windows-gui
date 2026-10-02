@@ -236,7 +236,11 @@ function Get-ModemObservation {
 
         [string] $SimPinPath = (Get-AppDataPath -Name 'sim-pin.json'),
 
-        [string] $ApnSecretPath = (Get-AppDataPath -Name 'apn-password.dat')
+        [string] $ApnSecretPath = (Get-AppDataPath -Name 'apn-password.dat'),
+
+        # The data-path probes' verdict: Address (the one they were sent from) and Healthy
+        # (Resolve-DataPathHealth's). It counts only for the context's address.
+        [object] $DataPath
     )
 
     if ($Channel.State -eq 'Closed') {
@@ -384,6 +388,9 @@ function Get-ModemObservation {
         $facts.AdapterProblem = $plan.Problem
         # The simulated adapter needs no rights.
         $facts.Elevated = [bool]$SimulatedAdapter -or (Test-AppElevation)
+        if ($DataPath -and $DataPath.Address -and $DataPath.Address -eq $facts.ContextAddress) {
+            $facts.DataPath = $DataPath.Healthy
+        }
     }
     & $finish
 }
@@ -560,7 +567,10 @@ function Invoke-ModemConnect {
 
         # How long Initialize-AtChannel waits for each of its commands; their documented worst
         # case by default.
-        [int] $InitializeTimeoutMs = 0
+        [int] $InitializeTimeoutMs = 0,
+
+        # The data-path probes' verdict, as Get-ModemObservation takes it.
+        [object] $DataPath
     )
 
     $steps = [System.Collections.Generic.List[object]]::new()
@@ -591,7 +601,8 @@ function Invoke-ModemConnect {
     [void]$done.Add('Initialize')
 
     while ($true) {
-        $observation = Get-ModemObservation -Channel $Channel -Settings $Settings -AdapterInstanceId $AdapterInstanceId -SimulatedAdapter $SimulatedAdapter -SimPinPath $SimPinPath -ApnSecretPath $ApnSecretPath
+        $observation = Get-ModemObservation -Channel $Channel -Settings $Settings -AdapterInstanceId $AdapterInstanceId -SimulatedAdapter $SimulatedAdapter `
+            -SimPinPath $SimPinPath -ApnSecretPath $ApnSecretPath -DataPath $DataPath
         if ($observation.Facts.Sim -and $observation.Facts.Sim.Reason -eq 'PinAccepted') {
             try {
                 Set-SimPinAttempt -Attempted $false -Path $SimPinPath -Confirm:$false -ErrorAction Stop

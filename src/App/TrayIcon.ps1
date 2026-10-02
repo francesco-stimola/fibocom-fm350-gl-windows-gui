@@ -18,11 +18,12 @@ public static extern uint GetGuiResources(IntPtr hProcess, uint uiFlags);
 # The color of each tone (Resolve-TrayIcon): green online, amber on its way, red when the user must
 # act, grey without a modem or a worker.
 $script:ToneColors = @{
-    Online    = '#2E9E44'
-    Working   = '#D89B00'
-    Attention = '#D13438'
-    Offline   = '#8A8A8A'
-    Stopped   = '#8A8A8A'
+    Online     = '#2E9E44'
+    Working    = '#D89B00'
+    Recovering = '#D89B00'
+    Attention  = '#D13438'
+    Offline    = '#8A8A8A'
+    Stopped    = '#8A8A8A'
 }
 
 # The smallest icon on which the technology label is legible, in pixels.

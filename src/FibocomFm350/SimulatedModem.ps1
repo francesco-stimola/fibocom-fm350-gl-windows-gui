@@ -11,6 +11,12 @@ class SimulatedModem {
     [System.Collections.Generic.List[string]] $Received = [System.Collections.Generic.List[string]]::new()
     [bool] $Echo = $true
     [bool] $Closed = $false
+    # Hung: the modem takes commands and answers nothing - no echo, no result - until it is
+    # restarted (Reappear).
+    [bool] $Hung = $false
+    # The device's state beyond its answers, which scripted commands can change: DataPath ('Down':
+    # traffic doesn't get through), read by the simulated device.
+    [System.Collections.Generic.Dictionary[string, string]] $Flags = [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::OrdinalIgnoreCase)
 
     hidden [System.Collections.Generic.Dictionary[string, string[]]] $Answers
     hidden [System.Collections.Generic.Dictionary[string, System.Collections.Generic.Queue[hashtable]]] $Behaviors
@@ -46,8 +52,12 @@ class SimulatedModem {
     #   NoFinal   bool      leave out the final result code
     #   Vanish    bool      the port disappears once this output has been read
     #   Then      hashtable command -> lines: standing answers that change once this command
-    #                       has run (a context activated, a SIM unlocked)
+    #                       has run (a context activated, a SIM unlocked) - when it succeeded:
+    #                       its answer ends with OK
+    #   Flags     hashtable flag -> value: device flags set once this command has run, when it
+    #                       succeeded
     #   Times     int       queue the behaviour this many times (default 1)
+    #   Keep      bool      a standing behaviour: every time the command arrives, never used up
     [void] Script([string] $command, [hashtable] $behavior) {
         $key = $command.Trim()
         if (-not $this.Behaviors.ContainsKey($key)) {
@@ -76,6 +86,7 @@ class SimulatedModem {
         $this.PortName = $portName
         $this.Lost = $false
         $this.Closed = $false
+        $this.Hung = $false
         $this.Echo = $true
         $this.VanishWhenDrained = $false
         $this.BusyUntil = 0
@@ -148,9 +159,13 @@ class SimulatedModem {
         if ($this.Received.Count -gt 1000) {
             $this.Received.RemoveAt(0)
         }
+        if ($this.Hung) {
+            return
+        }
         $behavior = @{}
         if ($this.Behaviors.ContainsKey($command) -and $this.Behaviors[$command].Count -gt 0) {
-            $behavior = $this.Behaviors[$command].Dequeue()
+            $queue = $this.Behaviors[$command]
+            $behavior = if ($queue.Peek()['Keep']) { $queue.Peek() } else { $queue.Dequeue() }
         }
 
         # The echo reflects the setting in force when the command arrives.
@@ -162,6 +177,7 @@ class SimulatedModem {
         else {
             $lines.AddRange($this.StandingAnswer($command))
         }
+        $succeeded = $lines.Count -gt 0 -and $lines[$lines.Count - 1] -eq 'OK'
         if ($behavior['NoFinal'] -and $lines.Count -gt 0) {
             $lines.RemoveAt($lines.Count - 1)
         }
@@ -198,9 +214,14 @@ class SimulatedModem {
         if ($behavior['Vanish']) {
             $this.VanishWhenDrained = $true
         }
-        if ($behavior.ContainsKey('Then')) {
+        if ($succeeded -and $behavior.ContainsKey('Then')) {
             foreach ($changed in $behavior['Then'].Keys) {
                 $this.SetAnswer($changed, [string[]]$behavior['Then'][$changed])
+            }
+        }
+        if ($succeeded -and $behavior.ContainsKey('Flags')) {
+            foreach ($flag in $behavior['Flags'].Keys) {
+                $this.Flags[$flag] = [string]$behavior['Flags'][$flag]
             }
         }
     }
@@ -298,6 +319,8 @@ function New-SimulatedModem {
         EmitUnsolicited($line, $delayMs), Vanish() and
         Reappear($portName). SetAnswer($command, $lines) sets a standing answer. Reopen() opens
         the port again after a channel closed it. Received lists the commands written to it.
+        Hung makes it answer nothing until it reappears; Flags is device state that scripted
+        commands change (the simulated device reads DataPath).
     .EXAMPLE
         $modem = New-SimulatedModem -Fixture (Get-ChildItem tests/fixtures/documented)
         $modem.Script('AT+COPS=0', @{ DelayMs = 500 })

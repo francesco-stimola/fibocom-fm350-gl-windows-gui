@@ -38,9 +38,10 @@ Describe 'New-SimulatedDevice' {
         $device.Find().Device | Should -BeIn 'Present', 'Absent', 'NoDriver'
     }
 
-    It 'answers the commands of a connect pass from its base answers' {
-        $device = New-SimulatedDevice
+    It 'answers the commands of a connect pass and of the recovery steps from its base answers' {
         foreach ($command in $script:data.Answers.Keys) {
+            # One device per command: a reset takes it off USB.
+            $device = New-SimulatedDevice
             $channel = New-AtChannel -Transport $device.Open()
             try {
                 $answer = Invoke-AtCommand -Channel $channel -Command $command -TimeoutMs 3000
@@ -77,6 +78,134 @@ Describe 'The simulated adapter' {
         $adapter.Status | Should -Be 'Disabled'
         $adapter.Enable()
         $adapter.Status | Should -Be 'Up'
+    }
+
+    It 'keeps an address just set tentative for its first checks, as Windows does' {
+        $device = New-SimulatedDevice -Scenario Settling
+        $device.Adapter.Apply([pscustomobject]@{ Actions = @([pscustomobject]@{ Action = 'SetAddress'; Address = '192.0.2.10'; PrefixLength = 32 }) })
+        ($device.Adapter.Read().Addresses | Where-Object Address -EQ '192.0.2.10').State | Should -Be 'Tentative'
+        @(1..3 | ForEach-Object { $device.Adapter.AddressState('192.0.2.10') }) | Should -Be @('Tentative', 'Tentative', 'Preferred')
+        ($device.Adapter.Read().Addresses | Where-Object Address -EQ '192.0.2.10').State | Should -Be 'Preferred'
+        $device.Adapter.AddressState('192.0.2.99') | Should -Be 'Missing'
+    }
+}
+
+Describe 'The simulated data path' {
+    It 'gets through on a configured adapter' {
+        $round = (New-SimulatedDevice -Scenario Online).Probe('192.0.2.10')
+        $round.Result | Should -Be 'Passed'
+        $round.Status | Should -Be 0
+    }
+
+    It 'sends nothing from an address the adapter doesn''t have, or one still tentative' {
+        $device = New-SimulatedDevice -Scenario Settling
+        $device.Probe('192.0.2.10').Result | Should -Be 'NotReady'
+    }
+
+    It 'loses the rounds a settling path loses, then gets through' {
+        $device = New-SimulatedDevice -Scenario Online
+        $device.LostRounds = 1
+        @(1..2 | ForEach-Object { $device.Probe('192.0.2.10').Result }) | Should -Be @('Failed', 'Passed')
+    }
+
+    It 'never answers on a network that drops ICMP (IcmpDropped)' {
+        $device = New-SimulatedDevice -Scenario IcmpDropped
+        @(1..3 | ForEach-Object { $device.Probe('192.0.2.10').Result }) | Should -Be @('Failed', 'Failed', 'Failed')
+    }
+
+    It 'is proven once, then down until the context is restarted (DataPathDown)' {
+        $device = New-SimulatedDevice -Scenario DataPathDown
+        $device.Probe('192.0.2.10').Result | Should -Be 'Passed'
+        $device.Probe('192.0.2.10').Result | Should -Be 'Failed'
+        $channel = New-AtChannel -Transport $device.Open()
+        try {
+            (Invoke-AtCommand -Channel $channel -Command 'AT+CGACT=0,1' -TimeoutMs 3000).Status | Should -Be 'OK'
+            (Invoke-AtCommand -Channel $channel -Command 'AT+CGACT?' -TimeoutMs 3000).Lines | Should -BeNullOrEmpty
+        }
+        finally {
+            Close-AtChannel -Channel $channel
+        }
+        $device.Probe('192.0.2.10').Result | Should -Be 'Passed'
+    }
+}
+
+Describe 'The simulated modem and the recovery steps' {
+    BeforeEach {
+        $script:send = {
+            param($device, [string[]] $commands)
+            $channel = New-AtChannel -Transport $device.Open()
+            try {
+                foreach ($command in $commands) { Invoke-AtCommand -Channel $channel -Command $command -TimeoutMs 1000 }
+            }
+            finally {
+                Close-AtChannel -Channel $channel
+            }
+        }
+    }
+
+    It 'changes its answers every time a step runs, not only the first' {
+        $device = New-SimulatedDevice -Scenario Online
+        foreach ($i in 1..2) {
+            $answers = & $script:send $device 'AT+CFUN=4', 'AT+CFUN?', 'AT+CFUN=1', 'AT+CFUN?'
+            $answers[1].Lines | Should -Be @('+CFUN: 4')
+            $answers[3].Lines | Should -Be @('+CFUN: 1')
+        }
+    }
+
+    It 'changes nothing for a command it refuses: a locked radio stays off' {
+        $device = New-SimulatedDevice -Scenario FccLocked
+        $answers = & $script:send $device 'AT+CFUN=1', 'AT+CFUN?'
+        $answers[0].ErrorCode | Should -Be 0
+        $answers[1].Lines | Should -Be @('+CFUN: 4')
+    }
+
+    It 'registers again after the radio off and on, not after re-registering (RegistrationLost)' {
+        $device = New-SimulatedDevice -Scenario RegistrationLost
+        $answers = & $script:send $device 'AT+COPS=2', 'AT+COPS=0', 'AT+CEREG?;+C5GREG?'
+        ($answers[2].Lines | ConvertFrom-AtRegistration -ReadAnswer | Where-Object Domain -EQ 'EPS').Registered | Should -BeFalse
+        $answers = & $script:send $device 'AT+CFUN=4', 'AT+CFUN=1', 'AT+CEREG?;+C5GREG?'
+        ($answers[2].Lines | ConvertFrom-AtRegistration -ReadAnswer | Where-Object Domain -EQ 'EPS').Registered | Should -BeTrue
+    }
+
+    It 'resets: off USB, and back with its base answers' {
+        $device = New-SimulatedDevice -Scenario DataPathDown
+        $device.AwayMs = 60000
+        $answers = & $script:send $device 'AT+CFUN=15', 'AT'
+        $answers[0].Status | Should -Be 'OK'
+        $answers[1].Status | Should -Be 'PortLost'
+        $device.Find().Device | Should -Be 'Absent'
+        $device.AwayMs = 0
+        $device.Find().Device | Should -Be 'Present'
+        $device.Probe('192.0.2.10').Result | Should -Be 'Passed'
+    }
+
+    It 'answers nothing while hung, and again once its USB device restarted (ModemHung)' {
+        $device = New-SimulatedDevice -Scenario ModemHung
+        $answer = & $script:send $device 'AT'
+        $answer.Status | Should -Be 'Timeout'
+        $answer.EchoSeen | Should -BeFalse
+        $device.AwayMs = 0
+        $device.Restart()
+        $device.Find().Device | Should -Be 'Present'
+        (& $script:send $device 'AT').Status | Should -Be 'OK'
+    }
+
+    It 'stays refused whatever is done (Unrecoverable)' {
+        $device = New-SimulatedDevice -Scenario Unrecoverable
+        $device.AwayMs = 0
+        $answers = & $script:send $device 'AT+COPS=2', 'AT+COPS=0', 'AT+CFUN=4', 'AT+CFUN=1', 'AT+CFUN=15', 'AT'
+        @($answers.Status) | Should -Be @('OK', 'OK', 'OK', 'OK', 'OK', 'PortLost')
+        [void]$device.Find()
+        $answer = & $script:send $device 'AT+CEREG?;+C5GREG?'
+        ($answer.Lines | ConvertFrom-AtRegistration -ReadAnswer | Where-Object Domain -EQ 'EPS').State | Should -Be 'Denied'
+    }
+
+    It 'gives the composite device''s instance ID while present' {
+        $device = New-SimulatedDevice
+        $device.Find().InstanceId | Should -Be 'USB\VID_0E8D&PID_7127\SIMULATED'
+        $device.AwayMs = 60000
+        $device.Restart()
+        $device.Find().InstanceId | Should -BeNullOrEmpty
     }
 }
 

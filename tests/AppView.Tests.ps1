@@ -336,3 +336,88 @@ Describe 'Command outcomes' {
         (ConvertTo-WindowView -Snapshot (Copy-Snapshot $script:online @{ Results = @($failed) })).Result | Should -Match 'InterfaceMetric'
     }
 }
+
+Describe 'Recovery in the tray and the window' {
+    BeforeAll {
+        # A snapshot not online whose recovery is in the given state.
+        function Get-RecoverySnapshot {
+            param([string] $Status, [string] $Check = 'H7', [string] $Step = 'R2', [int] $Cycles = 0, [string] $State = 'DataActive', [string] $Reason = 'DataPathFailed')
+            $time = [DateTimeOffset]::new(2026, 10, 2, 14, 0, 0, [timespan]::Zero)
+            $recovery = [pscustomobject]@{ Status = $Status; Check = $Check; Step = $Step; Cycles = $Cycles; StepTime = $time; NextTime = $time.AddMinutes(5); History = $null }
+            Copy-Snapshot $script:online @{ State = $State; Reason = $Reason; Blocked = $false; Recovery = $recovery }
+        }
+    }
+
+    It '<Status>: tone <Tone>, headline <Title>' -ForEach @(
+        @{ Status = 'Recovering'; Tone = 'Recovering'; Title = 'Recovering' }
+        @{ Status = 'Settling'; Tone = 'Recovering'; Title = 'Recovering' }
+        @{ Status = 'Waiting'; Tone = 'Recovering'; Title = 'Recovering' }
+        @{ Status = 'SlowCadence'; Tone = 'Attention'; Title = 'Connection lost' }
+        @{ Status = 'Watching'; Tone = 'Working'; Title = 'Connecting' }
+        @{ Status = 'Withheld'; Tone = 'Working'; Title = 'Not connected' }
+        @{ Status = 'Maintenance'; Tone = 'Working'; Title = 'Connecting' }
+    ) {
+        $snapshot = Get-RecoverySnapshot -Status $Status -Cycles 3
+        (Resolve-TrayIcon -Snapshot $snapshot).Tone | Should -Be $Tone
+        $view = ConvertTo-WindowView -Snapshot $snapshot
+        $view.Tone | Should -Be $Tone
+        $view.Title | Should -Be $Title
+        $view.Detail | Should -Match '\.$'
+        (ConvertTo-TrayText -Snapshot $snapshot).Length | Should -BeLessOrEqual 127
+    }
+
+    It 'says the step being taken: <Step>' -ForEach @(
+        @{ Step = 'R1'; Text = 'network adapter' }
+        @{ Step = 'R2'; Text = 'data connection' }
+        @{ Step = 'R3'; Text = 'Registering' }
+        @{ Step = 'R4'; Text = 'radio' }
+        @{ Step = 'R5'; Text = 'Restarting the modem' }
+        @{ Step = 'R6'; Text = 'USB device' }
+    ) {
+        (ConvertTo-WindowView -Snapshot (Get-RecoverySnapshot -Status 'Settling' -Step $Step)).Detail | Should -Match $Text
+        ConvertTo-TrayText -Snapshot (Get-RecoverySnapshot -Status 'Recovering' -Step $Step) | Should -Match "^FM350-GL: Recovering - .*$Text"
+    }
+
+    It 'says what fails and when recovery tries again: <Check>' -ForEach @(
+        @{ Check = 'H2' }, @{ Check = 'H3' }, @{ Check = 'H4' }, @{ Check = 'H5' }, @{ Check = 'H6' }, @{ Check = 'H7' }
+    ) {
+        $waiting = (ConvertTo-WindowView -Snapshot (Get-RecoverySnapshot -Status 'Waiting' -Check $Check -Cycles 1)).Detail
+        $waiting | Should -Match '14:05'
+        $waiting | Should -Not -Match '^The connection is down' -Because 'every check has its sentence'
+        (ConvertTo-WindowView -Snapshot (Get-RecoverySnapshot -Status 'SlowCadence' -Check $Check -Cycles 3)).Detail | Should -Match 'failed 3 times.*14:05'
+    }
+
+    It 'shows a modem off USB while it restarts as recovering, not as missing' {
+        $snapshot = Get-RecoverySnapshot -Status 'Settling' -Check 'H1' -Step 'R5' -State 'NoDevice' -Reason 'NoDevice'
+        (Resolve-TrayIcon -Snapshot $snapshot).Tone | Should -Be 'Recovering'
+        (ConvertTo-WindowView -Snapshot $snapshot).Detail | Should -Be 'Restarting the modem.'
+    }
+
+    It 'says the step it withholds while it only observes' {
+        $view = ConvertTo-WindowView -Snapshot (Get-RecoverySnapshot -Status 'Withheld' -Step 'R2')
+        $view.Detail | Should -Be 'No traffic gets through. The app only observes, so it doesn''t take the recovery step: restarting the data connection.'
+    }
+
+    It 'notes the step that brought the connection back, until health has held' {
+        $recovery = [pscustomobject]@{ Status = 'Healthy'; Check = $null; Step = 'R2'; Cycles = 0; StepTime = [DateTimeOffset]::new(2026, 10, 2, 14, 2, 0, [timespan]::Zero); NextTime = $null; History = $null }
+        $view = ConvertTo-WindowView -Snapshot (Copy-Snapshot $script:online @{ Recovery = $recovery })
+        $view.Tone | Should -Be 'Online'
+        $view.Note | Should -Match 'Recovered at 14:02: restarting the data connection\.'
+        $recovery.Step = $null
+        (ConvertTo-WindowView -Snapshot (Copy-Snapshot $script:online @{ Recovery = $recovery })).Note | Should -Not -Match 'Recovered'
+    }
+
+    It 'shows when the data path was last checked' {
+        $time = [DateTimeOffset]::new(2026, 10, 2, 14, 3, 4, [timespan]::Zero)
+        foreach ($case in @(@('Passed', 'checked'), @('Failed', 'failed'), @('NotReady', 'not checked yet'))) {
+            $snapshot = Copy-Snapshot $script:online @{ DataPath = [pscustomobject]@{ Healthy = $null; Result = $case[0]; Time = $time } }
+            (ConvertTo-WindowView -Snapshot $snapshot).Footer | Should -Match "data path $($case[1]) at 14:03:04"
+        }
+    }
+
+    It 'reads the recovery state of a scenario the worker publishes' {
+        $snapshot = Get-ScenarioSnapshot -Scenario PinRequired
+        $snapshot.Recovery.Status | Should -Be 'Blocked'
+        (ConvertTo-WindowView -Snapshot $snapshot).Title | Should -Be 'Action needed'
+    }
+}

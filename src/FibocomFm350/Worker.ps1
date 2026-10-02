@@ -25,6 +25,9 @@ $script:WorkerIntervals = @{
 # (WorkerTransport): the supervisor's hang timeout is far above it.
 $script:WorkerBeatMs = 1000
 
+# A wait that ends this much past its deadline was a pause: the computer slept (as the UI's).
+$script:WorkerPauseMs = 5000
+
 # The results of the user's commands a snapshot keeps, the newest last.
 $script:WorkerResultsKept = 10
 
@@ -202,7 +205,12 @@ function Resolve-WorkerSchedule {
         - Status: a port open, the SIM ready, and the last status read older than its interval.
         - AdapterLook: a port open, the last pass found no network adapter (-AdapterMissing),
           and the last look for it by PnP older than the scan interval.
-        - WaitMs: until the next of those falls due; 0 when one is due now.
+        - Probe: a port open, the adapter carrying the context's address (-ProbeWanted), the
+          last data-path round older than the probe interval - the retry interval after a round
+          that failed or could not be sent (-ProbeFailed) - and -ProbeNotBefore reached: the
+          settle time after the address was set.
+        - WaitMs: until the next of those falls due, or -RecoveryAt (when the recovery decision
+          may change); 0 when one is due now.
     .EXAMPLE
         Resolve-WorkerSchedule -Now 60000 -LastPass 25000 -State Online -PortOpen
     #>
@@ -228,7 +236,17 @@ function Resolve-WorkerSchedule {
 
         [switch] $PassForced,
 
-        [switch] $AdapterMissing
+        [switch] $AdapterMissing,
+
+        [switch] $ProbeWanted,
+
+        [Nullable[long]] $LastProbe,
+
+        [switch] $ProbeFailed,
+
+        [Nullable[long]] $ProbeNotBefore,
+
+        [Nullable[long]] $RecoveryAt
     )
 
     $intervals = $script:WorkerIntervals
@@ -240,6 +258,7 @@ function Resolve-WorkerSchedule {
     $pass = $false
     $status = $false
     $adapterLook = $false
+    $probe = $false
     if (-not $PortOpen) {
         $wait = Get-WorkerDueTime -Now $Now -Last $LastScan -Interval $intervals.Scan
         $scan = $wait -eq 0
@@ -259,12 +278,24 @@ function Resolve-WorkerSchedule {
             $adapterLook = $wait -eq 0
             $waits.Add($wait)
         }
+        if ($ProbeWanted) {
+            $wait = Get-WorkerDueTime -Now $Now -Last $LastProbe -Interval $(if ($ProbeFailed) { $script:DataProbe.RetryMs } else { $script:DataProbe.IntervalMs })
+            if ($null -ne $ProbeNotBefore) {
+                $wait = [Math]::Max($wait, $ProbeNotBefore - $Now)
+            }
+            $probe = $wait -eq 0
+            $waits.Add($wait)
+        }
+    }
+    if ($null -ne $RecoveryAt) {
+        $waits.Add([Math]::Max(0, $RecoveryAt - $Now))
     }
     [pscustomobject]@{
         Scan        = $scan
         Pass        = $pass
         Status      = $status
         AdapterLook = $adapterLook
+        Probe       = $probe
         WaitMs      = [int]($waits | Measure-Object -Minimum).Minimum
     }
 }
@@ -283,8 +314,11 @@ function New-ModemSnapshot {
         Elevated, PortName (of the open AT port), Modems; the connection: State, StateSince,
         Action, Reason, Blocked, Dropped, SettingsPending; Sim (State, Reason - the PIN rules' -,
         AttemptsLeft, PinStored, PinRequestOn, PinRejected); Fcc (Diagnosis, PowerUpUnlock);
-        Radio (Resolve-RadioStatus); Settings, ApnPasswordStored, SettingsProblems; Results (the
-        last commands' outcomes: Id, Kind, Result, Detail, AttemptsLeft, Time).
+        Radio (Resolve-RadioStatus); DataPath (the probes: Healthy - $true, $false or $null -,
+        the last round's Result and Time, Proven: a reply since the app started); Recovery (Resolve-RecoveryAction's Status, Check,
+        Step, Cycles, with StepTime and NextTime as clock times, and History, which a worker
+        that replaces this one carries on); Settings, ApnPasswordStored, SettingsProblems;
+        Results (the last commands' outcomes: Id, Kind, Result, Detail, AttemptsLeft, Time).
     .EXAMPLE
         $Link['Snapshot'] = New-ModemSnapshot -Worker $worker -Time ([DateTimeOffset]::Now)
     #>
@@ -335,6 +369,13 @@ function New-ModemSnapshot {
         }
         Fcc               = & $fact 'Fcc'
         Radio             = $Worker.Radio
+        DataPath          = [pscustomobject]@{
+            Healthy = & $fact 'DataPath'
+            Result  = $Worker.Probe.LastResult
+            Time    = $Worker.Probe.LastTime
+            Proven  = $Worker.Probe.Proven
+        }
+        Recovery          = $Worker.RecoveryView
         Settings          = if ($Worker.Settings) { $Worker.Settings | Select-Object -Property * } else { $null }
         ApnPasswordStored = $Worker.ApnPasswordStored
         SettingsProblems  = [string[]]@($Worker.SettingsProblems)
@@ -349,7 +390,8 @@ function New-ModemWorker {
     .DESCRIPTION
         Invoke-ModemWorker runs one; tests drive the cycles one by one with
         Invoke-ModemWorkerCycle. A worker that replaces another one (-Previous, the last snapshot
-        of the one before) starts from its state: its first pass attaches, it never re-dials.
+        of the one before) starts from its state: its first pass attaches, it never re-dials, and
+        its recovery carries on where the other's was - a restart never starts the ladder over.
 
         -DataFolder keeps the settings, the secrets and the log in one folder (development mode,
         tests); by default they are the app's (ARCHITECTURE -> Settings and logs). -Simulation is
@@ -430,6 +472,26 @@ function New-ModemWorker {
         PassForced        = $true
         Version           = if ($Previous) { [long]$Previous.Version } else { [long]0 }
         WaitMs            = 0
+        # The data-path probes, for the address the adapter carries (none: nothing to probe).
+        Probe             = @{
+            Address    = $null
+            Rounds     = [System.Collections.Generic.List[string]]::new()
+            LastAt     = $null
+            NotBefore  = $null
+            LastResult = $null
+            LastTime   = $null
+            # A reply since the app started: until then, failed rounds prove nothing (a network that
+            # drops ICMP). Carried over from the worker this one replaces.
+            Proven     = [bool]($Previous -and $Previous.PSObject.Properties['DataPath'] -and $Previous.DataPath -and $Previous.DataPath.Proven)
+            Quiet      = $false
+        }
+        # Resolve-RecoveryAction's history, and what it last decided.
+        Recovery          = if ($Previous -and $Previous.PSObject.Properties['Recovery'] -and $Previous.Recovery) { $Previous.Recovery.History } else { $null }
+        RecoveryView      = if ($Previous -and $Previous.PSObject.Properties['Recovery']) { $Previous.Recovery } else { $null }
+        RecoveryAt        = $null
+        RecoveryLogged    = $null
+        # The computer slept: Invoke-ModemWorker sets it, the next cycle takes it into account.
+        Resumed           = $false
     }
 }
 
@@ -478,6 +540,7 @@ function Close-WorkerChannel {
     $Worker.PinRequestOn = $null
     $Worker.LastScan = $null
     $Worker.LastAdapterLook = $null
+    Set-WorkerProbeAddress -Worker $Worker -Address $null
     if ($Why) {
         Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "AT port $($Worker.PortName) $Why$(if ($reason) { ": $reason" })"
     }
@@ -539,6 +602,186 @@ function Find-WorkerModem {
     Write-WorkerLog -Worker $Worker -Level 'Info' -Message "AT port $($presence.PortName) open"
 }
 
+function Set-WorkerProbeAddress {
+    # Points the data-path probes at the address the adapter carries ($null: none, nothing to
+    # probe). A new address - or the same one set again (-Again: configured anew, or a recovery
+    # step taken) - starts with no rounds, and its first round waits the settle time.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Changes the worker''s in-memory state only.')]
+    param([hashtable] $Worker, [string] $Address, [switch] $Again)
+
+    $probe = $Worker.Probe
+    if ($Address -eq [string]$probe.Address -and -not $Again) {
+        return
+    }
+    $probe.Address = if ($Address) { $Address } else { $null }
+    $probe.Rounds.Clear()
+    $probe.LastAt = $null
+    $probe.NotBefore = (& $Worker.Clock) + $script:DataProbe.SettleMs
+}
+
+function Get-WorkerDataPath {
+    # The probes' verdict as the connect pass takes it: it counts only for the address the
+    # rounds were sent from.
+    param([hashtable] $Worker)
+
+    $probe = $Worker.Probe
+    if (-not $probe.Address) {
+        return $null
+    }
+    [pscustomobject]@{ Address = $probe.Address; Healthy = (Resolve-DataPathHealth -Rounds $probe.Rounds.ToArray() -Unproven:(-not $probe.Proven)) }
+}
+
+function Invoke-WorkerProbe {
+    # One data-path round from the adapter's address. The state follows the verdict at once, from
+    # the last pass's facts: no need to wait for the next pass to say that no traffic gets
+    # through. Addresses are never logged.
+    param([hashtable] $Worker)
+
+    $probe = $Worker.Probe
+    $started = & $Worker.Clock
+    $before = Resolve-DataPathHealth -Rounds $probe.Rounds.ToArray() -Unproven:(-not $probe.Proven)
+    $round = if ($Worker.Simulation) { $Worker.Simulation.Probe($probe.Address) } else { Test-ModemDataPath -SourceAddress $probe.Address }
+    $probe.LastAt = $started
+    $probe.LastResult = $round.Result
+    $probe.LastTime = [DateTimeOffset]::Now
+    if ($round.Result -eq 'Passed') {
+        $probe.Proven = $true
+    }
+    if ($round.Result -in 'Passed', 'Failed') {
+        $probe.Rounds.Add($round.Result)
+        while ($probe.Rounds.Count -gt $script:DataProbe.RoundsKept) {
+            $probe.Rounds.RemoveAt(0)
+        }
+    }
+    if ($round.Result -eq 'Failed') {
+        Write-WorkerLog -Worker $Worker -Level 'Info' -Message "Data path: no reply to $($round.Sent) request(s), status $($round.Status)"
+    }
+    elseif ($round.Result -eq 'NotReady') {
+        Write-WorkerLog -Worker $Worker -Level 'Info' -Message "Data path: the adapter's address is not usable yet ($($round.AddressState))"
+    }
+    $healthy = Resolve-DataPathHealth -Rounds $probe.Rounds.ToArray() -Unproven:(-not $probe.Proven)
+    if (-not $probe.Proven -and -not $probe.Quiet -and $null -eq $healthy -and $null -ne (Resolve-DataPathHealth -Rounds $probe.Rounds.ToArray())) {
+        $probe.Quiet = $true
+        Write-WorkerLog -Worker $Worker -Level 'Warning' -Message 'Data path: no reply since the app started - the network may drop ICMP; not taken for a failure'
+    }
+    if ($healthy -ne $before -and $null -ne $healthy) {
+        $level, $text = if ($healthy) { 'Info', 'traffic gets through' } else { 'Warning', "no traffic gets through ($($script:DataProbe.FailedRounds) rounds failed in a row)" }
+        Write-WorkerLog -Worker $Worker -Level $level -Message "Data path: $text"
+    }
+    if ($Worker.Facts -and $Worker.Facts.ContextAddress -eq $probe.Address -and $Worker.Facts.DataPath -ne $healthy) {
+        $facts = $Worker.Facts | Select-Object -Property *
+        $facts.DataPath = $healthy
+        $Worker.Facts = $facts
+        $previous = if ($Worker.State) { @{ Previous = $Worker.State } } else { @{} }
+        Register-WorkerDecision -Worker $Worker -Decision (Resolve-ConnectionState -Observation $facts @previous)
+    }
+}
+
+function Invoke-WorkerRecovery {
+    # The recovery decision on the worker's latest state, and the step it calls for. Logs what it
+    # decides when that changes; a step is logged with its commands.
+    param([hashtable] $Worker, [switch] $Resumed)
+
+    $now = & $Worker.Clock
+    $decision = $Worker.Decision
+    $health = Resolve-HealthCheck -State $Worker.State -Reason $(if ($decision) { $decision.Reason }) -Action $(if ($decision) { $decision.Action }) `
+        -Blocked:([bool]($decision -and $decision.Blocked))
+    $failing = @{}
+    if ($health.Check) {
+        $failing['Check'] = $health.Check
+    }
+    $before = $Worker.Recovery
+    # After a reset a SIM whose PIN request is on asks for its PIN: without a stored one, the
+    # reset would leave the connection waiting for the user.
+    $noReset = $Worker.PinRequestOn -eq $true -and -not $Worker.PinStored
+    $recovery = Resolve-RecoveryAction -Now $now @failing -Blocked:$health.Blocked -Unknown:$health.Unknown -History $before `
+        -Elevated:$Worker.Elevated -Withhold:$Worker.ObserveOnly -Resumed:$Resumed -NoReset:$noReset
+    $Worker.Recovery = $recovery.History
+    $Worker.RecoveryAt = if ($null -ne $recovery.WaitMs) { $now + $recovery.WaitMs } else { $null }
+    $setView = {
+        param($status)
+        $clock = [DateTimeOffset]::Now
+        $history = $Worker.Recovery
+        $step = if ($status -eq 'Withheld') { $recovery.Step } elseif ($history) { $history.Step } else { $null }
+        $Worker.RecoveryView = [pscustomobject]@{
+            Status   = $status
+            Check    = $recovery.Check
+            Step     = $step
+            Cycles   = if ($history) { $history.Cycles } else { 0 }
+            StepTime = if ($history -and $null -ne $history.StepAt) { $clock.AddMilliseconds($history.StepAt - $now) } else { $null }
+            NextTime = if ($null -ne $Worker.RecoveryAt) { $clock.AddMilliseconds($Worker.RecoveryAt - $now) } else { $null }
+            History  = $history
+        }
+    }
+
+    $key = "$($recovery.Status) $($recovery.Check) $($recovery.Step)"
+    if ($key -ne $Worker.RecoveryLogged -and $recovery.Status -notin 'Recovering', 'Settling') {
+        $minutes = if ($null -ne $recovery.WaitMs) { [Math]::Ceiling($recovery.WaitMs / 60000) } else { $null }
+        $reason = if ($decision -and $decision.Reason) { " ($($decision.Reason))" } else { '' }
+        $level, $message = switch ($recovery.Status) {
+            'Healthy' { if ($Worker.RecoveryLogged) { 'Info', 'every check passes again' } }
+            'Watching' { 'Info', "$($recovery.Check) fails$reason; the connect pass has it for now" }
+            'Blocked' { 'Info', "$($recovery.Check) fails$reason, out of the app's reach: nothing is escalated" }
+            'Maintenance' { 'Info', "$($recovery.Check) fails during a maintenance window: nothing is escalated" }
+            'Waiting' { 'Warning', "cycle $($recovery.Cycles) didn't mend $($recovery.Check); the next one in $minutes min" }
+            'SlowCadence' { 'Warning', "$($recovery.Cycles) cycles didn't mend $($recovery.Check); trying again in $minutes min" }
+            'Withheld' { 'Info', "$($recovery.Check) fails$reason; step $($recovery.Step) withheld: the app only observes" }
+        }
+        if ($message) {
+            Write-WorkerLog -Worker $Worker -Level $level -Message "Recovery: $message"
+        }
+        $Worker.RecoveryLogged = $key
+    }
+
+    $status = $recovery.Status
+    if ($status -eq 'Recovering') {
+        $Worker.RecoveryLogged = $key
+        # Published before the step runs: should the step hang, the worker that replaces this one
+        # knows it was taken, and gives it its settle time instead of taking it again.
+        & $setView $status
+        $Worker.Version++
+        $Worker.Link['Snapshot'] = New-ModemSnapshot -Worker $Worker -Time ([DateTimeOffset]::Now)
+        $step = $recovery.Action
+        $options = @{ Step = $step; Simulation = $Worker.Simulation; Confirm = $false }
+        if ($step -eq 'R6') {
+            # Windows can't restart a device whose port is held open.
+            Close-WorkerChannel -Worker $Worker -Why 'closed to restart the USB device'
+            # H1 passing: the modem is still on USB. Found again, never remembered.
+            $presence = Get-WorkerPresence -Worker $Worker
+            if ($presence.Device -eq 'Present') {
+                $options['DeviceInstanceId'] = $presence.InstanceId
+            }
+            else {
+                $options['Simulation'] = $null
+            }
+        }
+        else {
+            $options['Channel'] = $Worker.Channel
+            $options['AdapterInstanceId'] = $Worker.AdapterInstanceId
+        }
+        $outcome = Invoke-RecoveryStep @options
+        $commands = ($outcome.Commands | ForEach-Object { "$($_.Command) $($_.Status)" }) -join '; '
+        Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Recovery: $($recovery.Check) fails - step $step$(if ($Worker.Recovery.Cycles) { " (after $($Worker.Recovery.Cycles) cycle(s))" }): $($outcome.Result)$(if ($commands) { " - $commands" })"
+        if ($outcome.Result -eq 'NoModem') {
+            # Nothing to act on - the port went with the modem since the state was read: the
+            # step is not counted, and the next cycle decides on what the next look finds.
+            $Worker.Recovery = $before
+            $Worker.RecoveryAt = $null
+            $status = 'Watching'
+        }
+        else {
+            # Whatever the step changed, the data path is proven again from scratch.
+            Set-WorkerProbeAddress -Worker $Worker -Address $Worker.Probe.Address -Again
+            if ($step -in 'R1', 'R2', 'R3', 'R4') {
+                # The pass takes the steps back up: configures, activates, registers, radio on.
+                $Worker.PassForced = $true
+            }
+        }
+    }
+    & $setView $status
+}
+
 function Invoke-WorkerCommand {
     # Carries out one of the user's commands; returns its outcome for the snapshot. Never logs or
     # returns a secret.
@@ -597,6 +840,11 @@ function Invoke-WorkerCommand {
                     $outcome = Invoke-FccUnlock -Channel $Worker.Channel -Confirm:$false
                     $result = $outcome.Result
                     $detail = ($outcome.Steps | ForEach-Object { "$($_.Command) $($_.Status)" }) -join '; '
+                    if ($result -eq 'Restarted') {
+                        # The modem restarts as at a reset (R5): an intentional operation, which
+                        # nothing escalates over.
+                        $Worker.Recovery = Open-MaintenanceWindow -History $Worker.Recovery -Now (& $Worker.Clock) -DurationMs $script:RecoveryTimings.Settle['R5']
+                    }
                 }
                 'EnableAdapter' {
                     if ($Worker.Simulation) {
@@ -635,13 +883,15 @@ function Invoke-WorkerCommand {
 function Invoke-ModemWorkerCycle {
     <#
     .SYNOPSIS
-        Runs one cycle of the worker: the user's commands, the modem's port, a pass and a status
-        read when due, and a new snapshot.
+        Runs one cycle of the worker: the user's commands, the modem's port, a pass, a data-path
+        probe and a status read when due, the recovery decision, and a new snapshot.
     .DESCRIPTION
         In order: carries out the queued commands; closes a port that was lost; looks for the
         modem by PnP when no port is open, and opens its AT port; runs a connect pass when one is
-        due (Invoke-ModemConnect: on a connection that is up it changes nothing); reads the radio
-        for display when due. Publishes a new snapshot in the link when anything was done, and
+        due (Invoke-ModemConnect: on a connection that is up it changes nothing); sends a
+        data-path round from the adapter's address when due (H7); reads the radio for display
+        when due; decides on recovery (Resolve-HealthCheck, Resolve-RecoveryAction) and takes
+        the step it calls for. Publishes a new snapshot in the link when anything was done, and
         sets the worker's WaitMs: how long it may wait before the next cycle
         (Resolve-WorkerSchedule).
     .EXAMPLE
@@ -662,9 +912,21 @@ function Invoke-ModemWorkerCycle {
     }
     $due = {
         $decision = $Worker.Decision
+        $probe = $Worker.Probe
         Resolve-WorkerSchedule -Now (& $Worker.Clock) -LastScan $Worker.LastScan -LastPass $Worker.LastPass -LastStatus $Worker.LastStatus `
             -LastAdapterLook $Worker.LastAdapterLook -State $Worker.State -Blocked:($decision -and $decision.Blocked) `
-            -PortOpen:([bool]$Worker.Channel) -PassForced:$Worker.PassForced -AdapterMissing:($decision -and $decision.Reason -eq 'NoAdapter')
+            -PortOpen:([bool]$Worker.Channel) -PassForced:$Worker.PassForced -AdapterMissing:($decision -and $decision.Reason -eq 'NoAdapter') `
+            -ProbeWanted:([bool]$probe.Address) -LastProbe $probe.LastAt -ProbeFailed:($probe.LastResult -in 'Failed', 'NotReady') `
+            -ProbeNotBefore $probe.NotBefore -RecoveryAt $Worker.RecoveryAt
+    }
+    $resumed = $Worker.Resumed
+    if ($resumed) {
+        # The computer slept: the modem and the network had time to change. Everything is read
+        # again, the data path proven again, and a failing check gets its grace time again.
+        $Worker.Resumed = $false
+        $Worker.PassForced = $true
+        Set-WorkerProbeAddress -Worker $Worker -Address $Worker.Probe.Address -Again
+        Write-WorkerLog -Worker $Worker -Level 'Info' -Message 'Resumed after a pause (the computer slept?)'
     }
     $lost = {
         if ($Worker.Channel -and $Worker.Channel.State -ne 'Open') {
@@ -742,11 +1004,16 @@ function Invoke-ModemWorkerCycle {
         }
         $pass = Invoke-ModemConnect -Channel $Worker.Channel -Settings $Worker.Settings -AdapterInstanceId $Worker.AdapterInstanceId `
             -SimPinPath $Worker.Paths.SimPin -ApnSecretPath $Worker.Paths.ApnSecret -LogFolder $Worker.Paths.Log `
-            -WhatIf:$Worker.ObserveOnly -Confirm:$false @options
+            -DataPath (Get-WorkerDataPath -Worker $Worker) -WhatIf:$Worker.ObserveOnly -Confirm:$false @options
         $Worker.LastPass = $started
         $Worker.PassForced = $false
         Register-WorkerDecision -Worker $Worker -Decision $pass -Logged
         $Worker.Facts = $pass.Observation
+        # The probes follow the address the adapter carries; one set anew is proven anew.
+        $facts = $Worker.Facts
+        $configured = @($pass.Steps | Where-Object { $_.Action -eq 'ConfigureAdapter' -and $_.Result -eq 'Done' }).Count -gt 0
+        $address = if ($facts -and $facts.AdapterConfigured -eq $true -and $facts.ContextAddress) { [string]$facts.ContextAddress } else { $null }
+        Set-WorkerProbeAddress -Worker $Worker -Address $address -Again:$configured
         if (@($pass.Steps | Where-Object Result -EQ 'PinRejected').Count -gt 0) {
             $Worker.PinRejected = $true
         }
@@ -760,6 +1027,12 @@ function Invoke-ModemWorkerCycle {
         }
         $published = $true
         & $lost
+    }
+
+    # The data path (H7), from the adapter's address.
+    if ((& $due).Probe) {
+        Invoke-WorkerProbe -Worker $Worker
+        $published = $true
     }
 
     # The radio, for display.
@@ -782,6 +1055,17 @@ function Invoke-ModemWorkerCycle {
             }
         }
         $published = $true
+        & $lost
+    }
+
+    # Health and recovery: decided on every cycle - it is cheap - and published when it changes.
+    if ($Worker.State) {
+        $before = $Worker.RecoveryView
+        Invoke-WorkerRecovery -Worker $Worker -Resumed:$resumed
+        $after = $Worker.RecoveryView
+        if (-not $before -or $before.Status -ne $after.Status -or $before.Check -ne $after.Check -or $before.Step -ne $after.Step -or $before.Cycles -ne $after.Cycles) {
+            $published = $true
+        }
         & $lost
     }
 
@@ -868,6 +1152,11 @@ function Invoke-ModemWorker {
                 if ($left -le 0 -or $Link['Wake'].WaitOne([int][Math]::Min($left, $script:WorkerBeatMs))) {
                     break
                 }
+            }
+            # A wait of a second at most that ends far past its deadline: the computer slept,
+            # and the clock ran on meanwhile.
+            if ([Environment]::TickCount64 - $deadline -gt $script:WorkerPauseMs) {
+                $worker.Resumed = $true
             }
         }
     }

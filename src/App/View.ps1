@@ -77,23 +77,59 @@ $script:ResultTexts = @{
 
 # The headline for each tone.
 $script:ToneTitles = @{
-    Online    = 'Online'
-    Working   = 'Connecting'
-    Attention = 'Action needed'
-    Offline   = 'No modem'
-    Stopped   = 'Not monitoring'
+    Online     = 'Online'
+    Working    = 'Connecting'
+    Recovering = 'Recovering'
+    Attention  = 'Action needed'
+    Offline    = 'No modem'
+    Stopped    = 'Not monitoring'
+}
+
+# Recovery (ARCHITECTURE -> Health checks and the recovery ladder): what fails, in the user's
+# words, and what each step does.
+$script:CheckTexts = @{
+    H1 = 'The modem is not on USB.'
+    H2 = 'The modem doesn''t answer.'
+    H3 = 'The SIM is not ready.'
+    H4 = 'Not registered on a network.'
+    H5 = 'The data connection is down.'
+    H6 = 'The network adapter is not configured.'
+    H7 = 'No traffic gets through.'
+}
+$script:StepTexts = @{
+    R1 = 'Configuring the network adapter again.'
+    R2 = 'Restarting the data connection.'
+    R3 = 'Registering on the network again.'
+    R4 = 'Turning the radio off and on.'
+    R5 = 'Restarting the modem.'
+    R6 = 'Restarting the modem''s USB device.'
+}
+
+function Get-SnapshotRecovery {
+    # The snapshot's recovery state, or $null.
+    param([object] $Snapshot)
+
+    if ($Snapshot -and $Snapshot.PSObject.Properties['Recovery']) { $Snapshot.Recovery } else { $null }
 }
 
 function Resolve-AppTone {
-    # The tone of the tray icon and the window: Online, Working (on its way), Attention (the user
-    # must act), Offline (no modem), Stopped (no worker, or one that doesn't answer).
+    # The tone of the tray icon and the window: Online, Working (on its way), Recovering (a
+    # recovery step taken, or the next one awaited), Attention (the user must act, or recovery
+    # ran out of steps), Offline (no modem), Stopped (no worker, or one that doesn't answer).
     param([object] $Snapshot, [string] $Worker)
 
     if (-not $Snapshot -or $Worker -ne 'Running' -or -not $Snapshot.State) {
         return 'Stopped'
     }
+    $recovery = Get-SnapshotRecovery -Snapshot $Snapshot
+    if ($recovery -and $recovery.Status -eq 'SlowCadence') {
+        return 'Attention'
+    }
     if ($Snapshot.State -eq 'Online') {
         return 'Online'
+    }
+    if ($recovery -and $recovery.Status -in 'Recovering', 'Settling', 'Waiting') {
+        return 'Recovering'
     }
     if ($Snapshot.Reason -eq 'NoDevice') {
         return 'Offline'
@@ -104,12 +140,41 @@ function Resolve-AppTone {
     'Working'
 }
 
+function Format-ClockTime {
+    # 'HH:mm', or '' without a time.
+    param([object] $Time)
+
+    if ($Time) { $Time.ToString('HH:mm', [cultureinfo]::InvariantCulture) } else { '' }
+}
+
+function Get-RecoveryText {
+    # What recovery is doing, in a sentence or two; $null when it says nothing beyond the reason.
+    param([object] $Snapshot)
+
+    $recovery = Get-SnapshotRecovery -Snapshot $Snapshot
+    if (-not $recovery) {
+        return $null
+    }
+    $check = if ($recovery.Check -and $script:CheckTexts.ContainsKey($recovery.Check)) { $script:CheckTexts[$recovery.Check] } else { 'The connection is down.' }
+    $step = if ($recovery.Step -and $script:StepTexts.ContainsKey($recovery.Step)) { $script:StepTexts[$recovery.Step] } else { $null }
+    switch ($recovery.Status) {
+        { $_ -in 'Recovering', 'Settling' } { if ($step) { $step } }
+        'Waiting' { "$check The recovery steps didn't help: they start again at $(Format-ClockTime -Time $recovery.NextTime)." }
+        'SlowCadence' { "$check Recovery failed $($recovery.Cycles) times: the app tries again at $(Format-ClockTime -Time $recovery.NextTime)." }
+        'Withheld' { if ($step) { "$check The app only observes, so it doesn't take the recovery step: $($step.Substring(0, 1).ToLowerInvariant())$($step.Substring(1))" } }
+    }
+}
+
 function Get-ReasonText {
     # The sentence that says why the connection is where it is.
     param([object] $Snapshot)
 
     if ($Snapshot.State -eq 'Online') {
         return 'Connected.'
+    }
+    $recovering = Get-RecoveryText -Snapshot $Snapshot
+    if ($recovering) {
+        return $recovering
     }
     $reason = $Snapshot.Reason
     if ($reason -and $script:ReasonTexts.ContainsKey($reason)) {
@@ -138,10 +203,14 @@ function Test-StepWithheld {
 
 function Get-AppTitle {
     # The headline: the tone's, except 'Not connected' while a step waits that the app, only
-    # observing, never takes.
+    # observing, never takes, and 'Connection lost' once recovery has run out of steps.
     param([object] $Snapshot, [string] $Tone)
 
-    if ($Tone -eq 'Working' -and (Test-StepWithheld -Snapshot $Snapshot)) {
+    $recovery = Get-SnapshotRecovery -Snapshot $Snapshot
+    if ($Tone -eq 'Attention' -and $recovery -and $recovery.Status -eq 'SlowCadence') {
+        return 'Connection lost'
+    }
+    if ($Tone -eq 'Working' -and ((Test-StepWithheld -Snapshot $Snapshot) -or ($recovery -and $recovery.Status -eq 'Withheld'))) {
         return 'Not connected'
     }
     $script:ToneTitles[$Tone]
@@ -370,6 +439,12 @@ function ConvertTo-WindowView {
         if ($Snapshot.SettingsPending) { $notes.Add('The data connection is up with other settings: the new ones apply at the next connection.') }
         if (@($Snapshot.SettingsProblems).Count -gt 0) { $notes.Add("Settings file: $(@($Snapshot.SettingsProblems) -join ' ')") }
         if ($Snapshot.Modems -gt 1) { $notes.Add("$($Snapshot.Modems) modems found: the app uses the one on $($Snapshot.PortName).") }
+        # The step that brought the connection back, until health has held long enough.
+        $recovery = Get-SnapshotRecovery -Snapshot $Snapshot
+        if ($recovery -and $recovery.Status -eq 'Healthy' -and $recovery.Step -and $recovery.StepTime -and $script:StepTexts.ContainsKey($recovery.Step)) {
+            $step = $script:StepTexts[$recovery.Step]
+            $notes.Add("Recovered at $(Format-ClockTime -Time $recovery.StepTime): $($step.Substring(0, 1).ToLowerInvariant())$($step.Substring(1))")
+        }
     }
 
     $radio = if ($Snapshot) { $Snapshot.Radio } else { $null }
@@ -420,6 +495,10 @@ function ConvertTo-WindowView {
     if ($Snapshot) {
         $footer.Add($(if ($Snapshot.PortName) { "AT port $($Snapshot.PortName)" } else { 'AT port closed' }))
         $footer.Add("updated $($Snapshot.Time.ToString('HH:mm:ss', [cultureinfo]::InvariantCulture))")
+        if ($Snapshot.PSObject.Properties['DataPath'] -and $Snapshot.DataPath -and $Snapshot.DataPath.Time) {
+            $word = switch ($Snapshot.DataPath.Result) { 'Passed' { 'checked' } 'Failed' { 'failed' } default { 'not checked yet' } }
+            $footer.Add("data path $word at $($Snapshot.DataPath.Time.ToString('HH:mm:ss', [cultureinfo]::InvariantCulture))")
+        }
         if (-not $Snapshot.Elevated) { $footer.Add('no administrator rights') }
     }
 

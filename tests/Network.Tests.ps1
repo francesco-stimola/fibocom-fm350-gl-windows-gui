@@ -196,6 +196,55 @@ Describe 'Resolve-AdapterConfiguration' {
         $adapter = Get-TestAdapter -Change @{ Dhcp = 'Disabled'; Addresses = @() }
         (Resolve-AdapterConfiguration -Context $script:context -Adapter $adapter -Settings $script:settings).Actions.Action | Should -Not -Contain 'DisableDhcp'
     }
+
+    It 'takes an address Windows is still checking as in place: <State>' -ForEach @(
+        @{ State = 'Tentative' }
+        @{ State = 'Preferred' }
+    ) {
+        $adapter = Get-TestConfiguredAdapter -Change @{ Addresses = @([pscustomobject]@{ Address = '198.51.100.23'; PrefixLength = 24; Origin = 'Manual'; State = $State }) }
+        (Resolve-AdapterConfiguration -Context $script:context -Adapter $adapter -Settings $script:settings).Configured | Should -BeTrue
+    }
+
+    It 'sets again an address Windows refused: <State>' -ForEach @(
+        @{ State = 'Duplicate' }
+        @{ State = 'Invalid' }
+    ) {
+        $adapter = Get-TestConfiguredAdapter -Change @{ Addresses = @([pscustomobject]@{ Address = '198.51.100.23'; PrefixLength = 24; Origin = 'Manual'; State = $State }) }
+        $plan = Resolve-AdapterConfiguration -Context $script:context -Adapter $adapter -Settings $script:settings
+        $plan.Configured | Should -BeFalse
+        $plan.Actions.Action | Should -Be @('RemoveAddress', 'SetAddress')
+        @($plan.Actions | ForEach-Object Address) | Should -Be @('198.51.100.23', '198.51.100.23')
+    }
+}
+
+Describe 'Resolve-AdapterClearing' {
+    It 'removes the default routes, then the addresses the app set' {
+        $adapter = Get-TestConfiguredAdapter -Change @{ Gateways = @('0.0.0.0', '198.51.100.1') }
+        $plan = Resolve-AdapterClearing -Adapter $adapter
+        $plan.Configured | Should -BeFalse
+        $plan.Actions.Action | Should -Be @('RemoveGateway', 'RemoveGateway', 'RemoveAddress')
+        $plan.Actions[0].NextHop | Should -Be '0.0.0.0'
+        $plan.Actions[2].Address | Should -Be '198.51.100.23'
+    }
+
+    It 'leaves a link-local address and one a DHCP server gave, with its route' {
+        $adapter = Get-TestAdapter -Change @{
+            Addresses = @(
+                [pscustomobject]@{ Address = '169.254.10.20'; PrefixLength = 16; Origin = 'WellKnown' }
+                [pscustomobject]@{ Address = '192.0.2.77'; PrefixLength = 24; Origin = 'Dhcp' }
+            )
+            Gateways  = @('192.0.2.1')
+        }
+        (Resolve-AdapterClearing -Adapter $adapter).Actions | Should -BeNullOrEmpty
+    }
+
+    It 'gives Resolve-AdapterConfiguration a fresh adapter to configure once applied' {
+        $adapter = Get-TestConfiguredAdapter
+        $cleared = Get-TestAdapter -Change @{ Dhcp = 'Disabled'; InterfaceMetric = 500; AutomaticMetric = $false; Addresses = @(); Gateways = @(); DnsServers = $adapter.DnsServers }
+        $plan = Resolve-AdapterConfiguration -Context $script:context -Adapter $cleared -Settings $script:settings
+        $plan.Actions.Action | Should -Be @('SetAddress', 'SetGateway')
+        (Resolve-AdapterClearing -Adapter $adapter).Actions.Count | Should -Be 2
+    }
 }
 
 Describe 'Get-ModemAdapterState' {
@@ -207,7 +256,7 @@ Describe 'Get-ModemAdapterState' {
         }
         Mock -ModuleName FibocomFm350 Get-NetIPInterface { [pscustomobject]@{ Dhcp = 'Disabled'; InterfaceMetric = 500; AutomaticMetric = 'Disabled' } }
         Mock -ModuleName FibocomFm350 Get-NetIPAddress {
-            [pscustomobject]@{ IPAddress = '198.51.100.23'; PrefixLength = 24; PrefixOrigin = 'Manual' }
+            [pscustomobject]@{ IPAddress = '198.51.100.23'; PrefixLength = 24; PrefixOrigin = 'Manual'; AddressState = 'Tentative' }
         }
         Mock -ModuleName FibocomFm350 Get-NetRoute {
             [pscustomobject]@{ NextHop = '198.51.100.1' }
@@ -227,6 +276,7 @@ Describe 'Get-ModemAdapterState' {
         $state.AutomaticMetric | Should -BeFalse
         $state.Addresses[0].Address | Should -Be '198.51.100.23'
         $state.Addresses[0].Origin | Should -Be 'Manual'
+        $state.Addresses[0].State | Should -Be 'Tentative'
         $state.Gateways | Should -Be @('198.51.100.1', '0.0.0.0')
         $state.DnsServers | Should -Be @('203.0.113.53', '203.0.113.54', '2001:db8::53')
         Should -Invoke -ModuleName FibocomFm350 Get-NetIPAddress -ParameterFilter { $InterfaceIndex -eq 12 }

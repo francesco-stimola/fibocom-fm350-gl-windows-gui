@@ -19,6 +19,13 @@
         'AT+CGCONTRDP=1'                                      = @('+CGCONTRDP: 1,6,"internet.mnc001.mcc001.gprs","","","192.0.2.53","192.0.2.54","","",0,,1500,,,,,,,,,,,,0', 'OK')
         'AT+CGPADDR=1'                                        = @('+CGPADDR: 1,"192.0.2.10",""', 'OK')
         'AT+CGAUTH?'                                          = @('+CGAUTH: 0,0,"",""', 'OK')
+        'AT+CGACT=0,1'                                        = @('OK')
+        'AT+CGACT=1,1'                                        = @('OK')
+        'AT+COPS=2'                                           = @('OK')
+        'AT+COPS=0'                                           = @('OK')
+        'AT+CFUN=4'                                           = @('OK')
+        'AT+CFUN=1'                                           = @('OK')
+        'AT+CFUN=15'                                          = @('OK')
         'AT+CESQ'                                             = @('+CESQ: 99,99,255,255,14,44,40,49,69', 'OK')
         'AT+GTCCINFO?;+GTCAINFO?'                             = @(
             '+GTCCINFO:'
@@ -34,23 +41,46 @@
         )
     }
 
+    # What the recovery steps and the steps that follow them do, every time they succeed: the
+    # answers they change ('Base': the base answer; 'Answers = Base': every answer back to the
+    # base), the device flags they set (DataPath), and whether the modem drops off USB.
+    Transitions = @{
+        # R2, then the pass: a context restarted mends a data path that was down.
+        'AT+CGACT=0,1' = @{ Answers = @{ 'AT+CGACT?' = @('OK') }; Flags = @{ DataPath = 'Up' } }
+        'AT+CGACT=1,1' = @{ Answers = @{ 'AT+CGACT?' = 'Base' } }
+        # R3, then the pass: deregistered, the context goes with the registration.
+        'AT+COPS=2'    = @{ Answers = @{ 'AT+COPS?' = @('+COPS: 2', 'OK'); 'AT+CEREG?;+C5GREG?' = @('+CEREG: 0,0', '+C5GREG: 0', 'OK'); 'AT+CGACT?' = @('OK') } }
+        'AT+COPS=0'    = @{ Answers = @{ 'AT+COPS?' = 'Base'; 'AT+CEREG?;+C5GREG?' = 'Base' } }
+        # R4, then the pass: the radio off leaves the registration unknown (stat 4), no context.
+        'AT+CFUN=4'    = @{ Answers = @{ 'AT+CFUN?' = @('+CFUN: 4', 'OK'); 'AT+CEREG?;+C5GREG?' = @('+CEREG: 0,4', '+C5GREG: 0', 'OK'); 'AT+CGACT?' = @('OK') } }
+        'AT+CFUN=1'    = @{ Answers = @{ 'AT+CFUN?' = 'Base'; 'AT+CEREG?;+C5GREG?' = 'Base' } }
+        # R5: the modem resets - off USB, back with every answer as in the base.
+        'AT+CFUN=15'   = @{ Answers = 'Base'; Flags = @{ DataPath = 'Up' }; Vanish = $true }
+    }
+
     # Each scenario changes the base:
+    # - Like: another scenario this one starts from.
     # - Answers: standing answers that differ from the base ones.
-    # - Then: command -> the answers it changes once it has run ('Base': the base answer; a
-    #   command mapped to 'Base' itself brings every answer back to the base). The command is
-    #   answered OK.
+    # - Then: command -> the answers it changes the first time it has run ('Base': the base
+    #   answer; a command mapped to 'Base' itself brings every answer back to the base). The
+    #   command is answered OK.
     # - Vanish: commands after which the modem drops off USB (a restart), back a few seconds later.
+    # - Transitions: what recovery commands do here, instead of the base's (above).
+    # - Flags: the device's flags at the start (DataPath 'Down': no traffic gets through).
+    # - Hung: the AT port answers nothing until the USB device is restarted.
     # - Adapter: 'Configured' (as the app would leave it), 'Fresh' (DHCP on, link-local
-    #   address) or 'Disabled' (fresh, and disabled by the user).
+    #   address) or 'Disabled' (fresh, and disabled by the user). DadChecks: probes that find an
+    #   address just set still being checked by Windows. LostRounds: probe rounds lost after it.
+    #   PassedRounds: probe rounds that pass before a path that is down shows it.
     # - Presence: how PnP sees the modem - 'Present', 'Absent' or 'NoDriver'.
     Scenarios = @{
         # Online: the app attaches and changes nothing.
-        Online          = @{
+        Online           = @{
             Adapter = 'Configured'
         }
 
         # A registered modem with no context yet: defined, activated, the adapter configured.
-        Connect         = @{
+        Connect          = @{
             Adapter = 'Fresh'
             Answers = @{
                 'AT+CGDCONT?' = @('+CGDCONT: 0,"IPV4V6","","",0,0,0,2,1,1,,0,1,0', 'OK')
@@ -64,7 +94,7 @@
 
         # An empty APN put on the IMS APN by the network: the app asks for an APN. The simulated
         # network takes 'internet' (PDP type IPV4V6).
-        ApnNeeded       = @{
+        ApnNeeded        = @{
             Adapter = 'Fresh'
             Answers = @{
                 'AT+CGCONTRDP=1' = @('+CGCONTRDP: 1,6,"ims.mnc001.mcc001.gprs","","","192.0.2.53","","","",0,,1500,,,,,,,,,,,,0', 'OK')
@@ -78,7 +108,7 @@
         }
 
         # A SIM waiting for its PIN, its PIN request on: the PIN is 1234; 0000 is refused.
-        PinRequired     = @{
+        PinRequired      = @{
             Adapter = 'Configured'
             Answers = @{
                 'AT+CPIN?'        = @('+CPIN: SIM PIN', 'OK')
@@ -93,7 +123,7 @@
 
         # A module locked by a laptop's maker (the reads of fixtures/documented/fcc.locked.txt):
         # its radio stays off. The unlock restarts it, unlocked and online.
-        FccLocked       = @{
+        FccLocked        = @{
             Adapter = 'Fresh'
             Answers = @{
                 'AT+CFUN?'                                            = @('+CFUN: 4', 'OK')
@@ -116,18 +146,76 @@
         }
 
         # The modem's network adapter disabled by the user: the app asks before enabling it.
-        AdapterDisabled = @{
+        AdapterDisabled  = @{
             Adapter = 'Disabled'
         }
 
         # No modem on USB.
-        NoDevice        = @{
+        NoDevice         = @{
             Presence = 'Absent'
         }
 
         # The modem on USB, its AT port without a driver.
-        NoDriver        = @{
+        NoDriver         = @{
             Presence = 'NoDriver'
+        }
+
+        # As Connect, and the path settles: the new address is not usable for two probes, then a
+        # round is lost. None of it is a failure.
+        Settling         = @{
+            Like       = 'Connect'
+            DadChecks  = 2
+            LostRounds = 1
+        }
+
+        # Online, the path proven once, then no traffic gets through; restarting the context (R2)
+        # mends it.
+        DataPathDown     = @{
+            Adapter      = 'Configured'
+            Flags        = @{ DataPath = 'Down' }
+            PassedRounds = 1
+        }
+
+        # Online, and no probe ever answered: a network that drops ICMP. Nothing is escalated.
+        IcmpDropped      = @{
+            Adapter = 'Configured'
+            Flags   = @{ DataPath = 'Down' }
+        }
+
+        # Not registered: re-registering (R3) doesn't help, the radio off and on (R4) does.
+        RegistrationLost = @{
+            Adapter     = 'Configured'
+            Answers     = @{
+                'AT+CEREG?;+C5GREG?' = @('+CEREG: 0,2', '+C5GREG: 0', 'OK')
+                'AT+COPS?'           = @('+COPS: 0', 'OK')
+                'AT+CGACT?'          = @('OK')
+            }
+            Transitions = @{
+                'AT+COPS=0' = @{ Answers = @{ 'AT+COPS?' = @('+COPS: 0', 'OK') } }
+            }
+        }
+
+        # The AT port answers nothing until the USB device is restarted (R6).
+        ModemHung        = @{
+            Adapter = 'Configured'
+            Hung    = $true
+        }
+
+        # The network refuses the registration, whatever is done.
+        Unrecoverable    = @{
+            Adapter     = 'Configured'
+            Answers     = @{
+                'AT+CEREG?;+C5GREG?' = @('+CEREG: 0,3', '+C5GREG: 0', 'OK')
+                'AT+COPS?'           = @('+COPS: 0', 'OK')
+                'AT+CGACT?'          = @('OK')
+            }
+            Transitions = @{
+                'AT+COPS=2'  = @{ Answers = @{ 'AT+COPS?' = @('+COPS: 2', 'OK') } }
+                'AT+COPS=0'  = @{ Answers = @{ 'AT+COPS?' = @('+COPS: 0', 'OK') } }
+                'AT+CFUN=4'  = @{ Answers = @{ 'AT+CFUN?' = @('+CFUN: 4', 'OK') } }
+                'AT+CFUN=1'  = @{ Answers = @{ 'AT+CFUN?' = 'Base' } }
+                'AT+CFUN=15' = @{ Vanish = $true }
+            }
         }
     }
 }

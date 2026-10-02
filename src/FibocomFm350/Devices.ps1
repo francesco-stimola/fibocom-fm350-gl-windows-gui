@@ -150,8 +150,9 @@ function Resolve-ModemPresence {
 
         Returns Device - 'Present' (a modem whose AT port works and has a COM port), else
         'NoDriver' (an AT port without its driver), else 'Problem' (an AT port with another
-        problem, or with no COM port), else 'Absent' - with PortName and AdapterInstanceId (its
-        network function, $null when absent) of the modem chosen, and Modems, how many there are.
+        problem, or with no COM port), else 'Absent' - with InstanceId (its composite USB
+        device), PortName and AdapterInstanceId (its network function, $null when absent) of the
+        modem chosen, and Modems, how many there are.
         With several usable modems the first by instance ID is chosen, so the choice is the same
         at every look.
     .EXAMPLE
@@ -182,8 +183,62 @@ function Resolve-ModemPresence {
     $chosen = if ($usable.Count -gt 0) { $usable[0] } else { $null }
     [pscustomobject]@{
         Device            = $device
+        InstanceId        = if ($chosen) { $chosen.InstanceId } else { $null }
         PortName          = if ($chosen) { $chosen.AtPort.PortName } else { $null }
         AdapterInstanceId = if ($chosen -and $chosen.Network) { $chosen.Network.InstanceId } else { $null }
         Modems            = $Modem.Count
+    }
+}
+
+function Restart-ModemUsbDevice {
+    <#
+    .SYNOPSIS
+        Restarts the modem's USB device: Windows removes it and starts it again, every function
+        with it.
+    .DESCRIPTION
+        The recovery step R6, for an AT port that stopped answering while the modem is still on
+        USB. Runs pnputil /restart-device on the modem's composite device - found by PnP, never
+        remembered: its instance ID changes with the USB port. Only an FM350 composite device is
+        accepted. Needs administrator rights; the AT port must be closed first, or Windows may
+        postpone the restart to the next reboot. pnputil is run from the system folder, never
+        found through PATH: the app runs elevated (ARCHITECTURE -> Invariants).
+
+        Returns Done ($true when pnputil reports success) and ExitCode (3010: the restart waits
+        for a reboot; $null when pnputil didn't end within -TimeoutMs and was stopped).
+    .EXAMPLE
+        Restart-ModemUsbDevice -InstanceId (Resolve-ModemPresence -Modem $modems).InstanceId
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidatePattern('^USB\\VID_0E8D&PID_712[67]\\[^\\]+$')]
+        [string] $InstanceId,
+
+        [ValidateRange(1000, 120000)]
+        [int] $TimeoutMs = 30000
+    )
+
+    if (-not $PSCmdlet.ShouldProcess("USB device $InstanceId", 'Restart')) {
+        return
+    }
+    $start = [System.Diagnostics.ProcessStartInfo]::new((Join-Path -Path ([Environment]::SystemDirectory) -ChildPath 'pnputil.exe'))
+    $start.ArgumentList.Add('/restart-device')
+    $start.ArgumentList.Add($InstanceId)
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    # Its text is localized: only the exit code is read. Drained, so that it never fills the pipe.
+    $start.RedirectStandardOutput = $true
+    $process = [System.Diagnostics.Process]::Start($start)
+    try {
+        [void]$process.StandardOutput.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutMs)) {
+            $process.Kill()
+            return [pscustomobject]@{ Done = $false; ExitCode = $null }
+        }
+        [pscustomobject]@{ Done = $process.ExitCode -eq 0; ExitCode = $process.ExitCode }
+    }
+    finally {
+        $process.Dispose()
     }
 }
