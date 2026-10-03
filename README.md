@@ -17,15 +17,11 @@ System tray app · PowerShell 7 · recovery ladder · band lock · driver instal
 [![PowerShell](https://img.shields.io/badge/PowerShell-7.6%2B-5391FE.svg)](https://github.com/PowerShell/PowerShell)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6.svg)](#requirements)
 
-[The problem](#the-problem) · [Features](#features) · [How it works](#how-it-works) · [Requirements](#requirements) · [Roadmap](docs/ROADMAP.md) · [Architecture](docs/ARCHITECTURE.md)
+[The problem](#the-problem) · [Features](#features) · [Install](#install) · [How it works](#how-it-works) · [Requirements](#requirements) · [Roadmap](docs/ROADMAP.md) · [Architecture](docs/ARCHITECTURE.md)
 
 </div>
 
 ---
-
-> **Status: early development.** There is no installer yet: the tray app runs from source
-> ([`docs/SETUP.md`](docs/SETUP.md)). Progress is tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md);
-> the first release will be `v1.0.0`.
 
 ## The problem
 
@@ -36,8 +32,6 @@ register on the network and activate a data context with AT commands, then confi
 adapter's IP address by hand. And when the link drops — it does — nothing brings it back.
 
 ## Features
-
-Planned, in roadmap order:
 
 - **Connect** — registers, activates the data context, configures the modem's network adapter.
   If the modem is already online when the app starts, it attaches instead of re-dialing.
@@ -50,10 +44,51 @@ Planned, in roadmap order:
   A new mode is tried first: if the modem finds no network with it, it goes back to what it had.
 - **Drivers** — detects when the modem's AT ports have no driver and installs the driver package
   you provide, after checking its Microsoft signature and that it matches your modem.
+- **Encrypted DNS** — DNS over HTTPS to the DNS servers you choose, or to the one your DoH
+  template names — by name too, looked up again every hour —, on the modem's adapter alone, never
+  falling back to plain DNS (Windows 11).
+- **Update notice** — the tray menu says when a newer release is out. Nothing is ever downloaded
+  or installed by the app.
+- **Languages** — English, Italian, German, French, Spanish, Portuguese, Dutch and Polish, as
+  Windows' display language asks. Translations other than Italian have had no native speaker's
+  review yet: corrections are welcome (`src/App/Strings`, `src/Installer/Strings`).
 - **eSIM** (after 1.0) — on modules with an embedded SIM: list, switch, rename, download and delete
   eSIM profiles, through [lpac](https://github.com/estkme-group/lpac).
 - **SMS, USSD and data usage** (after 1.0) — read and send text messages, run balance codes like
   `*123#`, and see how much data this billing cycle has used, with an optional quota warning.
+
+## Install
+
+1. **PowerShell 7.6 or later**: `winget install Microsoft.PowerShell`, or *PowerShell* from the
+   Microsoft Store. Windows PowerShell 5.1, which Windows already has, only starts it.
+2. **Download** `fibocom-fm350-gl-windows-gui-<version>.zip` from the
+   [latest release](https://github.com/francesco-stimola/fibocom-fm350-gl-windows-gui/releases/latest)
+   and extract it (*Extract All*). Windows may ask whether to run a file that came from the
+   internet: that is the installer itself.
+3. **Run `install.cmd`** and accept the one UAC prompt. A window shows what it does: it copies the
+   app to `C:\Program Files\fibocom-fm350-gl-windows-gui`, registers the tasks that start it with
+   administrator rights, adds **Fibocom FM350-GL Windows GUI** to the Start menu, and starts the app. Your account must
+   be an administrator: the app runs as the account that installs it. The extracted folder can be
+   deleted afterwards.
+4. **The modem's driver.** If its AT ports have no driver, the app says so and opens its *Driver*
+   tab: it tells you where a copy of MediaTek's driver is published, and by whom. Download it and
+   choose it there; the app checks that Microsoft signed it for your modem, then installs it. The
+   app never downloads or bundles the driver.
+
+From then on the Start-menu entry opens its window — no more UAC prompts. To have it start in
+the tray when you sign in to Windows, tick *Start the app in the tray when you sign in to Windows*
+in its *Connection* tab: it is off until you do.
+
+**Updating**: extract the new release's zip and run its `install.cmd`. The running app exits —
+the connection stays up — and the new version starts. Once per start, when the connection first
+comes online, the app asks GitHub for the latest release, and the tray menu says when a newer one
+is out; the request names the app and nothing about you or your computer, though GitHub sees your
+IP address. *Connection* → *Updates* turns it off.
+
+**Uninstalling**: *Uninstall* in Settings → Apps → Installed apps, or run `uninstall.cmd` — from
+the zip, or from the install folder — and accept the UAC prompt. It removes the app, its tasks,
+its Start-menu entry and its place in the list of installed apps, and asks whether to delete your
+settings, the stored SIM PIN and APN password, and the logs too. The connection is left as it is.
 
 ## How it works
 
@@ -68,12 +103,15 @@ picks up the connection where it is.
                                     AT port (COMx)    modem network adapter
 ```
 
-The app starts at logon through a scheduled task with elevated rights — one UAC prompt at install
-time, none afterwards. Details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+The app starts through scheduled tasks with elevated rights — from the Start menu, and at sign-in
+once you turn that on — with one UAC prompt at install time, none afterwards. Details:
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Requirements
 
-- Windows 10 or 11, x64.
+- Windows 10 or 11, 64-bit, on an x64 (Intel or AMD) processor — the installer refuses others:
+  PowerShell 7 has no 32-bit version, and Windows on Arm can't load the modem's driver. Encrypted
+  DNS needs Windows 11.
 - [PowerShell 7.6+](https://github.com/PowerShell/PowerShell): `winget install Microsoft.PowerShell`.
 - A Fibocom FM350-GL on a USB adapter, with a SIM.
 - The **MediaTek USB serial driver** (`usb2ser_tm`, WHQL-signed) for the modem's AT ports. The
@@ -86,8 +124,8 @@ the one tool eSIM needs.
 
 ## Development
 
-Setup, lint and test commands, fixture rules and the release process:
-[`docs/SETUP.md`](docs/SETUP.md). Protocol facts and their sources:
+Setup, lint and test commands, running the app from source, fixture rules and the release
+process: [`docs/SETUP.md`](docs/SETUP.md). Protocol facts and their sources:
 [`docs/AT-COMMANDS.md`](docs/AT-COMMANDS.md). Contributions: [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Credits

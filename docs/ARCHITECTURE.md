@@ -28,7 +28,9 @@ When the link drops, nothing brings it back. This app does both, from the system
 
 - **Windows 10/11 x64, PowerShell 7.6+.** No other platform: on Linux the modem is served by
   ModemManager/NetworkManager, and almost everything here (drivers, PnP, adapter configuration,
-  autostart) is Windows-specific.
+  autostart) is Windows-specific. Windows PowerShell 5.1, part of Windows, only starts it
+  (*Startup, elevation, single instance*). Encrypted DNS needs Windows 11 (*Network
+  configuration*).
 - **FM350-GL over USB.** Laptops with an OEM-integrated FM350 (PCIe) that already work through
   Windows' mobile broadband stack are out of scope.
 - **No redistribution of the modem driver**, nor of any binary whose license doesn't allow it.
@@ -117,16 +119,46 @@ user reopens it and monitoring resumes.
 
 ### Startup, elevation, single instance
 - The app needs admin rights (adapter configuration, device restart, drivers). To avoid a UAC
-  prompt at every start, the installer (M7) registers a **scheduled task** — *at logon, run with
-  highest privileges* — that starts the app hidden, and a **Start-menu shortcut** that runs that
-  task. One UAC prompt at install time, none afterwards.
-- **The app's files live where only administrators can write.** The logon task runs them elevated
+  prompt at every start, the installer (M7) registers two **scheduled tasks** that run with the
+  highest privileges as the user who installed it — *Start at logon*, which starts the app hidden
+  in the tray, and *Open*, which starts it with its window — and a **Start-menu shortcut** that
+  runs *Open*. One UAC prompt at install time, none afterwards (*Installing and updating*).
+- **Starting at sign-in is the user's choice, off by default** (decided 2026-10-03): *Start at
+  logon* is registered disabled on a first installation, and an update keeps it as the user left
+  it. The *Connection* tab's checkbox turns it on or off — the elevated app enables or disables
+  the task (`Set-AppLogonTask`), never creates or deletes it; the checkbox shows the task's own
+  state, read by the worker, not a copy in the settings file, and is greyed out where there is no
+  such task (development mode). Like every system call, it runs on the worker, never on the UI
+  thread.
+- **The app's files live where only administrators can write.** The tasks run them elevated
   without a prompt, so a copy in a user-writable folder (the extracted zip, a per-user module path)
   would let any program running as the user edit them and gain administrator rights silently. The
-  installer copies the app under `%ProgramFiles%` and the task starts it from there, with
-  `pwsh -NoProfile` and a module path limited to admin-only folders: the user's profile script and
-  per-user modules are user-writable too. For the same reason no setting names an executable or a
-  script to run: lpac is found next to the app.
+  installer copies the app under `%ProgramFiles%` and checks that nobody else can change any of
+  it. For the same reason no setting names an executable or a script to run: lpac is found next to
+  the app.
+- **PowerShell 7 is found, never named.** Its MSIX package — what winget installs from 7.6, and
+  the only package from 7.7 — lives in a folder named after its version, which every update
+  replaces, and its one stable name, the app execution alias, is in the user's profile
+  (`AT-COMMANDS.md` §11.2). So the tasks start **Windows PowerShell 5.1**, which every supported
+  Windows has in its system folder, with the launcher `Start-Fm350.ps1` from the install folder; at
+  every start the launcher looks for PowerShell 7 — the MSI's folder, the current user's MSIX
+  package — and takes the newest at 7.6 or later that is under Program Files and signed by
+  Microsoft. It starts it with `-NoProfile` and **no console window**: a console program started by
+  a task gets one, which `-WindowStyle Hidden` doesn't hide under Windows Terminal, the default
+  terminal of Windows 11. The launcher's own console shows for a moment. Without a usable
+  PowerShell 7, the launcher says so in a message box and what to install.
+- **Paths are literal, modules admin-only.** The tasks name Windows PowerShell and the launcher by
+  their full paths, resolved by the installer from Windows' known folders — never through `PATH`
+  or an environment variable, which the user can set. The launcher, the installer and the app set
+  their module path to Windows' own modules and PowerShell's (`$PSHOME`) before any command could
+  load one: the user's module folder is theirs to write, and PowerShell puts it back in the
+  process's module path whenever a runspace opens (`AT-COMMANDS.md` §11.2), so the app takes it
+  out again as each worker runspace opens.
+- **What invariant 10 doesn't cover.** User Account Control is not a security boundary
+  (`AT-COMMANDS.md` §11.2): a program running as the user can reach an elevated process of the same
+  user in ways no app closes — the user's environment, for one, reaches every process the user
+  starts. The app closes the paths made of files: its own, PowerShell's, the modules and profiles,
+  the settings, a driver package.
 - A named **mutex** enforces one instance (`Enter-AppInstance`): machine-wide, since the COM port
   is. A second launch signals the first to show its window — through an event of its Windows
   session — and exits: two instances would fight over the COM port. A mutex left by an instance
@@ -142,14 +174,75 @@ carries on. *Exit* asks the worker to close the AT port and waits for it up to 5
 process ends whatever is left — a worker stuck in a call that never returns would otherwise keep
 the process, and the port, alive.
 
+### Installing and updating (M7)
+- **The package.** The release zip holds what `src/` holds — `install.cmd`, `uninstall.cmd`, the
+  launcher `Start-Fm350.ps1`, the folders `App`, `FibocomFm350`, `Installer` — with `LICENSE`,
+  `README.md` and `CHANGELOG.md`, and no folder at its top: Explorer's *Extract All* names one
+  after the zip. The installer copies those entries and nothing else, so an *extract here* into a
+  busy folder never takes the folder along.
+- **`install.cmd`** runs the launcher in Windows PowerShell. It first refuses a Windows the app
+  can't run on — anything but 64-bit Windows on an x64 processor, read from `Win32_Processor`
+  (`Test-LauncherPlatform`): PowerShell 7.6 has no 32-bit build, and Windows on Arm loads only
+  Arm64 kernel drivers, which the modem's driver package lacks (`AT-COMMANDS.md` §11.2; decided
+  2026-10-03). Then it finds PowerShell 7 and starts the installer (`Installer\Invoke-Fm350Setup.ps1`) with the one UAC prompt, in a window
+  that waits for Enter at the end. The installer runs as the account that ran the `.cmd`: when the
+  prompt is answered with another account's credentials, that other account is not the one the
+  app must run as, and nothing is done.
+- **Install** (`Install-Fm350App`): the running app, if any, is asked to exit — an event of its
+  session, which only an elevated process can signal — and its mutex held until the end, so none
+  starts meanwhile; *Exit* stops monitoring only, the connection stays up. An app that doesn't exit
+  within 30 s (another Windows session) stops the installation before anything changes. The
+  package's entries are copied beside the install folder, their mark of the web removed, and the
+  copy checked: owned and writable by SYSTEM, Administrators and TrustedInstaller alone, every file
+  of it (`Test-AdminOnlyAccess`). Then the old folder moves aside, the copy takes its place, and the
+  old one is deleted; a failure halfway puts the old one back, and leftovers are deleted at the next
+  installation. The two tasks are registered — Task Scheduler's defaults would stop the app after
+  72 hours, keep it from starting on batteries, stop it when the computer goes on batteries, and
+  run it at below-normal priority (`AT-COMMANDS.md` §11.2): none of that applies —, the
+  Start-menu shortcut made with an icon the installed app draws, the app listed in Windows'
+  installed apps (`Register-AppUninstallEntry`: its key under `Uninstall`, written whole at every
+  installation — name, version, icon, folder, size, page, `uninstall.cmd` through `cmd /c`, no
+  *Modify* nor *Repair*), the mutex released, and the app started with its window through *Open*.
+  When a step fails after the running app exited, that app is started again from the folder in
+  place — the old one put back, or the new one — before the failure is said: an update that fails
+  never leaves monitoring off.
+- **Updating** is the same: extract the new zip, run its `install.cmd`. Running it again from the
+  install folder makes the tasks and the shortcut again without copying.
+- **Uninstall** (`uninstall.cmd`, in the zip and in the install folder, or *Uninstall* in
+  Windows' installed apps, which runs it): the running app exits as above, then the tasks and
+  their folder, the shortcut and the install folder are removed, and the app's entry in the list
+  last — until the folder is gone, an uninstallation that failed can run again from there. Nothing
+  on the modem or its adapter is undone: the connection stays as it is, as *Exit* leaves it. The
+  uninstaller asks whether to delete the settings, the stored SIM PIN and APN password, and the
+  logs too.
+
 ### Updates (M7)
 The zip on GitHub Releases is the only distribution channel. Once per app start, when the
 connection first comes online (at logon it usually isn't yet), the worker reads the latest release
-from GitHub's public API: one attempt, no retry until the next start, no timer. If that release is
+from GitHub's public API: one attempt, no retry until the next start, no timer. When the API
+refuses (`403`, `429` — its limit is 60 requests an hour per public address, shared with every
+other client behind it: a home router, an office, an operator's address translation;
+`AT-COMMANDS.md` §11.3), that same attempt asks the latest release's page once instead, and reads
+the release's tag from where it redirects. If that release is
 newer than the running version, the tray menu says so and links to it. The app never downloads or
 installs an update: updating stays *extract the zip, run `install.cmd`*, with its one UAC prompt.
 A setting turns the check off. Since the app can run for weeks, a release is noticed at the next
 start, not the day it is published.
+- **The request** (`Start-UpdateCheck`) names the app as its user agent and nothing else — no
+  version, no Windows build, no language, which .NET's and PowerShell's own user agents would add
+  —, and gives up after 10 s. It runs **asynchronously**: the worker sends it and looks for the
+  answer once a second, its heartbeat never waiting on the network. A worker replaced while the
+  request was under way passes it on as done: no second attempt.
+- **The page** (`Start-UpdateCheck -Page`) is one `HEAD` with the same user agent and nothing
+  else, its redirect read and never followed; the log says the API refused, and whether its rate
+  limit was used up.
+- **The decision** (`Resolve-UpdateNotice`, pure) reads the answer's tag (`v<major>.<minor>.<patch>`)
+  and compares it with the running version; a draft or a prerelease is never newer. For the page,
+  `Resolve-UpdateRedirect` (pure) takes the tag from a redirect to this repository's release page
+  only, reads one to the list of releases as none published, and fails on anything else — never
+  asking again. The tray menu
+  links the release's page, **built from the tag** — no address from the answer is ever opened —,
+  through Explorer, as the Driver tab opens its page. Development mode never sends the request.
 
 ## AT channel (M1)
 
@@ -523,9 +616,12 @@ the decisions are pure functions (`Resolve-NetworkMode`, `Resolve-NetworkModeTri
   `Set-ModemAdapterConfiguration` applies a plan (administrator rights) and stops at the first
   change that fails; the next pass plans again.
 - The configuration is written to the **active store only** (`-PolicyStore ActiveStore`) —
-  addresses, routes, DHCP, metric: it vanishes at reboot instead of lingering as stale persistent
-  configuration. **DNS servers have no active store**: they are set on the adapter, and rewritten
-  at every connect.
+  addresses, routes, metric: they vanish at reboot instead of lingering as stale persistent
+  configuration. DHCP's setting is the exception: Windows stores it in the active store alone and
+  keeps it across reboots, so the adapter stays without DHCP — the modem serves none anyway.
+  **DNS servers and their encryption have no active store**: they are set on the adapter, kept
+  across reboots — the encrypted servers a DoH template's name was last looked up to count again
+  at the next start (*Encrypted DNS*) — and compared at every connect.
 - **IPv4 only.** The app configures the context's IPv4 address; IPv6 on the adapter is left to the
   network's router advertisements, if the modem relays them. A context of type `IPV6` alone is
   therefore not offered in the settings.
@@ -542,22 +638,69 @@ the decisions are pure functions (`Resolve-NetworkMode`, `Resolve-NetworkModeTri
   for good — an IPv6-first override, IPv6 servers left by an earlier context — and the adapter would
   never count as configured.
 - **Encrypted DNS (DoH), M7** (decided 2026-10-03): a setting turns DNS over HTTPS on for the
-  servers of the DNS override, which it needs — the operator's servers speak no DoH. Each server
-  uses the template Windows knows for it, or the template the settings give, which then applies to
-  every server of the override; a server with neither is a settings problem. It is set **per
+  servers of the DNS override, or for the server the DoH template names — the operator's servers
+  speak no DoH. Each server uses the template Windows knows for it, or the template the settings
+  give, which then applies to every server of the override; a server with neither is a settings
+  problem. It is set **per
   interface** (`SetInterfaceDnsSettings` with `DNS_INTERFACE_SETTINGS3` and
   `DnsServerDohProperty`), never per server address system-wide
   (`Set-DnsClientDohServerAddress -AutoUpgrade`), which would change every adapter using that
   address. The pass re-applies it like the servers — on the new adapter a re-enumerated modem
   brings, too — and removes it when the setting is turned off. **No fallback to plain DNS**: who
   turns encryption on wants no query in the clear; the health checks don't notice a DoH failure,
-  since H7 probes by address, not by name. The window shows whether it is on. No DoT. *Open for
-  M7*: whether that per-interface API exists on Windows 10, which the project supports (*Scope and
-  non-goals*). Microsoft's API reference gives Windows 10 build 19041 for
-  `SetInterfaceDnsSettings`, but builds 19645 and 20348 for `DNS_INTERFACE_SETTINGS3` and
-  `DnsServerDohProperty` — both above 19045, Windows 10's last release (learn.microsoft.com,
-  netioapi, read 2026-10-03). To be tried on Windows 10; the answer decides what the setting does
-  there.
+  since H7 probes by address, not by name. The window shows whether it is on. No DoT.
+  - **How** (`Resolve-AdapterConfiguration`, `Set-InterfaceDoh`; `AT-COMMANDS.md` §11.1): each
+    family's servers are set together with their DoH properties in one `SetInterfaceDnsSettings`
+    call — never first in the clear —, each with `DNS_DOH_SERVER_SETTINGS_ENABLE` and its template,
+    the one Windows knows read from its list (`Get-DohKnownServer`); never Windows' automatic
+    template, never `FALLBACK_TO_UDP`. What the interface carries is read back with
+    `GetInterfaceDnsSettings` and compared at every pass: a server without encryption, with another
+    template or allowed to fall back is set again. The comparison is with the interface's
+    **static** servers, which that read gives — never the IPv6 ones Windows lists on its own, nor a
+    DHCP server's. **A family the servers leave out keeps no static server**: the operator's IPv6
+    server beside an IPv4 override would answer in the clear; every server goes, encrypted or not
+    (`Set-DnsClientServerAddress -ResetServerAddresses`) — never first stripped of its encryption,
+    which a failed reset would leave in the clear — and the wanted ones are set again, encrypted,
+    at once. Turned off, the DoH properties come off first, then the servers change as usual. A
+    read Windows refuses for one family is **not read**, never "no DoH": encryption is left as it
+    is at that pass and nothing is blocked; turned off, the servers are still set, compared with
+    the ones Windows lists. Only a missing function means a Windows without it. Its list of known
+    templates failing to read doesn't stop the pass either: a server with no template given keeps
+    the one the adapter already encrypts it with; with none, encryption is left as it is until the
+    list reads. Either way the log says so once.
+  - **A server named by its template** (decided 2026-10-03): without the override, the template's
+    host is the server — Windows binds encryption to an address, never to a name
+    (`AT-COMMANDS.md` §11.1). A host that is an address is that server. A name is looked up by
+    the worker (`Resolve-DohServer`, `Update-WorkerDohName`): when it starts, then every
+    `DohRefreshMinutes` (60 by default, 5 to 1440), and at the pass cadence (30 s) while a lookup
+    fails, the last addresses kept meanwhile; the pass sets new addresses at once. A lookup is
+    never waited on for more than 2 s at a time, and gives up after 15 s; while it runs, the worker
+    looks for its answer once a second, as for the update check. Until the name has
+    addresses, the servers the adapter already encrypts with that template count as the last ones
+    — Windows keeps them across restarts —, and with none the adapter is configured with **no DNS
+    server at all** (the operator's, in the clear, are taken off), so the connection is up and
+    only names wait; an adapter the modem's DHCP configured is left alone and waits
+    (`DohServerUnresolved`, blocked).
+  - **The one query in the clear, declared.** The name is looked up through Windows, as any name
+    — on every interface, over the encrypted server itself while it answers. When Windows can't —
+    the server moved and the modem alone carries traffic, or nothing is set yet —, the app asks
+    the operator's DNS servers for the context (the `+CGCONTRDP` ones) for that **one name**, over
+    UDP **in the clear**, from a socket bound to the modem's address, so it leaves through the
+    modem (Windows' strong host model). It reveals which resolver the user has, never what they
+    look up. The query has a random ID and source port, and an answer counts only from a server
+    asked, with that ID and that question (RFC 5452). The window and the log say when a lookup
+    went that way.
+  - **What it can't set, it doesn't configure.** Encrypted DNS without any server, on a Windows
+    without the per-interface API, or with a server that has no template known or given: the plan
+    holds no change at all — the adapter isn't configured, so no query goes through it in the clear
+    — and the connection waits for the user (`DohNeedsServers`, `DohUnavailable`,
+    `DohTemplateMissing`, blocked: no recovery step mends a setting). The window says why and opens
+    the settings; its own check refuses to save such settings in the first place.
+  - **Windows 10 has no per-interface DoH** (`AT-COMMANDS.md` §11.1, from Microsoft's
+    documentation; not tried on a Windows 10 computer). Whether a Windows has it is read, not
+    assumed from a build number: the DnsClient module's DoH cmdlets and the version-3 read of the
+    adapter's settings. Where it is missing, the window greys the setting out and says why; a
+    settings file that turns it on anyway blocks the adapter's configuration as above.
 - **A disabled adapter is the user's choice**: the pass stops there (`AdapterDisabled`, blocked)
   and changes nothing on it; the window offers to enable it again (administrator rights), never
   the app by itself (decided 2026-10-01).
@@ -566,7 +709,11 @@ the decisions are pure functions (`Resolve-NetworkMode`, `Resolve-NetworkModeTri
 ## Tray icon (M3)
 
 What it shows is decided by pure functions of the snapshot (`Resolve-TrayIcon`,
-`ConvertTo-TrayText`); icon states and texts decided 2026-10-01.
+`ConvertTo-TrayText`); icon states and texts decided 2026-10-01. The tray's icon is the signal;
+the **app's own icon** — the window's title bar, the taskbar, the Start-menu shortcut — is the
+logo's glyph (`assets/logo.html`, its `?icon` variant: the circular arrow around four bars), drawn
+from the logo's geometry at every size an icon file needs, no image file in the repository
+(`AppIcon.ps1`; decided 2026-10-03).
 - Drawn at runtime with `System.Drawing` at the size Windows asks for: four signal bars, a color
   for the state, and the technology label (`5G`, `4G`) where it is legible — 24 pixels and up; at
   16 pixels (100 % scaling) the bars alone.
@@ -592,10 +739,10 @@ What it shows is decided by pure functions of the snapshot (`Resolve-TrayIcon`,
   process dies after days; a test counts the process's GDI and USER objects over hundreds of
   redraws.
 - Tooltip, 127 characters at most: online, the technology, the operator, the RSRP; otherwise why
-  not, in a few words. Menu: *Open*, *Check now* (a connect pass now), *Network mode* — the modes
-  the modem supports, its own checked, a click tries another one, the bands as the settings have
-  them (M5) —, *Exit*. The menu is filled from the latest snapshot as it opens. A left click opens
-  the window.
+  not, in a few words. Menu: a newer release, only when there is one (M7, *Updates*) — its page —,
+  *Open*, *Check now* (a connect pass now), *Network mode* — the modes the modem supports, its own
+  checked, a click tries another one, the bands as the settings have them (M5) —, *Exit*. The menu
+  is filled from the latest snapshot as it opens. A left click opens the window.
 - **No network** (M5, decided 2026-10-03): red, while a network mode the user narrowed finds no
   network past H4's grace time (*Modes and bands*).
 
@@ -610,8 +757,8 @@ comes back in a later snapshot, so the window never waits on the modem or the sy
   password to give again (`ApnPasswordUnreadable`), the PIN (`NoPin` and the like), *Enable
   adapter* for an adapter the user disabled (administrator rights; never done by the app on its
   own), *Unlock…* for an FCC-locked modem, *Install the driver…* for an AT port without its
-  driver (the *Driver* tab). What the app can't act on — a PUK, no SIM, the last PIN attempt — is
-  said, with nothing to click.
+  driver (the *Driver* tab), *Open the settings* for encrypted DNS that can't be set (M7). What
+  the app can't act on — a PUK, no SIM, the last PIN attempt — is said, with nothing to click.
 - **What changes something outside the app asks first**: the FCC unlock (it writes the modem's
   non-volatile memory and lifts the laptop maker's restriction), removing the PIN from the SIM (it
   changes the SIM, in any phone too), uninstalling the AT port's driver (the app then can't watch
@@ -623,9 +770,46 @@ comes back in a later snapshot, so the window never waits on the modem or the sy
   bands as read, the mode to keep (or *As the modem has it*), a checkbox per band the modem
   supports with *every band* per RAT, *Apply*, and how the last choice went (on trial until when,
   kept, undone, bands the modem leaves out); *Connection* — the settings, checked as typed with
-  the same validation the worker applies; saving them never changes the network mode; *Driver*
-  (M6) — the AT port's driver, where a known copy is published, the package chosen and what its
-  check found, *Install*, *Uninstall the driver…* (*Drivers*).
+  the same validation the worker applies, and encrypted DNS against what the snapshot says Windows
+  can do — the servers it knows a template for, whether it has the per-interface API —; whether
+  the adapter's DNS is encrypted now, and for which servers; saving them never changes the network
+  mode; *Driver* (M6) — the AT port's driver, where a known copy is published, the package chosen
+  and what its check found, *Install*, *Uninstall the driver…* (*Drivers*). The footer says the
+  app's version. Tabs whose content may outgrow the window — *SIM*, *Connection*, *Driver* —
+  scroll; the outcome and the footer wrap beside *Check now*, never under it.
+- **Its own on the taskbar** (decided 2026-10-03): the window and the Start-menu shortcut carry
+  one AppUserModelID, `FibocomFm350Gl.WindowsGui` (`AppIdentity.ps1`; development mode its own).
+  Without it the window takes the identity of the PowerShell that hosts it — an MSIX package's,
+  icon included —; with it, the taskbar shows the shortcut's icon and name, and pinning the
+  window pins the shortcut, which starts the app through its *Open* task, without a UAC prompt
+  (`AT-COMMANDS.md` §11.2). The window's ID is removed before it closes, as Windows requires; a
+  failure to set or remove it leaves the window working, with PowerShell's identity.
+
+### Languages (M7)
+
+Decided 2026-10-03: the app speaks English, Italian, German, French, Spanish, Portuguese, Dutch
+and Polish — **everything the user reads**: the window and its dialogs, the tray, the blockers,
+the installer and the launcher. The **log stays in English**: it serves reports and diagnosis.
+- **Windows' display language decides**, with no setting: `CurrentUICulture`, or its parent
+  (`it-CH` → Italian, `pt-BR` → Portuguese), when the app has it; English otherwise
+  (`Resolve-AppLanguage`). Chosen when the app starts (`Set-AppLanguage`); a language changed in
+  Windows applies at the next start. Until then, and in the tests, English.
+- **One table per language** — `App\Strings\<language>.psd1`, `Installer\Strings\<language>.psd1`
+  —, English the complete one and the fallback of a key a language lacks; a table that can't be
+  read is English, never a failure. Texts are templates with placeholders `{0}`, `{1}`… filled in
+  the invariant culture, like every number the app writes. A sentence that follows a colon has a
+  form of its own (`ActionInline.*`, `StepInline.*`): lower-casing a first letter is right in
+  English, wrong for a German noun.
+- **Codes travel, texts don't.** The worker publishes codes — reasons, results, checks, steps, a
+  setting's broken rule with its values (`ConvertTo-AppSetting`'s `Issues`) —, and the window
+  turns them into words; the English sentences the log writes are made apart, in the core module.
+  A combo box's value is its `Tag`, never the text it shows.
+- The window's XAML holds `[[Key]]` tokens, replaced before it is read (`ConvertTo-LocalizedXaml`).
+  The launcher, in Windows PowerShell 5.1, reads the installer's tables: every table is UTF-8 with
+  a byte order mark, without which 5.1 reads the ANSI code page.
+- Tests prove every table has English's keys and placeholders, that every key the code and the
+  XAML name exists and every English key is used, and show each language on every simulated
+  scenario and in the window with no key missing.
 
 ## Drivers (M6)
 
@@ -790,8 +974,11 @@ values of the same shape in fixtures.
   task runs as the same user, so the path is the same elevated or not. `Apn` (empty: the
   subscription's own), `PdpType` (`IP` or `IPV4V6`), `ApnAuthentication` (`None`, `PAP`, `CHAP`)
   with `ApnUser`, `DnsServers` (the override; empty keeps the operator's) with, from M7,
-  `DnsOverHttps` (off by default; on needs the override) and `DohTemplate` (empty: the template
-  Windows knows for each server — *Network configuration*), `InterfaceMetric` (500:
+  `DnsOverHttps` (off by default; on needs the override, or a template that names its server),
+  `DohTemplate` (empty: the template Windows knows for each server — *Network configuration*) and
+  `DohRefreshMinutes` (60: how often a server the template names by a name is looked up again;
+  5 to 1440), `CheckForUpdates` (on: the update
+  notice, *Updates*), `InterfaceMetric` (500:
   the modem as a backup), `NetworkMode` (empty: not managed; `Automatic`, `LteOnly`,
   `NrOnly`) with `LteBands` and `NrBands` (empty: every band). Read leniently — an invalid value falls back to its default and is
   reported, an unknown one is ignored: a bad file never stops the app — and written strictly: an
@@ -834,7 +1021,11 @@ src/
     Fcc.ps1              FCC lock: reads, diagnosis, unlock (M2)
     Modes.ps1            network mode and bands: reads, what to write (pure), a choice on trial (M5)
     Connection.ps1       state machine (pure), observation and connect pass (M2)
-    Network.ps1          modem adapter: configuration plan (pure), read and apply (M2)
+    Network.ps1          modem adapter: configuration plan (pure), read and apply (M2); its
+                         encrypted DNS (M7)
+    Dns.ps1              encrypted DNS on one interface: read and set through the IP Helper API,
+                         the templates Windows knows; the template's server by name, looked up
+                         through Windows or with a DNS query of its own (M7)
     Log.ps1              redaction (pure), rolling log (M2)
     Devices.ps1          the modem's USB functions: classification (M6, pure), PnP reader (M2),
                          which modem to open (M3, pure), its USB restart (M4); pnputil
@@ -844,13 +1035,26 @@ src/
     Health.ps1           which check fails, the data path's verdict (M4, pure); the probe
     Recovery.ps1         the recovery decision (M4, pure), maintenance windows, the steps
     Simulation.ps1       development mode: the simulated device and adapter (M3)
+    Updates.ps1          the update notice: what GitHub's answer means (pure), the request (M7)
+    Startup.ps1          the start at sign-in: the installer's logon task, read and turned on or off (M7)
     Worker.ps1           the worker: link, cadence (pure), snapshots (pure), commands, loop (M3)
     Data/                3GPP band tables, transcribed (EutraBands.psd1, NrBands.psd1); the
                          simulated modem's answers (Simulation.psd1); the driver packages the
                          app knows (Drivers.psd1)
+  install.cmd            installs or updates the app (M7): runs Start-Fm350.ps1 -Mode Install
+  uninstall.cmd          removes it (M7)
+  Start-Fm350.ps1        the launcher, in Windows PowerShell 5.1: finds PowerShell 7, starts the
+                         app or the installer (M7)
+  Installer/             the installer (M7): its own module, FibocomFm350.Installer, and
+                         Invoke-Fm350Setup.ps1, which the launcher runs elevated; Texts.ps1 and
+                         Strings/, its texts and the launcher's in each language
   App/                   tray app (M3): its own module, FibocomFm350.App
+    Texts.ps1            the app's texts in Windows' display language (M7); Strings/ holds
+                         one table per language
     View.ps1             what the tray and the window show, from a snapshot (pure)
     TrayIcon.ps1         the icon: drawn, swapped, every handle destroyed
+    AppIcon.ps1          the app's own icon, the logo's glyph: window, taskbar, shortcut (M7)
+    AppIdentity.ps1      the app's AppUserModelID, on its window and its Start-menu shortcut (M7)
     MainWindow.xaml/.ps1 the main window and its buttons
     Supervisor.ps1       worker runspaces, when to replace one (pure), the single instance
     App.ps1              the UI thread's loop, start and exit
@@ -863,15 +1067,19 @@ tests/
     fakes.psd1           the only identifier-like values a fixture may carry
 tools/
   Invoke-Lint.ps1        the linter, as CI runs it (docs/SETUP.md)
+  New-ReleasePackage.ps1 the release zip and its notes (M7): CI builds them at every push, the
+                         release workflow publishes them
 assets/                  logo (source: logo.html)
 ```
 
 ## Runtime dependencies
 
 None beyond **PowerShell 7.6+ on Windows**. Everything the app uses ships with it: `System.IO.Ports`
-(serial), WPF and WinForms (UI), `System.Drawing` (icon), and the Windows modules `PnpDevice`,
-`NetAdapter`, `NetTCPIP`, `DnsClient`, `ScheduledTasks`. From `v1.1.0` the release zip also
-carries `lpac.exe` for eSIM (see *eSIM*); nothing has to be installed separately.
+(serial), WPF and WinForms (UI), `System.Drawing` (icon), `System.Net.Http` (the update notice),
+and the Windows modules `PnpDevice`, `NetAdapter`, `NetTCPIP`, `DnsClient`, `ScheduledTasks`.
+Windows PowerShell 5.1 and its `Appx` module, part of Windows, run the launcher. From `v1.1.0`
+the release zip also carries `lpac.exe` for eSIM (see *eSIM*); nothing has to be installed
+separately.
 
 ## Invariants
 
@@ -890,9 +1098,12 @@ carries `lpac.exe` for eSIM (see *eSIM*); nothing has to be installed separately
 9. **Band codes round-trip.** A code read from the modem survives being written back, even when
    the app does not understand it.
 10. **Elevated code comes only from an admin-only location.** The app and the tools it runs are
-    loaded from under `%ProgramFiles%` or the system folder; nothing user-writable (profile
-    scripts, per-user modules, paths from settings) is executed by the elevated process, and a
-    driver package is installed from a copy only administrators can write.
+    loaded from under `%ProgramFiles%` or the system folder, by literal paths; nothing
+    user-writable (profile scripts, per-user modules, paths from settings or the environment) is
+    executed by the elevated process — its module path is held to admin-only folders, also after
+    a runspace opens —, and a driver package is installed from a copy only administrators can
+    write. User Account Control is no security boundary: this closes the paths made of files
+    (*Startup, elevation, single instance*).
 
 ## Independent implementation
 

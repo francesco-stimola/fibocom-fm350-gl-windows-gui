@@ -4,6 +4,274 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-03 — M7 on the device
+
+The release zip as a download leaves it — every file marked as from the internet —, installed and
+uninstalled with the real modem, and the system put back after each step. Facts in
+`AT-COMMANDS.md` §11:
+- **Installing and updating**: one UAC prompt; the app started by its logon task after a restart
+  and by its Start-menu entry, the window pinned to the taskbar too; `install.cmd` again over the
+  running app, which exited with its connection up and started again. The logon task registered
+  off; the *Connection* tab's checkbox turned it on and off again.
+- **Listed in Windows' installed apps**, its *Uninstall* running `uninstall.cmd`, which took the
+  entry off with the rest; `uninstall.cmd` run by hand did the same.
+- **Encrypted DNS** on the modem's adapter with the connection up, by address and by a template's
+  name; taken off on the real API — the servers kept, unencrypted — once the fix for empty
+  templates was in; an IPv6 static server beside encrypted IPv4 ones taken off by the plan's reset,
+  nothing asked at the next pass. No IPv6 DNS server was ever advertised by the network.
+- **The update notice** against GitHub's real answers: `404` while no release is published, and
+  `403` while the address's quota was used up — which brought the fallback to the release page.
+- **Putting the system back** found that clearing an adapter with nothing of the app's on it threw
+  (an entry below); with the fix, the same step on the real system did nothing, as it should.
+
+## 2026-10-03 — M7: the review pass
+
+One lite review of M7's changes found five defects in the product, all fixed, each with a test
+that fails without the fix (mutation-checked). A targeted re-check of those fixes and of the new
+entry in the list of installed apps found four more, fixed the same way, and one open decision. It
+found the installer's access checks, tasks, paths with spaces, COM objects and resources, the
+uninstall string's quoting and the UI thread sound.
+- **Encrypted DNS left a family in the clear.** With an override of one family — IPv4, the usual
+  case — the other family's static servers stayed on the adapter unencrypted: the operator's IPv6
+  servers from an earlier pass, or its IPv4 one beside an IPv6 override. The plan now takes every
+  server of such a family off with a reset — never first stripped of its encryption, which a reset
+  that failed would leave in the clear (found by the re-check) — and sets the wanted ones again,
+  encrypted. It compares the **static** servers, which the per-interface read already parsed and
+  now returns: compared with the servers Windows lists, its own IPv6 ones would have asked for a
+  change at every pass — and taking encryption off IPv6 servers would have written them as static
+  ones. The simulated adapter reads a DoH property only with its server, as Windows reads it by
+  position.
+- **A refused read is not "no DoH".** Any exception reading an interface's DoH settings used to
+  mean a Windows without the API: DoH users were blocked, and the window greyed the setting out,
+  over what may be a transient refusal. Only a missing function means that now; a refused read
+  leaves encryption as it is at that pass — with encryption off the servers are still set,
+  compared with the ones Windows lists, or a fresh adapter would be online with no DNS server
+  (found by the re-check). Windows' list of known templates failing to read no longer fails the
+  whole connect pass, nor blocks a valid setting with `DohTemplateMissing` (found by the re-check):
+  "not read" is kept apart from "none known"; a server with no given template keeps the one the
+  adapter already encrypts it with, and with none encryption is left as it is. Either is logged
+  once.
+- **The worker spun while a DoH lookup ran.** A lookup that fell due kept its due time in the
+  past until it ended, and the cycle's wait became 0: up to 15 s of a core at 100% per slow lookup.
+  The due time no longer shortens the wait while a lookup runs; its answer is looked for once a
+  second.
+- **An update that failed after the app exited left it stopped**: monitoring and recovery off
+  until the user noticed. The installer now starts that app again, from the folder in place,
+  before saying what failed.
+- **An uninstallation that failed after deleting part of the folder** could leave an entry in the
+  list of installed apps that no longer uninstalls (found by the re-check). The entry stays only
+  while `uninstall.cmd` and the package are whole.
+- **Router-advertised IPv6 DNS servers** would stay in the clear with encrypted DNS on, out of a
+  reset's reach. None was ever listed on our modem and operator, so what to do if one appears is
+  an open decision (ROADMAP).
+
+## 2026-10-03 — Decided: listed in Windows' installed apps
+
+Decided by the maintainer as proposed: the app is listed in Settings → Apps → Installed apps,
+whose *Uninstall* runs `uninstall.cmd` (`Register-AppUninstallEntry`). The key is the app's name
+under `Uninstall`, as non-MSI installers name theirs, written whole at every installation; no
+*Modify* nor *Repair* — changing the app is installing it again; no publisher. The uninstaller
+takes the entry off last, so an uninstallation that failed halfway can run again from the list.
+Rejected: after the first release; only `uninstall.cmd`.
+
+Also decided: the program shows its name, **Fibocom FM350-GL Windows GUI**, in the Start menu, the
+list of installed apps, the window's title (so the taskbar) and the installer's and the
+launcher's messages, where it said *FM350-GL* — the modem's name. The tray's tooltip keeps
+*FM350-GL*: it gives the modem's state, in little room. Rejected: the repository's own form,
+`fibocom-fm350-gl-windows-gui`, in menus; the long name in the tooltip too.
+
+## 2026-10-03 — The update notice when GitHub's API refuses
+
+Found on the device: three update checks in a row were answered `403`, most likely because other
+requests to the API from the same public address had used up its quota. The API allows 60 unauthenticated
+requests an hour per address, shared with every other client behind it — a home router, an
+office, an operator's address translation when the modem is the computer's way out —, and the one
+attempt per app start then fails until the next start, possibly weeks later. Decided by the
+maintainer as proposed: the API stays first — documented, it says draft and
+prerelease —, and a `403` or `429` makes the same attempt ask the latest release's page once,
+reading the tag from its redirect (`Resolve-UpdateRedirect`, pure, matrix-tested; a `HEAD`, the
+redirect never followed). Only a redirect to this repository's release page counts; anything else
+is a failure, never a second request. The log says whether the rate limit was used up, from
+`x-ratelimit-remaining`, not the body, which names the address. Rejected: the page alone (the
+redirect is the site's behavior, not an API contract), retrying after the limit's reset (a shared
+address may be used up every hour), leaving it.
+
+## 2026-10-03 — Starting at sign-in off by default; two fixes found putting the system back
+
+- **Decided by the maintainer**: the app no longer starts at sign-in unless the user asks. The
+  installer registers *Start at logon* disabled — an update keeps it as the user left it —, and
+  the *Connection* tab's checkbox turns it on or off: the elevated app enables or disables the
+  task, never creates one, and the checkbox reads the task itself (ARCHITECTURE → *Startup,
+  elevation, single instance*). Rejected: a question at install time (changing one's mind means
+  installing again), both, leaving it always on.
+- **Found on the device, putting the system back**: taking encryption off the adapter's servers
+  failed with `0x2EE6`. The servers without a template went to the native call as empty strings —
+  PowerShell turns a `$null` in a string array into one — and Windows refused a DoH property with
+  an empty template (`AT-COMMANDS.md` §11.1). The device session had only ever switched from one
+  encrypted server to another; turning encryption off would have failed at every pass. Which
+  servers get a property is now decided in PowerShell (`Get-DohServerProperty`, tested), and the
+  native call gets only those. Tried again on the device: encryption off, the servers kept.
+- **Found on the device, the same way**: clearing an adapter that carries nothing of the app's —
+  recovery step R1 on an adapter the modem's DHCP configured — threw instead of doing nothing. The
+  plan's `Actions` was `$null`, not an empty array: an `if` statement's output unrolls an array,
+  an empty one to nothing, and `@($null)` is one action with no name, which StrictMode refuses to
+  read. Both plans, `Resolve-AdapterClearing`'s and `Resolve-AdapterConfiguration`'s, now always
+  carry an array — of none, of one — and the tests check the type, not `-BeNullOrEmpty`, which
+  passed on `$null`.
+
+## 2026-10-03 — The app's own taskbar identity
+
+Found on the device: the window showed the app's icon in its title bar and PowerShell's on the
+taskbar. PowerShell came from its MSIX package, and the taskbar gives a packaged app's windows the
+package's identity and icon. Decided by the maintainer as proposed: the window and the Start-menu
+shortcut share one AppUserModelID (ARCHITECTURE → *Main window*), so the taskbar shows the app's
+icon and name, and pinning the window pins the shortcut — the app started through its task, with
+no UAC prompt. Rejected: the window's ID alone (pinning it would pin nothing that starts the app);
+leaving it. Microsoft's guidance puts the ID on the shortcut rather than in relaunch properties
+when a shortcut exists. The window's ID is removed before it closes, as Windows requires, in a
+handler that can't throw: an exception in a WPF handler ends the process. A test caught a removal
+that never removed: PowerShell passes `$null` to a .NET string parameter as an empty string, so
+removal has a method of its own.
+
+## 2026-10-03 — Decided: x64 only, the app's own icon, eight languages
+
+Decided by the maintainer as proposed, before the first release:
+- **The installer refuses a Windows the app can't run on**: anything but 64-bit Windows on an
+  x64 processor (`AT-COMMANDS.md` §11.2) — PowerShell 7.6 has no 32-bit build, and Windows on Arm
+  loads Arm64 kernel drivers alone, which the modem's driver package lacks. Read from
+  `Win32_Processor`, not from environment variables the user can set; a processor that can't be
+  read lets the installation go on — the check only explains early what would fail later. Only
+  `install.cmd` checks: the app is started only by the tasks it registers.
+- **The app's own icon is the logo's glyph** (`assets/logo.html`, `?icon`), drawn in code from the
+  logo's geometry at every size, for the window, the taskbar and the Start-menu shortcut. The tray
+  keeps its icon of the signal: it says the state, which a logo can't. Rejected: the logo in the
+  tray too, its bars lit by the signal (no room for the technology at 16 pixels); the glyph on
+  the logo's green tile (less legible at 16 pixels).
+- **Languages: English, Italian, German, French, Spanish, Portuguese, Dutch, Polish**, for
+  everything the user reads, the installer and the launcher included; chosen from Windows'
+  display language, with no setting; the log stays in English (ARCHITECTURE → *Languages*). The
+  translations other than Italian were written without a native speaker's review. Rejected: the
+  24 official EU languages (thousands of texts nobody here can check, in error messages too);
+  Italian alone for now; a language setting.
+- The settings' problems became codes — the setting, the rule it breaks, the rule's values — so
+  the window can say them in its language while the log keeps the English sentence; a test holds
+  the two English renderings equal. A combo box's value is now its `Tag`: its text is translated.
+- Two flaws of the window, found by the maintainer at its smallest size: the *Connection* tab
+  couldn't scroll, and the footer ran under *Check now*. The tabs that can outgrow the window
+  scroll, and the footer wraps.
+
+## 2026-10-03 — Encrypted DNS to a server named by its template
+
+Decided by the maintainer as proposed, before the first release: a resolver at home behind a
+dynamic address has a name, never a stable address, and Windows binds encryption to an address
+(`AT-COMMANDS.md` §11.1).
+- **Without servers of the override, the DoH template's host is the server**: its address, or
+  the IPv4 addresses its name is looked up to — when the worker starts, then every
+  `DohRefreshMinutes`, a new setting (60 by default, 5 to 1440), and every 30 s while a lookup
+  fails, the last addresses kept meanwhile. Rejected: a lookup at every pass (30 s), too much for
+  a name that changes a few times a year.
+- **The bootstrap goes through Windows**, as any name: over the encrypted server itself while it
+  answers. Found while writing its tests: with the modem alone, the first lookup could never
+  succeed — the adapter wasn't configured until there were servers —, nor one after the server
+  moved — the encrypted server no longer answers, and nothing falls back. Hence three rules
+  (ARCHITECTURE → *Network configuration*): the servers the adapter already encrypts with that
+  template count as the last ones (Windows keeps them across restarts); until there are any, the
+  adapter gets its address and route but **no DNS server at all**; and when Windows can't look
+  the name up, the app asks the operator's DNS for that one name, **in the clear**, from the
+  modem's address — the one declared exception to "never in the clear": it reveals the resolver,
+  never what the user looks up. Rejected: no query in the clear at all (a computer with the modem
+  alone stays without DNS until the user acts), a public DoH resolver for the bootstrap (a third
+  party learns the resolver, and the app depends on it).
+- **The query is the app's own** (RFC 1035): Windows' resolver can't be pointed at one server for
+  one name. A random ID and port, and an answer counts only from a server asked, with that ID and
+  question (RFC 5452) — a test caught a comparison by culture that let an answer to another type
+  through: control characters weigh nothing there. The socket is bound to the modem's address,
+  which makes Windows send it through the modem (strong host model, checked on the device).
+
+## 2026-10-03 — Decided: the update notice, the installer, encrypted DNS on Windows 10, the release check
+
+Six decisions of M7, taken by the maintainer as proposed:
+- **The update notice** is one item at the top of the tray menu, only when a newer release exists
+  — *Version 1.1.0 is available...* —, opening the release's page. Rejected: a balloon besides,
+  a line in the window besides.
+- **The installer starts the app** at the end of every installation, with its window, through the
+  *Open* task. Rejected: only when it was running before; never.
+- **The uninstaller asks** whether to delete the settings, the stored SIM PIN and APN password,
+  and the logs; no by default. Rejected: keeping them always, deleting them always.
+- **Encrypted DNS on Windows 10**: answered from Microsoft's documentation, with the support read
+  at run time; where the per-interface API is missing the setting is greyed out with the reason,
+  and a settings file that turns it on anyway blocks the adapter's configuration — never plain
+  DNS. Rejected: ignoring the setting with a warning (DNS in the clear), hiding it; a trial on a
+  Windows 10 computer, not needed for the decision.
+- **Timings**: the installer waits 30 s for a running app to exit; the update request gives up
+  after 10 s. Rejected: 60 s.
+- **The release workflow is verified** by the package CI builds at every push and the tests of
+  its script; `gh release create` runs for the first time with the first tag. Rejected: a manual
+  dry run uploading the zip as an artifact, a tag on a scratch repository, a draft release from a
+  test tag here. **The release stays tag-triggered**: a run that fails before publishing is run
+  again, or its tag made again on the mended commit, before any release exists. Rejected: a
+  release started by hand as a draft, whose tag GitHub creates at *Publish* (two manual steps, no
+  check through the public API); a first trial release `v0.1.0` (no `0.x` releases).
+
+## 2026-10-03 — M7 code-complete: installer, release workflow, update notice, encrypted DNS
+
+Facts first (`AT-COMMANDS.md` §11, each with its source), then the design (ARCHITECTURE →
+*Startup, elevation, single instance*, *Installing and updating*, *Updates*, *Network
+configuration*):
+- **The tasks can't name PowerShell 7.** From 7.6 winget installs its MSIX package by default, and
+  from 7.7 there is no MSI: the MSIX lives in a folder named after its version, replaced at every
+  update, and its one stable name, the app execution alias, is in the user's profile, which the
+  user can write. A task pointing at the versioned folder breaks at the first update; one pointing
+  at the alias runs whatever the user puts there, elevated. So the tasks start Windows PowerShell
+  5.1 — in every supported Windows, at a fixed place in the system folder — with a launcher that
+  finds PowerShell 7 at every start: the MSI's folder or the user's MSIX package, under Program
+  Files and signed by Microsoft, 7.6 or later. Rejected: requiring the MSI (gone from 7.7),
+  re-pointing the task from the running app (an update applied while it isn't running leaves the
+  task dead).
+- **No console window.** With Windows Terminal as the default terminal, a console program started
+  normally — as Task Scheduler and shortcuts start them — gets a Windows Terminal window that
+  `-WindowStyle Hidden` doesn't hide: the app would have shown one for weeks. The launcher starts
+  pwsh with `CreateNoWindow`; only the launcher's own console shows, for a moment.
+- **Opening a runspace puts the user's module folder back** in the module path of the whole
+  process — found while designing the installer: since M3 the elevated worker could load a module
+  from the user's `Documents\PowerShell\Modules`. The start script now sets the module path to
+  `$PSHOME` and Windows' modules before any command, and the supervisor sets it back as each worker
+  runspace opens (a test fails without it). The launcher and the installer do the same.
+- **Two tasks**, *Start at logon* (hidden, in the tray) and *Open* (with the window), which the
+  Start-menu shortcut runs: a task can't be given arguments when it is run, and the shortcut must
+  open the window of an app that isn't running yet. Task Scheduler's defaults are overridden: no
+  72-hour limit, started and kept on batteries, priority 5 instead of 7 — the app's process
+  inherits the below-normal class otherwise.
+- **Literal paths from known folders.** The tasks name Windows PowerShell and the launcher by full
+  paths the installer took from Windows' known folders: an environment variable in a task's action
+  would be the user's to change.
+- **The copy is checked, then swapped in whole.** Only the package's own entries are copied, beside
+  the install folder; every file of the copy must be owned and writable by SYSTEM, Administrators
+  and TrustedInstaller alone (a pure check over the access rules); then the old folder moves aside
+  and the copy takes its place, a failure putting the old one back. A running app is asked to exit
+  through an event of its session — which only an elevated process can signal — and its mutex held
+  until the copy is in place, so no instance starts on half a version: a worker restarted by the
+  old app would import the new core module.
+- **The release zip is built at every push.** CI runs `tools/New-ReleasePackage.ps1` after the tests
+  and publishes nothing; `release.yml` reuses CI as a called workflow, checks the tag against the
+  three modules' version and publishes with `gh release create` and the job's own token — no
+  third-party action. `actions/checkout` is pinned to the commit of v7.0.1.
+- **The update request never blocks the worker**: HttpClient's task, looked at once a second, gone
+  after 10 s. Its user agent is the app's name alone — PowerShell's own would add the Windows build
+  and the language. The page linked is built from the tag. A worker replaced mid-request passes it
+  on as done: one attempt per app start, as decided.
+- **Windows 10 and encrypted DNS: answered from Microsoft's documentation** — DoH in the DNS client
+  "starting with Windows Server 2022", its cmdlets documented for Windows Server 2022 and 2025
+  only, the per-interface API's DoH parts given builds 19645 and 20348, above Windows 10's last,
+  19045. Not tried on Windows 10. Whether a Windows has it is read at run time (the DoH cmdlets and
+  a version-3 read of the adapter's settings), not assumed from a build number.
+- **Encrypted DNS is set in one call per family**, the servers with their DoH properties together —
+  never first in the clear —, `ENABLE` with the template read from Windows' list or the settings,
+  never `FALLBACK_TO_UDP`; read back and compared at every pass. What can't be set — no servers of
+  the user's, no API, a server without a template — plans no change at all: the adapter stays
+  unconfigured and the connection waits for the user (blocked, never escalated). The window checks
+  the same before it saves.
+
 ## 2026-10-03 — M6: the review pass
 
 One lite review of M6's changes found five defects in the product, all fixed; each fix has a test

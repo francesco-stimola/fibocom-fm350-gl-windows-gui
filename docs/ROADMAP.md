@@ -20,7 +20,7 @@ written `(planned)`.
 | [M4 — Health & recovery](#m4) | ✅ complete |
 | [M5 — Modes & bands](#m5) | ✅ complete |
 | [M6 — Driver installation](#m6) | ✅ complete |
-| [M7 — Packaging & first release](#m7) — tag `v1.0.0` (planned) | 📋 planned |
+| [M7 — Packaging & first release](#m7) — tag `v1.0.0` (planned) | 🔨 code-complete |
 | [M8 — eSIM](#m8) — tag `v1.1.0` (planned) | 📋 planned |
 | [M9 — SMS, USSD & data usage](#m9) — tag `v1.2.0` (planned) | 📋 planned |
 
@@ -125,11 +125,20 @@ verifies it and installs it (design: ARCHITECTURE → *Drivers*).
 <a id="m7"></a>
 ## M7 — Packaging & first release
 
-- [ ] Installer script: copies the app under `%ProgramFiles%` (the elevated task never runs files from a user-writable folder), unblocks them, registers the logon scheduled task (highest privileges) and the Start-menu shortcut; uninstaller removes all three.
-- [ ] Release workflow on `v*` tags: lint + tests, check the tag matches the module version, build the zip, publish a GitHub Release with the `CHANGELOG.md` section as notes.
-- [ ] Update notice: once per app start, when the connection first comes online, read the latest GitHub release; if it is newer, the tray menu says so and links to it. Never installs anything; can be turned off in settings.
-- [ ] Encrypted DNS (DoH) on the modem's adapter (decided 2026-10-03): a setting turns DoH on for the servers of the DNS override, which it needs (the operator's servers speak no DoH); an optional DoH template applies to every server of the override, for a provider whose template Windows doesn't know; a server with no template, known or given, is a settings problem. Applied per interface (`SetInterfaceDnsSettings`, `DNS_INTERFACE_SETTINGS3`, `DnsServerDohProperty`), re-applied by the pass like the servers, removed when turned off; no fallback to plain DNS. The window shows whether it is on. No DoT. Open, to answer first: whether that per-interface API exists on Windows 10, which the project supports — Microsoft's reference gives builds above Windows 10's last release for two of its parts (ARCHITECTURE → *Network configuration*).
-- [ ] README install instructions: PowerShell 7, the app, and the guided driver step.
+- [x] Installer (design: ARCHITECTURE → *Installing and updating*): `install.cmd` copies the app under `%ProgramFiles%` — the package's own entries, the mark of the web removed, the copy checked admin-only —, registers the two tasks (*Start at logon*, *Open*: highest privileges, no time limit, on batteries, normal priority) and the Start-menu shortcut, and lists the app in Windows' installed apps (decided 2026-10-03), whose *Uninstall* runs `uninstall.cmd`; `uninstall.cmd` removes all of it. Run again over a running app, it asks the app to exit — the connection stays up —, replaces the folder whole and starts it again; an update that fails after the app exited starts that app again. The tasks start Windows PowerShell 5.1 with the launcher `Start-Fm350.ps1`, which finds PowerShell 7 — the MSI's or the user's MSIX package, under Program Files and signed by Microsoft — at every start: winget installs the MSIX, whose folder changes at every update (invariant 10, `AT-COMMANDS.md` §11.2). Proven in TestDrive with Task Scheduler's cmdlets mocked.
+- [x] The module path held to admin-only folders in the launcher, the installer and the app — also after a worker's runspace opens, which puts the user's module folder back in it (`AT-COMMANDS.md` §11.2).
+- [x] Starting at sign-in off by default (decided 2026-10-03): the logon task is registered disabled, an update keeps the user's choice, and a checkbox in the *Connection* tab turns it on or off.
+- [x] The installer refuses a Windows the app can't run on — anything but 64-bit Windows on x64 (decided 2026-10-03): PowerShell 7.6 has no 32-bit build, Windows on Arm loads only Arm64 kernel drivers (`AT-COMMANDS.md` §11.2).
+- [x] Release workflow on `v*` tags (`release.yml`): CI's lint, tests and package, the tag checked against the three modules' version, the zip built, a GitHub Release published with the version's `CHANGELOG.md` section as notes; actions pinned to commits. CI builds the zip and the notes at every push, publishing nothing.
+- [x] Update notice: once per app start, when the connection first comes online, the latest GitHub release read — asynchronously, the app's name as user agent and nothing else, 10 s at most, one attempt; when the API refuses (rate limit), the latest release's page once instead, its redirect read —; if it is newer, the tray menu says so and links its page, built from its tag. Never installs anything; a setting turns it off; never in development mode.
+- [x] Encrypted DNS (DoH) on the modem's adapter (decided 2026-10-03): a setting turns DoH on for the servers of the DNS override, which it needs; an optional DoH template applies to every server of the override; a server with no template, known or given, is a settings problem. Applied per interface (`SetInterfaceDnsSettings`, `DNS_INTERFACE_SETTINGS3`, `DnsServerDohProperty`), each family's servers set with their encryption in one call, re-applied by the pass, removed when turned off; no fallback to plain DNS: what can't be set leaves the adapter unconfigured and waits for the user. The window shows whether it is on. No DoT. Windows 10 has no per-interface DoH (`AT-COMMANDS.md` §11.1, from Microsoft's documentation): the setting is greyed out where the API is missing, read rather than assumed.
+- [x] A DoH server named by its template (decided 2026-10-03): without the override, the template's host is the server — its address, or its name looked up at the start, every `DohRefreshMinutes` (60) and every 30 s while it fails; through Windows, and when Windows can't, the operator's DNS asked for that one name in the clear from the modem's address (the declared exception). Until the name has addresses, the servers already encrypted with that template, else no DNS server at all.
+- [x] The app's own icon (decided 2026-10-03): the logo's glyph (`assets/logo.html`, `?icon`), drawn in code at every size, for the window, the taskbar and the Start-menu shortcut; the tray keeps its icon of the signal. On the taskbar the window and the shortcut share one AppUserModelID: the app's icon, not its PowerShell's, and pinning the window pins the shortcut.
+- [x] Languages (decided 2026-10-03): English, Italian, German, French, Spanish, Portuguese, Dutch and Polish, from Windows' display language; everything the user reads, the installer and the launcher included; the log in English. One table per language, each proven complete against English.
+- [x] The window at its smallest size: the tabs that can outgrow it scroll, the footer wraps beside *Check now*.
+- [x] README install instructions: PowerShell 7, the app, and the guided driver step.
+- [x] `CHANGELOG.md`: the Unreleased section completed with M4–M7, the release's notes.
+- [x] On the device: a real installation with `install.cmd` from the zip as downloaded (one UAC prompt); the app started by the logon task after a restart, and by the Start-menu shortcut and the pinned window; the start at sign-in turned on and off from the *Connection* tab; encrypted DNS on the modem's adapter with the connection up, by address and by name, and taken off; the update notice against GitHub's real answers (`404`, and `403` with the address's quota used up); `install.cmd` again over the running app; the uninstallation, by `uninstall.cmd` and from Windows' installed apps; the system put back after each step (`AT-COMMANDS.md` §11).
 - [ ] Set `ModuleVersion` to `1.0.0` and tag `v1.0.0`.
 
 <a id="m8"></a>
@@ -168,7 +177,15 @@ data is left (design: ARCHITECTURE → *SMS, USSD and data usage*; facts: `AT-CO
 Decisions that change what happens next and are the maintainer's to take. Remove a line when it is
 decided, and record the decision in `DEVLOG.md`.
 
-*None at the moment.*
+- **IPv6 DNS servers a network advertises, while encrypted DNS is on.** The app takes static
+  servers off a family the override leaves out, but a server from router advertisements is not
+  static: a reset can't remove it, and Windows may query it in the clear. None was ever listed on
+  our modem and operator (`AT-COMMANDS.md` §11.1), so nothing is done about it today. Should one
+  appear: (1) refuse with a problem of its own, the adapter unconfigured, as for a missing
+  template — costs a blocked connection on such networks; (2) turn router-advertised DNS off on
+  the modem's interface while encrypted DNS is on — costs one more persistent setting to put back
+  when it is turned off; (3) say it in the window and the log only. Recommended: (1), cheapest and
+  in line with "no query in the clear", until a device shows the case.
 
 ---
 
