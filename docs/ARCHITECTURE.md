@@ -915,6 +915,8 @@ runs as an external process, one invocation per operation (facts: `AT-COMMANDS.m
   inside a **maintenance window** (see *Maintenance windows*). The slot setting is **persistent**
   modem state (`AT-COMMANDS.md` §4): the app writes it only after a confirmation saying that the
   choice stays in the modem across restarts, and always shows the active slot.
+- **A profile switch resets the SIM** (`AT-COMMANDS.md` §8): the eUICC's logical channels close with
+  it, so a session that fails after a switch is treated as closed, and a new one is opened.
 - **Identifiers:** EID and ICCIDs are redacted like IMEI and IMSI; activation codes are secrets and
   are never logged.
 - **lpac ships with the app.** lpac is AGPL-3.0, so unlike the modem driver it may be

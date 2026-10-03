@@ -4,6 +4,21 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-04 — eSIM: a profile enabled and disabled on the device
+
+The second part of M9's device session, on slot 1 and back to slot 0, the factory test profile
+enabled and disabled again; §8's open questions answered (`AT-COMMANDS.md` §8):
+- **The modem routes `+CGLA` by the session ID**, whatever channel the class byte names, and
+  carries a 131-byte APDU intact; answers of 207 bytes come in one piece. lpac's default segment,
+  120 bytes, fits.
+- **A profile switch resets the SIM by itself**: with the refresh flag, the eUICC asks for a UICC
+  reset, the modem performs it, and the SIM is ready again within 5 s with no AT command. The
+  reset closes the logical channels, so the bridge treats a session that fails after a switch as
+  closed (ARCHITECTURE → *eSIM*).
+- **The eUICC trusts the GSMA production root** (and a Gemalto test CI): profiles from operators'
+  servers can be authenticated by it. Its only profile is a lab tester's (Rohde & Schwarz CMW500),
+  of class test, never deleted; download and delete wait for a profile downloaded for the purpose.
+
 ## 2026-10-03 — An eUICC on our module's slot 1
 
 The first part of M9's device session: reads on slot 0, then slot 1 selected, its eUICC asked, and

@@ -165,7 +165,8 @@ as far as it is verified on a module with an eUICC: nothing of it ships proven o
 modem alone (decided 2026-10-03).
 
 - [x] Device session, first part: our module's eUICC found on slot 1 and reached (`AT-COMMANDS.md` §8) — the slot switched there and back with `AT+GTDUALSIM`, the ISD-R through `+CCHO` / `+CGLA`; one profile on it, of class test.
-- [ ] Device session, the rest of §8's open questions: the longest APDU through `+CGLA`, how the class byte routes, what enabling a profile needs.
+- [x] Device session, the rest of §8's open questions: a 131-byte APDU arrives intact; the modem routes by the session ID; enabling or disabling a profile with the refresh flag resets the SIM by itself and closes the logical channels (`AT-COMMANDS.md` §8). The test profile enabled and disabled again.
+- [ ] Download and delete verified on a profile downloaded for the purpose, from an activation code — never on the factory test profile.
 - [ ] `+CPIN: EMPTY_EUICC` — an eUICC with no profile enabled — told apart from the other SIM states (today it reads as *Other*).
 - [ ] APDU bridge in the worker: lpac's `stdio` protocol ↔ `AT+CCHO` / `AT+CGLA` / `AT+CCHC` on the AT port the worker owns; the protocol translation as pure functions with a matrix of tests; lpac simulated in the tests.
 - [ ] Slot selection (`AT+GTDUALSIM`) and profile switches inside a maintenance window. The slot is persistent modem state: it is switched only after a confirmation that says so, and the active slot is always shown.
