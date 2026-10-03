@@ -48,6 +48,22 @@ $script:ActionTexts = @{
     ActivateContext   = 'Setting up the data connection.'
     DeactivateContext = 'Setting up the data connection.'
     ConfigureAdapter  = 'Configuring the network adapter.'
+    ApplyNetworkMode  = 'Setting the network mode.'
+}
+
+# The network modes, as the window and the tray menu name them (ROADMAP M5).
+$script:NetworkModeTexts = [ordered]@{
+    Automatic = '4G + 5G'
+    LteOnly   = '4G only'
+    NrOnly    = '5G only (SA)'
+}
+$script:NotManagedText = 'As the modem has it'
+
+# Why the modem's network mode is not as the settings ask, when nothing is written.
+$script:NetworkModeProblemTexts = @{
+    NotKept         = 'The modem doesn''t keep the network mode as written; the app doesn''t write it again.'
+    NoSupportedBand = 'The modem supports none of the bands chosen for one of its RATs.'
+    ModeUnsupported = 'The modem doesn''t support this network mode.'
 }
 
 # The outcome of the user's commands: Kind/Result, or Result alone for any kind.
@@ -69,6 +85,12 @@ $script:ResultTexts = @{
     'UnlockFcc/Failed'         = 'The unlock stopped before the restart.'
     'UnlockFcc/PortLost'       = 'The modem left USB during the unlock.'
     'EnableAdapter/Done'       = 'Network adapter enabled.'
+    'SetNetworkMode/Applied'   = 'Network mode sent: the modem is registering again. It is kept once the modem finds a network with it.'
+    'SetNetworkMode/Unchanged' = 'The modem already has this network mode: it is kept.'
+    'SetNetworkMode/Done'      = 'The app no longer manages the network mode: the modem keeps the one it has.'
+    'SetNetworkMode/ModeUnsupported' = 'The modem doesn''t support this network mode: nothing was written.'
+    'SetNetworkMode/NoSupportedBand' = 'The modem supports none of the bands chosen for one of its RATs: nothing was written.'
+    'SetNetworkMode/Unknown'   = 'The modem''s network mode can''t be read: nothing was written.'
     'Refused'                  = 'Not available while the app only observes.'
     'NoModem'                  = 'The modem is not connected.'
     'PortLost'                 = 'The modem left USB during the command.'
@@ -112,6 +134,31 @@ function Get-SnapshotRecovery {
     if ($Snapshot -and $Snapshot.PSObject.Properties['Recovery']) { $Snapshot.Recovery } else { $null }
 }
 
+function Get-SnapshotNetworkMode {
+    # The snapshot's network mode, or $null.
+    param([object] $Snapshot)
+
+    if ($Snapshot -and $Snapshot.PSObject.Properties['NetworkMode']) { $Snapshot.NetworkMode } else { $null }
+}
+
+function Get-NetworkModeText {
+    # '4G + 5G', ... for a mode's name; the RAT value for a mode the app doesn't offer.
+    param([string] $Name, [object] $Rat)
+
+    if ($Name -and $script:NetworkModeTexts.Contains($Name)) { $script:NetworkModeTexts[$Name] } else { "mode $Rat" }
+}
+
+function Test-NoNetworkForMode {
+    # Whether the connection waits for a network the network mode the user narrowed doesn't find:
+    # no registration past its grace time, and no step for it (ARCHITECTURE -> Modes and bands).
+    param([object] $Snapshot)
+
+    $mode = Get-SnapshotNetworkMode -Snapshot $Snapshot
+    $recovery = Get-SnapshotRecovery -Snapshot $Snapshot
+    [bool]($mode -and $mode.Decision -and $mode.Decision.Narrowed -and $mode.Decision.Satisfied -ne $false -and -not $mode.Trial -and
+        $recovery -and $recovery.Check -eq 'H4' -and $recovery.Status -eq 'Watching' -and -not $recovery.NextTime)
+}
+
 function Resolve-AppTone {
     # The tone of the tray icon and the window: Online, Working (on its way), Recovering (a
     # recovery step taken, or the next one awaited), Attention (the user must act, or recovery
@@ -122,7 +169,7 @@ function Resolve-AppTone {
         return 'Stopped'
     }
     $recovery = Get-SnapshotRecovery -Snapshot $Snapshot
-    if ($recovery -and $recovery.Status -eq 'SlowCadence') {
+    if (($recovery -and $recovery.Status -eq 'SlowCadence') -or (Test-NoNetworkForMode -Snapshot $Snapshot)) {
         return 'Attention'
     }
     if ($Snapshot.State -eq 'Online') {
@@ -172,6 +219,11 @@ function Get-ReasonText {
     if ($Snapshot.State -eq 'Online') {
         return 'Connected.'
     }
+    if (Test-NoNetworkForMode -Snapshot $Snapshot) {
+        $mode = (Get-SnapshotNetworkMode -Snapshot $Snapshot).Current
+        $bands = if ($Snapshot.Settings -and @($Snapshot.Settings.LteBands).Count -gt 0) { ' on the LTE bands chosen' } else { '' }
+        return "No network found with $(Get-NetworkModeText -Name $mode.Mode -Rat $mode.Rat)$bands. No reset finds one: choose a wider network mode."
+    }
     $recovering = Get-RecoveryText -Snapshot $Snapshot
     if ($recovering) {
         return $recovering
@@ -209,6 +261,9 @@ function Get-AppTitle {
     $recovery = Get-SnapshotRecovery -Snapshot $Snapshot
     if ($Tone -eq 'Attention' -and $recovery -and $recovery.Status -eq 'SlowCadence') {
         return 'Connection lost'
+    }
+    if ($Tone -eq 'Attention' -and (Test-NoNetworkForMode -Snapshot $Snapshot)) {
+        return 'No network'
     }
     if ($Tone -eq 'Working' -and ((Test-StepWithheld -Snapshot $Snapshot) -or ($recovery -and $recovery.Status -eq 'Withheld'))) {
         return 'Not connected'
@@ -319,6 +374,14 @@ function Resolve-AppBlocker {
     # ActionText, and Enabled ($false when the app can't do it now).
     param([object] $Snapshot)
 
+    if (Test-NoNetworkForMode -Snapshot $Snapshot) {
+        return [pscustomobject]@{
+            Kind       = 'NetworkMode'
+            Message    = Get-ReasonText -Snapshot $Snapshot
+            ActionText = "Use $($script:NetworkModeTexts['Automatic']), every band"
+            Enabled    = -not $Snapshot.ObserveOnly
+        }
+    }
     if (-not $Snapshot.Blocked -or $Snapshot.Reason -eq 'NoDevice') {
         return $null
     }
@@ -403,6 +466,157 @@ function Get-ResultText {
     "$($last.Time.ToString('HH:mm:ss', [cultureinfo]::InvariantCulture)) $text"
 }
 
+function Format-BandList {
+    # 'every band', 'every band but n77', or 'B3, B20' - the bands of one RAT, as -Prefix ('B' for
+    # LTE, 'n' for NR) names them, against those supported (none known: listed).
+    param([int[]] $Band, [int[]] $Supported, [string] $Prefix)
+
+    $bands = @($Band | Where-Object { $null -ne $_ })
+    $known = @($Supported | Where-Object { $null -ne $_ })
+    $left = @($known | Where-Object { $_ -notin $bands })
+    if ($known.Count -gt 0 -and $left.Count -eq 0) {
+        return 'every band'
+    }
+    if ($known.Count -gt 0 -and $left.Count -le 3 -and $bands.Count -gt $left.Count) {
+        return "every band but $(@($left | ForEach-Object { "$Prefix$_" }) -join ', ')"
+    }
+    if ($bands.Count -eq 0) {
+        return 'none'
+    }
+    @($bands | ForEach-Object { "$Prefix$_" }) -join ', '
+}
+
+function Get-NetworkModeView {
+    <#
+    .SYNOPSIS
+        The window's network tab, from the snapshot: the modem's mode and bands, what can be
+        chosen, and how the last choice went.
+    .DESCRIPTION
+        A pure function. Returns CurrentText (the modem's mode and bands as read), Modes (Name
+        and Text of each choice: not managed, then the modes the modem supports), Lte and Nr
+        (the band numbers that can be chosen), Selection (NetworkMode, LteBands and NrBands in
+        force: on trial, else saved), Revision (changes when the choice in force does), Note (a
+        mode on trial, how the last one ended, bands asked that the modem leaves out, a mode
+        not kept), and CanApply (the modem is there, its supported values known, and the app
+        doesn't only observe).
+    .EXAMPLE
+        Get-NetworkModeView -Snapshot $snapshot
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [AllowNull()]
+        [object] $Snapshot
+    )
+
+    $mode = Get-SnapshotNetworkMode -Snapshot $Snapshot
+    $current = if ($mode) { $mode.Current } else { $null }
+    $support = if ($mode) { $mode.Support } else { $null }
+    $decision = if ($mode) { $mode.Decision } else { $null }
+    $lte = [int[]]@(if ($support) { $support.Lte })
+    $nr = [int[]]@(if ($support) { $support.Nr })
+
+    $currentText = if ($current) {
+        $parts = [System.Collections.Generic.List[string]]::new()
+        $parts.Add("The modem now: $(Get-NetworkModeText -Name $current.Mode -Rat $current.Rat).")
+        if (@($current.LteCodes).Count -gt 0 -or $current.AllBands) {
+            $parts.Add("LTE: $(if ($current.AllBands) { 'every band' } else { Format-BandList -Band $current.Lte -Supported $lte -Prefix 'B' }).")
+        }
+        if (@($current.NrCodes).Count -gt 0 -or ($current.AllBands -and $current.Mode -ne 'LteOnly')) {
+            $parts.Add("NR: $(if ($current.AllBands) { 'every band' } else { Format-BandList -Band $current.Nr -Supported $nr -Prefix 'n' }).")
+        }
+        $parts -join ' '
+    }
+    else {
+        'The modem''s network mode is not read yet.'
+    }
+
+    $offered = if ($support) { @($support.Modes) } else { @($script:NetworkModeTexts.Keys) }
+    $modes = @([pscustomobject]@{ Name = ''; Text = $script:NotManagedText }) + @(foreach ($name in $script:NetworkModeTexts.Keys) {
+            if ($name -in $offered) { [pscustomobject]@{ Name = $name; Text = $script:NetworkModeTexts[$name] } }
+        })
+
+    $notes = [System.Collections.Generic.List[string]]::new()
+    $trial = if ($mode) { $mode.Trial } else { $null }
+    if ($trial) {
+        $notes.Add("Trying $(Get-NetworkModeText -Name $trial.Selection.NetworkMode): if the modem finds no network with it by $(Format-ClockTime -Time $trial.Until), it goes back to what it had.")
+    }
+    $notice = if ($mode) { $mode.Notice } else { $null }
+    if ($notice -and -not $trial) {
+        $text = Get-NetworkModeText -Name $notice.Mode
+        $notes.Add($(switch ($notice.Kind) {
+                    'Reverted' { "At $(Format-ClockTime -Time $notice.Time) the modem had found no network with ${text}: it went back to what it had." }
+                    default { "At $(Format-ClockTime -Time $notice.Time) the modem registered with ${text}: it is kept." }
+                }))
+    }
+    if ($decision -and $decision.Problem -and $script:NetworkModeProblemTexts.ContainsKey($decision.Problem)) {
+        $notes.Add($script:NetworkModeProblemTexts[$decision.Problem])
+    }
+    if ($decision -and $decision.Missing) {
+        $left = @(@($decision.Missing.Lte | ForEach-Object { "B$_" }) + @($decision.Missing.Nr | ForEach-Object { "n$_" }))
+        if ($left.Count -gt 0) {
+            $notes.Add("The modem leaves out $($left -join ', '), though asked: it uses the other bands chosen.")
+        }
+    }
+
+    # The choice in force: the one on trial, else the saved one.
+    $settings = if ($trial) { $trial.Selection } elseif ($Snapshot) { $Snapshot.Settings } else { $null }
+    [pscustomobject]@{
+        CurrentText = $currentText
+        Modes       = [object[]]$modes
+        Lte         = $lte
+        Nr          = $nr
+        Selection   = if ($settings -and $settings.PSObject.Properties['NetworkMode']) {
+            [pscustomobject]@{ NetworkMode = $settings.NetworkMode; LteBands = [int[]]@($settings.LteBands); NrBands = [int[]]@($settings.NrBands) }
+        }
+        else {
+            $null
+        }
+        # Changes when the choice in force does: a trial starts or ends.
+        Revision    = "$(if ($trial) { "trial $($trial.Since)" } else { 'saved' }) $(if ($notice) { $notice.Time.UtcTicks })"
+        Note        = if ($notes.Count) { $notes -join ' ' } else { $null }
+        CanApply    = [bool]($Snapshot -and $Snapshot.PortName -and -not $Snapshot.ObserveOnly -and $support)
+    }
+}
+
+function Get-TrayModeMenu {
+    <#
+    .SYNOPSIS
+        The tray menu's network modes, from the snapshot.
+    .DESCRIPTION
+        A pure function. Returns Text (the submenu's: 'Network mode', with the modem's mode when
+        known) and Items: Name, Text, Checked (the modem's mode now) and Enabled (it can be
+        chosen now: not the modem's, the modem there, and the app not only observing).
+    .EXAMPLE
+        Get-TrayModeMenu -Snapshot $snapshot -Worker Running
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [AllowNull()]
+        [object] $Snapshot,
+
+        [ValidateSet('Running', 'Restarting', 'NotResponding')]
+        [string] $Worker = 'Running'
+    )
+
+    $view = Get-NetworkModeView -Snapshot $Snapshot
+    $mode = Get-SnapshotNetworkMode -Snapshot $Snapshot
+    $current = if ($mode -and $mode.Current) { $mode.Current.Mode } else { $null }
+    $usable = $view.CanApply -and $Worker -eq 'Running'
+    [pscustomobject]@{
+        Text  = if ($mode -and $mode.Current) { "Network mode: $(Get-NetworkModeText -Name $current -Rat $mode.Current.Rat)" } else { 'Network mode' }
+        Items = [object[]]@(foreach ($choice in $view.Modes | Where-Object Name) {
+                [pscustomobject]@{
+                    Name    = $choice.Name
+                    Text    = $choice.Text
+                    Checked = $choice.Name -eq $current
+                    Enabled = $usable -and $choice.Name -ne $current
+                }
+            })
+    }
+}
+
 function ConvertTo-WindowView {
     <#
     .SYNOPSIS
@@ -411,7 +625,8 @@ function ConvertTo-WindowView {
         A pure function of the snapshot and of the worker's state ('Running', 'Restarting' or
         'NotResponding'). Returns Tone, Title, Detail, Note, Technology, Operator, Signal (lines),
         Cells and Carriers (rows of text), Blocker (Resolve-AppBlocker's), Sim (the SIM tab),
-        Settings and ApnPasswordStored (the connection tab), Result (the newest command's
+        NetworkMode (the network tab, Get-NetworkModeView's), Settings and ApnPasswordStored
+        (the connection tab), Result (the newest command's
         outcome, as a sentence) and LastResult (its Id, Kind and Result), and Footer.
     .EXAMPLE
         ConvertTo-WindowView -Snapshot $snapshot -Worker Running
@@ -515,6 +730,7 @@ function ConvertTo-WindowView {
         Carriers          = [object[]]$carriers
         Blocker           = if ($Snapshot -and $Worker -eq 'Running') { Resolve-AppBlocker -Snapshot $Snapshot } else { $null }
         Sim               = if ($Snapshot) { Get-SimView -Snapshot $Snapshot } else { $null }
+        NetworkMode       = Get-NetworkModeView -Snapshot $Snapshot
         Settings          = if ($Snapshot) { $Snapshot.Settings } else { $null }
         ApnPasswordStored = $Snapshot -and $Snapshot.ApnPasswordStored
         Result            = if ($Snapshot) { Get-ResultText -Snapshot $Snapshot } else { $null }

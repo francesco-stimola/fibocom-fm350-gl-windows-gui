@@ -209,6 +209,110 @@ Describe 'The simulated modem and the recovery steps' {
     }
 }
 
+Describe 'The simulated network mode' {
+    BeforeAll {
+        . "$PSScriptRoot/FixtureAnswer.ps1"
+        $script:converse = {
+            param($device, [string[]] $commands)
+            $channel = New-AtChannel -Transport $device.Open()
+            try {
+                foreach ($command in $commands) { Invoke-AtCommand -Channel $channel -Command $command -TimeoutMs 1000 }
+            }
+            finally {
+                Close-AtChannel -Channel $channel
+            }
+        }
+        $script:registered = {
+            param($answer)
+            @($answer.Lines | ConvertFrom-AtRegistration -ReadAnswer | Where-Object Registered).Count -gt 0
+        }
+    }
+
+    It 'answers as the device does: <Command>' -ForEach @(
+        @{ Command = 'AT+GTACT=?'; Fixture = 'gtact.test.txt' }
+        @{ Command = 'AT+GTACT?'; Fixture = 'gtact.auto.txt' }
+    ) {
+        (& $script:converse (New-SimulatedDevice) $Command).Lines | Should -Be (Get-FixtureAnswer -Name $Fixture -Folder device)
+    }
+
+    It 'lists the bands of the RATs in its mode only, as the device in LTE-only mode' {
+        (& $script:converse (New-SimulatedDevice -Scenario LteOnlyMode) 'AT+GTACT?').Lines | Should -Be (Get-FixtureAnswer -Name 'gtact.lteonly.txt' -Folder device)
+    }
+
+    It 'changes the list of each RAT a write names, and keeps the others: <Case>' -ForEach @(
+        @{ Case = 'LTE and NR in one write'; Write = 'AT+GTACT=20,6,3,103,120,5078'; Fixture = 'gtact.combined.txt' }
+        @{ Case = 'every LTE band, NR left as it was'; Write = 'AT+GTACT=20,6,3,5078'; Then = 'AT+GTACT=20,6,3,101,102,103,104,105,107,108,112,113,114,117,118,119,120,125,126,128,129,130,132,134,138,139,140,141,142,143,146,148,166,171'; Fixture = 'gtact.ltefull-n78.txt' }
+    ) {
+        $commands = @($Write) + $(if ($Then) { @($Then) } else { @() }) + 'AT+GTACT?'
+        $answers = & $script:converse (New-SimulatedDevice) $commands
+        @($answers | Select-Object -SkipLast 1).Status | Should -Not -Contain 'Error'
+        $answers[-1].Lines | Should -Be (Get-FixtureAnswer -Name $Fixture -Folder device)
+    }
+
+    It 'gives every band back for code 0, n77 listed until it has registered' {
+        $device = New-SimulatedDevice
+        $answers = & $script:converse $device 'AT+GTACT=20,6,3,5078', 'AT+GTACT=20,6,3,0', 'AT+GTACT?', 'AT+CEREG?;+C5GREG?', 'AT+CEREG?;+C5GREG?', 'AT+GTACT?'
+        $answers[2].Lines[0] | Should -Match ',5077,'
+        & $script:registered $answers[3] | Should -BeFalse -Because 'a write registers it again'
+        & $script:registered $answers[4] | Should -BeTrue
+        $answers[5].Lines | Should -Be (Get-FixtureAnswer -Name 'gtact.auto.txt' -Folder device)
+    }
+
+    It 'drops n77 as the device does: <Case>' -ForEach @(
+        @{ Case = 'with n78, once registered'; Write = 'AT+GTACT=20,6,3,5077,5078'; Fixture = 'gtact.n77-n78.txt' }
+        @{ Case = 'alone, kept'; Write = 'AT+GTACT=20,6,3,5077'; Fixture = 'gtact.n77-alone.txt' }
+        @{ Case = 'in NR-only mode, without a registration'; Write = 'AT+GTACT=14,6,6,0'; Fixture = 'gtact.nronly.txt' }
+    ) {
+        $answers = & $script:converse (New-SimulatedDevice) $Write, 'AT+CEREG?;+C5GREG?', 'AT+CEREG?;+C5GREG?', 'AT+GTACT?'
+        $answers[-1].Lines | Should -Be (Get-FixtureAnswer -Name $Fixture -Folder device)
+    }
+    It 'refuses a write with a value it doesn''t take, and changes nothing: <Write>' -ForEach @(
+        @{ Write = 'AT+GTACT=21,6,3' }
+        @{ Write = 'AT+GTACT=20,7,3' }
+        @{ Write = 'AT+GTACT=20,6,3,103,199' }
+        @{ Write = 'AT+GTACT=20,6,3,x' }
+    ) {
+        $answers = & $script:converse (New-SimulatedDevice) $Write, 'AT+GTACT?', 'AT+CEREG?;+C5GREG?'
+        $answers[0].Status | Should -Be 'Error'
+        $answers[1].Lines | Should -Be (Get-FixtureAnswer -Name 'gtact.auto.txt' -Folder device)
+        & $script:registered $answers[2] | Should -BeTrue
+    }
+
+    It 'finds <Found> in <Case>' -ForEach @(
+        @{ Case = 'LTE only'; Scenario = 'Online'; Write = 'AT+GTACT=2,3,3'; Found = 'LTE'; Technology = 'LTE-A' }
+        @{ Case = 'automatic, NR on a band the network doesn''t use'; Scenario = 'Online'; Write = 'AT+GTACT=20,6,3,501'; Found = 'LTE'; Technology = 'LTE-A' }
+        @{ Case = 'LTE on a band the network doesn''t use'; Scenario = 'Online'; Write = 'AT+GTACT=2,3,3,171'; Found = 'nothing'; Technology = $null }
+        @{ Case = 'NR only without 5G SA'; Scenario = 'Online'; Write = 'AT+GTACT=14,6,6'; Found = 'nothing'; Technology = $null }
+        @{ Case = 'NR only with 5G SA'; Scenario = 'Standalone'; Write = 'AT+GTACT=14,6,6'; Found = '5G SA'; Technology = '5G SA' }
+    ) {
+        $answers = & $script:converse (New-SimulatedDevice -Scenario $Scenario) $Write, 'AT+CEREG?;+C5GREG?', 'AT+CEREG?;+C5GREG?', 'AT+CGACT?', 'AT+CESQ', 'AT+GTCCINFO?;+GTCAINFO?'
+        $answers[0].Status | Should -Be 'OK'
+        & $script:registered $answers[2] | Should -Be ($Found -ne 'nothing')
+        $answers[3].Lines | Should -BeNullOrEmpty -Because 'the data context goes with the registration'
+        $radio = Resolve-RadioStatus -Signal (ConvertFrom-AtSignalQuality -Lines $answers[4].Lines) -Cell @(ConvertFrom-AtCellInfo -Lines $answers[5].Lines) -Carrier @(ConvertFrom-AtCarrierAggregation -Lines $answers[5].Lines)
+        $radio.Technology | Should -Be $Technology
+    }
+
+    It 'keeps its mode across a reset, and comes back in it' {
+        $device = New-SimulatedDevice
+        $device.AwayMs = 0
+        $answers = & $script:converse $device 'AT+GTACT=14,6,6', 'AT+CFUN=15', 'AT'
+        $answers[1].Status | Should -Be 'OK'
+        $answers[2].Status | Should -Be 'PortLost'
+        [void]$device.Find()
+        $answers = & $script:converse $device 'AT+GTACT?', 'AT+CEREG?;+C5GREG?', 'AT+GTCCINFO?;+GTCAINFO?'
+        $answers[0].Lines[0] | Should -BeLike '+GTACT: 14,6,6,*'
+        & $script:registered $answers[1] | Should -BeFalse -Because 'NR alone finds no network here, after a reset too'
+        @(ConvertFrom-AtCellInfo -Lines $answers[2].Lines) | Should -BeNullOrEmpty
+    }
+
+    It 'starts as the scenario says: NR only, no network' {
+        $answers = & $script:converse (New-SimulatedDevice -Scenario NrOnlyMode) 'AT+GTACT?', 'AT+CEREG?;+C5GREG?'
+        $answers[0].Lines[0] | Should -BeLike '+GTACT: 14,6,6,501,*'
+        & $script:registered $answers[1] | Should -BeFalse
+    }
+}
+
 Describe 'The simulated modem on USB' {
     It 'is away for a while after it vanished, then back on the same port' {
         $device = New-SimulatedDevice

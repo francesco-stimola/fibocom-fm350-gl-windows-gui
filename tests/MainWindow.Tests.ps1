@@ -163,4 +163,77 @@ Describe 'The main window' {
         $script:sent[1].Parameter.ApnPassword.Length | Should -Be 0 -Because 'an empty password deletes the stored one'
         $script:sent[2].Parameter.ContainsKey('ApnPassword') | Should -BeFalse -Because 'the stored password is kept'
     }
+
+    It 'fills the network tab: the modem''s mode, every choice, a checkbox per band' {
+        Update-MainWindow -View $script:views['Online']
+        $script:controls.CurrentModeText.Text | Should -Be 'The modem now: 4G + 5G. LTE: every band. NR: every band but n77.'
+        @($script:controls.NetworkModeBox.Items).Count | Should -Be 4
+        $script:controls.NetworkModeBox.SelectedItem.Name | Should -Be '' -Because 'the app doesn''t manage the mode by default'
+        $script:controls.LteBandsPanel.Children.Count | Should -Be 31
+        $script:controls.NrBandsPanel.Children.Count | Should -Be 19
+        $script:controls.LteBandsPanel.Children[2].Content | Should -Be 'B3'
+        $script:controls.LteAllBox.IsChecked | Should -BeTrue
+        $script:controls.BandsPanel.IsEnabled | Should -BeFalse -Because 'bands go with a mode the app manages'
+        $script:controls.ApplyModeButton.IsEnabled | Should -BeTrue
+    }
+
+    It 'applies the mode and bands chosen' {
+        Update-MainWindow -View $script:views['Online']
+        $script:controls.NetworkModeBox.SelectedItem = @($script:controls.NetworkModeBox.Items | Where-Object Name -EQ 'Automatic')[0]
+        $script:controls.BandsPanel.IsEnabled | Should -BeTrue
+        $script:controls.LteAllBox.IsChecked = $false
+        Invoke-Click $script:controls.LteAllBox
+        $script:controls.LteAllBox.IsChecked = $false
+        $script:controls.LteBandsPanel.IsEnabled | Should -BeTrue
+        foreach ($box in $script:controls.LteBandsPanel.Children) { $box.IsChecked = $box.Content -in 'B3', 'B20' }
+        Invoke-Click $script:controls.ApplyModeButton
+        $script:sent.Kind | Should -Be @('SetNetworkMode')
+        $script:sent[0].Parameter.NetworkMode | Should -Be 'Automatic'
+        $script:sent[0].Parameter.LteBands | Should -Be @(3, 20)
+        @($script:sent[0].Parameter.NrBands).Count | Should -Be 0 -Because 'every NR band'
+    }
+
+    It 'asks for a band at least, and sends nothing without one' {
+        Update-MainWindow -View $script:views['Online']
+        $script:controls.NetworkModeBox.SelectedItem = @($script:controls.NetworkModeBox.Items | Where-Object Name -EQ 'NrOnly')[0]
+        $script:controls.NrAllBox.IsChecked = $false
+        foreach ($box in $script:controls.NrBandsPanel.Children) { $box.IsChecked = $false }
+        Invoke-Click $script:controls.ApplyModeButton
+        $script:sent | Should -BeNullOrEmpty
+        $script:controls.ModeNoteText.Text | Should -Match 'at least one NR band'
+    }
+
+    It 'keeps the bands of a RAT the mode doesn''t use out of reach: <Mode>' -ForEach @(
+        @{ Mode = 'LteOnly'; Lte = $true; Nr = $false }
+        @{ Mode = 'NrOnly'; Lte = $false; Nr = $true }
+    ) {
+        Update-MainWindow -View $script:views['Online']
+        $script:controls.NetworkModeBox.SelectedItem = @($script:controls.NetworkModeBox.Items | Where-Object Name -EQ $Mode)[0]
+        $script:controls.LteAllBox.IsEnabled | Should -Be $Lte
+        $script:controls.NrAllBox.IsEnabled | Should -Be $Nr
+    }
+
+    It 'stops managing the mode when "as the modem has it" is applied' {
+        Update-MainWindow -View $script:views['Online']
+        Invoke-Click $script:controls.ApplyModeButton
+        $script:sent.Kind | Should -Be @('SetNetworkMode')
+        $script:sent[0].Parameter.NetworkMode | Should -Be ''
+    }
+
+    It 'can''t apply a mode without a modem' {
+        Update-MainWindow -View $script:views['NoDevice']
+        $script:controls.ApplyModeButton.IsEnabled | Should -BeFalse
+    }
+
+    It 'offers 4G + 5G with every band when a narrowed mode finds no network' {
+        $view = $script:views['Online'] | Select-Object -Property *
+        $view.Blocker = [pscustomobject]@{ Kind = 'NetworkMode'; Message = 'No network found with 5G only (SA).'; ActionText = 'Use 4G + 5G, every band'; Enabled = $true }
+        Update-MainWindow -View $view
+        $script:controls.BlockerButton.Content | Should -Be 'Use 4G + 5G, every band'
+        Invoke-Click $script:controls.BlockerButton
+        $script:sent.Kind | Should -Be @('SetNetworkMode')
+        $script:sent[0].Parameter.NetworkMode | Should -Be 'Automatic'
+        @($script:sent[0].Parameter.LteBands).Count | Should -Be 0
+        @($script:sent[0].Parameter.NrBands).Count | Should -Be 0
+    }
 }

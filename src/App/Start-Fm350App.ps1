@@ -18,7 +18,7 @@ param(
     [switch] $Simulated,
 
     [ValidateSet('Online', 'Connect', 'ApnNeeded', 'PinRequired', 'FccLocked', 'AdapterDisabled', 'NoDevice', 'NoDriver',
-        'Settling', 'DataPathDown', 'IcmpDropped', 'RegistrationLost', 'ModemHung', 'Unrecoverable')]
+        'Settling', 'DataPathDown', 'IcmpDropped', 'RegistrationLost', 'ModemHung', 'Unrecoverable', 'LteOnlyMode', 'NrOnlyMode', 'Standalone')]
     [string] $Scenario = 'Online',
 
     [switch] $ObserveOnly,

@@ -24,8 +24,8 @@ BeforeAll {
 
     # One decision; -Check left out when healthy.
     function Get-TestDecision {
-        param([long] $Now, [string] $Check, [hashtable] $History = @{}, [switch] $Blocked, [switch] $NotElevated, [switch] $Withhold, [switch] $Resumed, [switch] $Unknown, [switch] $NoReset)
-        $options = @{ Now = $Now; History = (Get-TestHistory -Value $History); Elevated = -not $NotElevated; Blocked = $Blocked; Withhold = $Withhold; Resumed = $Resumed; Unknown = $Unknown; NoReset = $NoReset }
+        param([long] $Now, [string] $Check, [hashtable] $History = @{}, [switch] $Blocked, [switch] $NotElevated, [switch] $Withhold, [switch] $Resumed, [switch] $Unknown, [switch] $NoReset, [switch] $Narrowed)
+        $options = @{ Now = $Now; History = (Get-TestHistory -Value $History); Elevated = -not $NotElevated; Blocked = $Blocked; Withhold = $Withhold; Resumed = $Resumed; Unknown = $Unknown; NoReset = $NoReset; Narrowed = $Narrowed }
         if ($Check) { $options['Check'] = $Check }
         Resolve-RecoveryAction @options
     }
@@ -88,6 +88,19 @@ Describe 'Resolve-RecoveryAction' {
             $decision.Status | Should -Be 'Watching'
             $decision.WaitMs | Should -BeNullOrEmpty
             $decision.History.FailingSince | Should -BeNullOrEmpty -Because 'once readable and failing, the check gets its grace time'
+        }
+
+        It 'takes no step for a registration a network mode the user narrowed doesn''t find, however long it lasts' {
+            $decision = Get-TestDecision -Now 100000000 -Check 'H4' -Narrowed -History @{ Check = 'H4'; FailingSince = 0 }
+            $decision.Action | Should -Be 'None'
+            $decision.Status | Should -Be 'Watching'
+            $decision.WaitMs | Should -BeNullOrEmpty
+        }
+
+        It 'still mends what a narrowed network mode doesn''t explain: <Check> -> <Step>' -ForEach @(
+            @{ Check = 'H2'; Step = 'R6' }, @{ Check = 'H5'; Step = 'R2' }, @{ Check = 'H7'; Step = 'R2' }
+        ) {
+            (Get-TestDecision -Now 100000000 -Check $Check -Narrowed -History @{ Check = $Check; FailingSince = 0 }).Action | Should -Be $Step
         }
 
         It 'unblocked, the check gets its grace time from then' {

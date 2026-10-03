@@ -9,7 +9,8 @@ $script:AppFolderName = 'fibocom-fm350-gl-windows-gui'
 
 # Defaults, decided 2026-10-01 (DEVLOG): the subscription's own APN, dual stack; the operator's DNS;
 # the modem as a backup connection (a metric far above what Windows gives wired and wireless
-# adapters).
+# adapters). The network mode: not managed - the modem keeps its own - until the user picks one
+# (ROADMAP M5).
 $script:DefaultSettings = [ordered]@{
     Apn               = ''
     PdpType           = 'IPV4V6'
@@ -17,7 +18,13 @@ $script:DefaultSettings = [ordered]@{
     ApnUser           = ''
     DnsServers        = [string[]]@()
     InterfaceMetric   = 500
+    NetworkMode       = ''
+    LteBands          = [int[]]@()
+    NrBands           = [int[]]@()
 }
+
+# The band numbers a setting can name: those the AT+GTACT codec encodes (AT-COMMANDS section 5).
+$script:SettingBandRanges = @{ LteBands = @(1, 99); NrBands = @(1, 512) }
 
 # IPv6 alone is not offered: the adapter is configured from the context's IPv4 address
 # (ARCHITECTURE -> Network configuration).
@@ -81,6 +88,9 @@ function ConvertTo-AppSetting {
         - DnsServers: IP addresses that replace the operator's DNS servers; empty keeps them.
         - InterfaceMetric: the modem adapter's interface metric, 1 to 9999. The default, 500,
           keeps the modem a backup connection; a low value makes it the preferred one.
+        - NetworkMode: '' (the app leaves the modem's mode and bands as they are), 'Automatic'
+          (4G + 5G), 'LteOnly' or 'NrOnly'. LteBands (1-99) and NrBands (1-512): the bands that
+          mode may use, sorted, each once; empty for every band the modem supports.
     .EXAMPLE
         (ConvertTo-AppSetting -InputObject @{ Apn = 'internet' }).Settings
     #>
@@ -177,6 +187,32 @@ function ConvertTo-AppSetting {
                 }
                 else {
                     & $reject $known 'must be a whole number from 1 to 9999'
+                }
+            }
+            'NetworkMode' {
+                $match = if ($value -is [string]) { @($script:NetworkModes.Keys) + '' | Where-Object { $_ -eq $value } | Select-Object -First 1 }
+                if ($null -ne $match) {
+                    $settings.NetworkMode = $match
+                }
+                else {
+                    & $reject $known "must be empty or one of $($script:NetworkModes.Keys -join ', ')"
+                }
+            }
+            { $_ -in 'LteBands', 'NrBands' } {
+                $low, $high = $script:SettingBandRanges[$known]
+                $items = @($value | Where-Object { $null -ne $_ })
+                $bands = [System.Collections.Generic.SortedSet[int]]::new()
+                foreach ($item in $items) {
+                    $number = 0
+                    if ($item -isnot [bool] -and [int]::TryParse([string]$item, [System.Globalization.NumberStyles]::Integer, [cultureinfo]::InvariantCulture, [ref]$number) -and $number -ge $low -and $number -le $high) {
+                        [void]$bands.Add($number)
+                    }
+                }
+                if ($bands.Count -eq $items.Count) {
+                    $settings[$known] = [int[]]@($bands)
+                }
+                else {
+                    & $reject $known "must be a list of distinct band numbers from $low to $high"
                 }
             }
         }

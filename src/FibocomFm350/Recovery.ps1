@@ -49,10 +49,10 @@ $script:RecoveryCommands = @{
 function Get-RecoveryNextStep {
     # The first step of -Check's ladder above -Step ($null: the entry step), skipping those that
     # need rights the app doesn't have, and the reset when it must not run; $null when there is
-    # none.
-    param([string] $Check, [string] $Step, [bool] $Elevated, [bool] $NoReset)
+    # none. A network mode the user narrowed leaves H4 without a step.
+    param([string] $Check, [string] $Step, [bool] $Elevated, [bool] $NoReset, [bool] $Narrowed)
 
-    $ladder = if ($Check -and $script:RecoveryLadders.ContainsKey($Check)) { $script:RecoveryLadders[$Check] } else { @() }
+    $ladder = if ($Check -and $script:RecoveryLadders.ContainsKey($Check) -and -not ($Narrowed -and $Check -eq 'H4')) { $script:RecoveryLadders[$Check] } else { @() }
     $above = if ($Step) { $script:RecoverySteps.IndexOf($Step) } else { -1 }
     @($ladder | Where-Object {
             $script:RecoverySteps.IndexOf($_) -gt $above -and ($Elevated -or $_ -notin $script:RecoveryElevatedSteps) -and -not ($NoReset -and $_ -eq 'R5')
@@ -113,6 +113,9 @@ function Resolve-RecoveryAction {
         - -Withhold: the app only observes - the step is named, not taken, and not remembered.
         - Without -Elevated, the steps that need administrator rights are skipped. With
           -NoReset - the SIM would ask for a PIN the app doesn't have after a reset - R5 is.
+        - -Narrowed: the modem is in a network mode the user narrowed (NR alone, LTE bands
+          chosen). A registration it doesn't find (H4) is the mode's doing: no step mends it,
+          so none is taken - the failure is shown.
 
         Returns Action ('None' or the step to take now: 'R1' to 'R6'), Status ('Healthy',
         'Blocked', 'Maintenance', 'Watching' - a check fails and no step is due yet, or none can
@@ -144,7 +147,9 @@ function Resolve-RecoveryAction {
 
         [switch] $Unknown,
 
-        [switch] $NoReset
+        [switch] $NoReset,
+
+        [switch] $Narrowed
     )
 
     $timings = $script:RecoveryTimings
@@ -224,7 +229,7 @@ function Resolve-RecoveryAction {
 
     $next = $null
     if ($h.Step) {
-        $next = Get-RecoveryNextStep -Check $Check -Step $h.Step -Elevated $Elevated -NoReset $NoReset
+        $next = Get-RecoveryNextStep -Check $Check -Step $h.Step -Elevated $Elevated -NoReset $NoReset -Narrowed $Narrowed
         if (-not $next) {
             # The top of the ladder: the cycle is over.
             $h.Cycles++
@@ -241,7 +246,7 @@ function Resolve-RecoveryAction {
                 return & $decide $status $null ($h.CycleEndedAt + $backoff - $Now)
             }
         }
-        $next = Get-RecoveryNextStep -Check $Check -Step $null -Elevated $Elevated -NoReset $NoReset
+        $next = Get-RecoveryNextStep -Check $Check -Step $null -Elevated $Elevated -NoReset $NoReset -Narrowed $Narrowed
     }
     if (-not $next) {
         return & $decide 'Watching' $null $null

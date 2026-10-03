@@ -44,13 +44,17 @@ function Resolve-ConnectionState {
           configured from what the modem reports. Elevated: $false when the app has no
           administrator rights to configure it.
         - DataPath: the last data-path probe passed ($null: not probed).
+        - NetworkMode: Resolve-NetworkMode's decision on the modem's mode and bands.
 
         Returns:
         - State: 'NoDevice', 'PortOpen', 'Identified', 'SimReady', 'Registered', 'DataActive' or
           'Online'.
         - Action: the next step - 'OpenPort', 'Initialize', 'EnterPin', 'RadioOn',
-          'AutoRegister', 'DefineContext', 'ActivateContext', 'DeactivateContext',
-          'ConfigureAdapter' - or 'None'.
+          'AutoRegister', 'ApplyNetworkMode', 'DefineContext', 'ActivateContext',
+          'DeactivateContext', 'ConfigureAdapter' - or 'None'. The network mode the settings ask
+          is written once the SIM is ready and the radio on, before the context's steps - it
+          registers the modem again - and on a connection that is up too: the state stays the
+          one the facts support.
         - Reason: why there is no step to take, or $null.
         - Blocked: $true when what stops the connection is out of the app's reach - no device or
           driver, a SIM waiting for the user, an FCC lock, an APN or an APN password the user
@@ -91,9 +95,17 @@ function Resolve-ConnectionState {
     }
     $fact = { param($name) $facts[$name] }
     $previousIndex = if ($Previous) { $script:ConnectionStates.IndexOf($Previous) } else { -1 }
+    $mode = & $fact 'NetworkMode'
     $outcome = {
         param($state, $action, $reason, $blocked)
         $settingsPending = (& $fact 'ContextActive') -eq $true -and (& $fact 'ContextDefined') -eq $false
+        # The network mode, when the modem's differs from the settings: written once the SIM is
+        # ready and the radio on, ahead of the context's steps, whatever else waits. The reason
+        # and the block stay: they still say what the connection waits for.
+        if ($mode -and $mode.Command -and $state -notin 'NoDevice', 'PortOpen', 'Identified' -and $reason -ne 'FccLocked' -and
+            $action -in 'None', 'DefineContext', 'ActivateContext', 'DeactivateContext', 'ConfigureAdapter') {
+            $action = 'ApplyNetworkMode'
+        }
         [pscustomobject]@{
             State           = $state
             Action          = $action
@@ -207,12 +219,14 @@ function Get-ModemObservation {
     .DESCRIPTION
         The thin I/O in front of the state machine: it reads the modem's state and the adapter's,
         and changes nothing. It reads only as far as the state allows: the SIM, then - with the
-        SIM ready - the radio, the registration, the context's definition and activation, and -
-        while not registered - the operator selection and the FCC lock; once registered, the
-        active context's parameters, and the adapter. A read that fails leaves its fact unknown.
+        SIM ready - the radio, the registration, the network mode and its bands, the context's
+        definition and activation, and - while not registered - the operator selection and the
+        FCC lock; once registered, the active context's parameters, and the adapter. A read that
+        fails leaves its fact unknown.
 
         Returns Facts (the observation for Resolve-ConnectionState; also SimState, the SIM's
-        state, and PinAttemptsLeft, read while the SIM waits for its PIN), and what the steps
+        state, PinAttemptsLeft, read while the SIM waits for its PIN, NetworkModeRead and
+        NetworkModeSupport, the modem's mode setting and what it supports), and what the steps
         need: Context (the app's context parameters), AdapterState and AdapterPlan. The ICCID is
         read only to match the stored PIN, and kept nowhere.
     .EXAMPLE
@@ -240,7 +254,14 @@ function Get-ModemObservation {
 
         # The data-path probes' verdict: Address (the one they were sent from) and Healthy
         # (Resolve-DataPathHealth's). It counts only for the context's address.
-        [object] $DataPath
+        [object] $DataPath,
+
+        # What the modem supports of AT+GTACT (ConvertFrom-AtNetworkModeSupport's), when the
+        # caller has it already: it is read only when not given.
+        [object] $NetworkModeSupport,
+
+        # The app's last write of the network mode (Resolve-NetworkMode's -LastWrite).
+        [object] $NetworkModeLastWrite
     )
 
     if ($Channel.State -eq 'Closed') {
@@ -249,6 +270,7 @@ function Get-ModemObservation {
     $facts = [ordered]@{
         Device = 'Present'; PortOpen = $true; Responsive = $null; Sim = $null; SimState = $null; PinAttemptsLeft = $null; Fcc = $null
         RadioOn = $null; OperatorMode = $null; Registered = $null; RegistrationState = $null
+        NetworkMode = $null; NetworkModeRead = $null; NetworkModeSupport = $null
         ContextDefined = $null; ContextActive = $null; ContextAddress = $null; ContextApn = $null; ContextRead = $null; ApnSet = [bool]$Settings.Apn
         ApnPasswordUnreadable = $Settings.ApnAuthentication -ne 'None' -and (Test-Path -LiteralPath $ApnSecretPath -PathType Leaf) -and -not (Get-ApnPassword -Path $ApnSecretPath)
         Adapter = $null; AdapterConfigured = $null; AdapterProblem = $null; Elevated = $null; DataPath = $null
@@ -324,6 +346,20 @@ function Get-ModemObservation {
         $lock = if ($read.Status -eq 'OK') { ConvertFrom-AtFccLock -Lines $read.Lines } else { $null }
         $facts.Fcc = Resolve-FccLock -Fcc $lock -Registered:$false
     }
+
+    # The network mode and its bands: read at every pass - it is cheap - and what the modem
+    # supports once per channel (the caller keeps it).
+    $support = $NetworkModeSupport
+    if (-not $support -and -not (& $stopped)) {
+        $test = & $ask 'AT+GTACT=?'
+        $support = if ($test.Status -eq 'OK') { ConvertFrom-AtNetworkModeSupport -Lines $test.Lines } else { $null }
+    }
+    if (-not (& $stopped)) {
+        $setting = & $ask 'AT+GTACT?'
+        $facts.NetworkModeRead = if ($setting.Status -eq 'OK') { ConvertFrom-AtNetworkMode -Lines $setting.Lines } else { $null }
+    }
+    $facts.NetworkModeSupport = $support
+    $facts.NetworkMode = Resolve-NetworkMode -Settings $Settings -Current $facts.NetworkModeRead -Support $support -LastWrite $NetworkModeLastWrite
 
     # The app's data context: its definition and whether it is active, read together, so a
     # definition is never written over a context whose activation is not known. A read that
@@ -472,6 +508,9 @@ function Invoke-ConnectionStep {
         'AutoRegister' {
             if ((& $send 'AT+COPS=0').Status -eq 'OK') { $result = 'Done' }
         }
+        'ApplyNetworkMode' {
+            if ((& $send $Observation.Facts.NetworkMode.Command).Status -eq 'OK') { $result = 'Done' }
+        }
         'DefineContext' {
             if ((& $send ('AT+CGDCONT={0},"{1}","{2}"' -f $cid, $Settings.PdpType, $Settings.Apn)).Status -eq 'OK') { $result = 'Done' }
         }
@@ -529,15 +568,18 @@ function Invoke-ModemConnect {
         cadence, tries again). On a connection that is already up it changes nothing.
 
         The steps: enter the stored SIM PIN (once, under Resolve-SimPinAction's rules); turn the
-        radio on; automatic operator selection; define the app's context (written only when it
-        differs from the settings: it is persistent); deactivate it when it is active without an
-        address and differs from the settings; set its authentication and activate it; configure
-        the adapter (administrator rights).
+        radio on; automatic operator selection; write the network mode and bands the settings
+        ask, when the modem's differ (Resolve-NetworkMode: the modem keeps it, so a mode that
+        works is never written again for nothing); define the app's context (written only when
+        it differs from the settings: it is persistent); deactivate it when it is active without
+        an address and differs from the settings; set its authentication and activate it;
+        configure the adapter (administrator rights).
 
         Returns State, Action (the step still missing), Reason, Blocked, Dropped,
         SettingsPending (as Resolve-ConnectionState), Steps (the steps run, their commands
-        redacted) and Observation (the last facts). With -LogFolder, the steps and the state
-        change go to the redacted log there.
+        redacted), Observation (the last facts) and Written (the network mode written: Command,
+        Before - the setting's text as read before it - and Status, the modem's answer; or
+        $null). With -LogFolder, the steps and the state change go to the redacted log there.
     .EXAMPLE
         $pass = Invoke-ModemConnect -Channel $channel -Settings $settings -AdapterInstanceId $modem.Network.InstanceId -Previous $last.State
     #>
@@ -570,10 +612,17 @@ function Invoke-ModemConnect {
         [int] $InitializeTimeoutMs = 0,
 
         # The data-path probes' verdict, as Get-ModemObservation takes it.
-        [object] $DataPath
+        [object] $DataPath,
+
+        # What the modem supports of AT+GTACT, and the app's last write of it, as
+        # Get-ModemObservation takes them.
+        [object] $NetworkModeSupport,
+
+        [object] $NetworkModeLastWrite
     )
 
     $steps = [System.Collections.Generic.List[object]]::new()
+    $written = $null
     $done = [System.Collections.Generic.HashSet[string]]::new()
     # A log that can't be written (a full disk) never stops the pass.
     $log = if ($LogFolder) {
@@ -602,7 +651,10 @@ function Invoke-ModemConnect {
 
     while ($true) {
         $observation = Get-ModemObservation -Channel $Channel -Settings $Settings -AdapterInstanceId $AdapterInstanceId -SimulatedAdapter $SimulatedAdapter `
-            -SimPinPath $SimPinPath -ApnSecretPath $ApnSecretPath -DataPath $DataPath
+            -SimPinPath $SimPinPath -ApnSecretPath $ApnSecretPath -DataPath $DataPath -NetworkModeSupport $NetworkModeSupport -NetworkModeLastWrite $NetworkModeLastWrite
+        if (-not $NetworkModeSupport -and $observation.Facts.NetworkModeSupport) {
+            $NetworkModeSupport = $observation.Facts.NetworkModeSupport
+        }
         if ($observation.Facts.Sim -and $observation.Facts.Sim.Reason -eq 'PinAccepted') {
             try {
                 Set-SimPinAttempt -Attempted $false -Path $SimPinPath -Confirm:$false -ErrorAction Stop
@@ -621,6 +673,13 @@ function Invoke-ModemConnect {
         $step = Invoke-ConnectionStep -Channel $Channel -Action $decision.Action -Observation $observation -Settings $Settings `
             -SimPinPath $SimPinPath -ApnSecretPath $ApnSecretPath -InitializeTimeoutMs $InitializeTimeoutMs -SimulatedAdapter $SimulatedAdapter
         $steps.Add($step)
+        if ($step.Action -eq 'ApplyNetworkMode') {
+            # A write refused is remembered as one not kept: never written again over the same
+            # setting. One that got no answer may have landed.
+            $status = @($step.Commands | Select-Object -First 1 | ForEach-Object Status)
+            $written = [pscustomobject]@{ Command = $observation.Facts.NetworkMode.Command; Before = $observation.Facts.NetworkModeRead.Text; Status = [string]$status }
+            $NetworkModeLastWrite = $written
+        }
         $commands = ($step.Commands | ForEach-Object { "$($_.Command) $($_.Status)$(if ($null -ne $_.ErrorCode) { " $($_.ErrorCode)" })" }) -join '; '
         & $log $(if ($step.Result -eq 'Done') { 'Info' } else { 'Warning' }) "$($step.Action): $($step.Result) - $commands"
     }
@@ -639,5 +698,6 @@ function Invoke-ModemConnect {
         SettingsPending = $decision.SettingsPending
         Steps           = [object[]]$steps.ToArray()
         Observation     = $observation.Facts
+        Written         = $written
     }
 }

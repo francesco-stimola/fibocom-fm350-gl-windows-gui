@@ -137,6 +137,37 @@ Describe 'Resolve-ConnectionState' {
         $result.Dropped | Should -Be $Dropped
     }
 
+    It 'writes the network mode the settings ask: <Name>' -ForEach @(
+        @{ Name = 'online'; Change = @{}; State = 'Online'; Action = 'ApplyNetworkMode' }
+        @{ Name = 'searching'; Change = @{ Registered = $false; RegistrationState = 'Searching'; ContextActive = $false }; State = 'SimReady'; Action = 'ApplyNetworkMode' }
+        @{ Name = 'an APN to give'; Change = @{ ContextAddress = $null; ApnSet = $false }; State = 'Registered'; Action = 'ApplyNetworkMode' }
+        @{ Name = 'before the context'; Change = @{ ContextActive = $false; ContextAddress = $null }; State = 'Registered'; Action = 'ApplyNetworkMode' }
+        @{ Name = 'before the adapter'; Change = @{ AdapterConfigured = $false }; State = 'DataActive'; Action = 'ApplyNetworkMode' }
+        @{ Name = 'the radio on first'; Change = @{ Registered = $false; RadioOn = $false }; State = 'SimReady'; Action = 'RadioOn' }
+        @{ Name = 'the operator selected first'; Change = @{ Registered = $false; OperatorMode = 2 }; State = 'SimReady'; Action = 'AutoRegister' }
+        @{ Name = 'not over an FCC lock'; Change = @{ Registered = $false; RadioOn = $false; Fcc = [pscustomobject]@{ Diagnosis = 'Locked' } }; State = 'SimReady'; Action = 'None' }
+        @{ Name = 'not before the PIN'; Change = @{ Sim = [pscustomobject]@{ Action = 'SendPin'; Reason = $null } }; State = 'Identified'; Action = 'EnterPin' }
+        @{ Name = 'not over a SIM that waits for the user'; Change = @{ Sim = [pscustomobject]@{ Action = 'AskUser'; Reason = 'NoPin' } }; State = 'Identified'; Action = 'None' }
+    ) {
+        $plain = Resolve-ConnectionState -Observation (Get-TestObservation -Change $Change) -Previous 'Online'
+        $Change['NetworkMode'] = [pscustomobject]@{ Managed = $true; Satisfied = $false; Command = 'AT+GTACT=2,3,3,103' }
+        $result = Resolve-ConnectionState -Observation (Get-TestObservation -Change $Change) -Previous 'Online'
+        $result.State | Should -Be $State
+        $result.Action | Should -Be $Action
+        # What the connection waits for is still said: health and recovery go by it.
+        $result.Reason | Should -Be $plain.Reason
+        $result.Blocked | Should -Be $plain.Blocked
+    }
+
+    It 'writes no network mode when <Name>' -ForEach @(
+        @{ Name = 'the modem keeps it'; Mode = [pscustomobject]@{ Managed = $true; Satisfied = $true; Command = $null } }
+        @{ Name = 'it is not known'; Mode = [pscustomobject]@{ Managed = $true; Satisfied = $null; Command = $null } }
+        @{ Name = 'the modem didn''t keep it'; Mode = [pscustomobject]@{ Managed = $true; Satisfied = $false; Command = $null; Problem = 'NotKept' } }
+        @{ Name = 'the app doesn''t manage it'; Mode = [pscustomobject]@{ Managed = $false; Satisfied = $null; Command = $null } }
+    ) {
+        (Resolve-ConnectionState -Observation (Get-TestObservation -Change @{ NetworkMode = $Mode })).Action | Should -Be 'None'
+    }
+
     It 'takes the observation as a hashtable too' {
         $facts = @{ Device = 'Present'; PortOpen = $true; Responsive = $false }
         (Resolve-ConnectionState -Observation $facts).Action | Should -Be 'Initialize'

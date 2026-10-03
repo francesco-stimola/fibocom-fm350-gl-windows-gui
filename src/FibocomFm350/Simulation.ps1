@@ -201,6 +201,12 @@ function New-SimulatedDevice {
         - ModemHung: the AT port answers nothing until the USB device is restarted (R6).
         - Unrecoverable: the network refuses the registration whatever is done: the ladder runs
           its cycles, then the slow cadence.
+        - LteOnlyMode: online, the modem in LTE-only mode, set before the app.
+        - NrOnlyMode: the modem in NR-only mode where no 5G SA network is offered: it finds no
+          network until another mode is chosen.
+        - Standalone: online, in a network that offers 5G SA: NR-only mode registers on it.
+        Every scenario's modem keeps a network mode (AT+GTACT): a change registers it again, in a
+        network with LTE on B1, B3, B7 and B20 and NR on n78 (EN-DC; 5G SA in Standalone).
 
         Returns an object with Scenario, Modem (New-SimulatedModem's), Adapter, Presence, and
         the methods the worker calls: Find() (the modem as PnP would report it), Open() (its
@@ -214,7 +220,7 @@ function New-SimulatedDevice {
     [OutputType([object])]
     param(
         [ValidateSet('Online', 'Connect', 'ApnNeeded', 'PinRequired', 'FccLocked', 'AdapterDisabled', 'NoDevice', 'NoDriver',
-            'Settling', 'DataPathDown', 'IcmpDropped', 'RegistrationLost', 'ModemHung', 'Unrecoverable')]
+            'Settling', 'DataPathDown', 'IcmpDropped', 'RegistrationLost', 'ModemHung', 'Unrecoverable', 'LteOnlyMode', 'NrOnlyMode', 'Standalone')]
         [string] $Scenario = 'Online',
 
         [string] $PortName = 'SIMULATED'
@@ -288,6 +294,25 @@ function New-SimulatedDevice {
         $modem.Flags[$flag] = [string]$flags[$flag]
     }
     $modem.Hung = [bool](& $setting 'Hung' $false)
+
+    # Its network mode, as the scenario changes the base one; its radio on EN-DC is the base's.
+    $description = @{}
+    foreach ($source in @($data.NetworkMode, (& $setting 'NetworkMode' @{}))) {
+        foreach ($key in $source.Keys) {
+            $description[$key] = $source[$key]
+        }
+    }
+    $radio = @{ Endc = @{} }
+    foreach ($read in 'AT+CESQ', 'AT+GTCCINFO?;+GTCAINFO?') {
+        $radio['Endc'][$read] = [string[]]$base[$read]
+    }
+    foreach ($situation in $description['Radio'].Keys) {
+        $radio[$situation] = $description['Radio'][$situation]
+    }
+    $description['Radio'] = $radio
+    $modem.NetworkMode = New-SimulatedNetworkMode -Description $description
+    # The registration it starts with, made to match its mode.
+    $modem.NetworkMode.Settle($modem)
 
     $adapter = [SimulatedAdapter]::new()
     $adapter.DadChecks = & $setting 'DadChecks' 0

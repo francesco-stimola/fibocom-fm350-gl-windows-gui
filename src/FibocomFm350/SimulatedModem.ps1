@@ -2,6 +2,216 @@
 # fixtures and plays scripted faults. The tests drive it, and so does the app's development mode
 # (no device, no admin rights). Fixture format: docs/SETUP.md -> Fixtures.
 
+# The simulated modem's network mode and bands (AT+GTACT, AT-COMMANDS section 5), when it has one:
+# the mode and the band list of each RAT it keeps, what it supports, and what a change does - the
+# modem registers again, in the network around it, whose cells use some LTE and NR bands and offer
+# 5G SA or not. Like the device, it lists each band once every band is allowed, drops n77 by itself
+# once registered, and keeps its setting across a reset.
+[NoRunspaceAffinity()]
+class SimulatedNetworkMode {
+    [int] $Rat = 20
+    [string[]] $Preferences = @('6', '3')
+    [int[]] $SupportedRats = @(1, 2, 4, 10, 14, 16, 17, 20)
+    # The band codes it supports, by RAT, and those it keeps.
+    [hashtable] $Supported = @{ UMTS = [int[]]@(); LTE = [int[]]@(); NR = [int[]]@() }
+    [hashtable] $Bands = @{ UMTS = [int[]]@(); LTE = [int[]]@(); NR = [int[]]@() }
+    # Codes it drops by itself once it has tried to register after a write that set them, when
+    # the other code is in the list too: n77 with n78 (AT-COMMANDS section 5).
+    [hashtable] $Dropped = @{ 5077 = 5078 }
+    # The network around it: the band codes its cells use, and whether it offers 5G SA.
+    [int[]] $NetworkLte = @()
+    [int[]] $NetworkNr = @()
+    [bool] $Standalone = $false
+    # Registration reads that find it searching after a change, before it registers again.
+    [int] $SearchReads = 1
+    # Its answers in each situation: Registration (Lte, Sa, Searching) and Radio - the
+    # AT+CESQ and AT+GTCCINFO?;+GTCAINFO? answers on EN-DC, LTE alone, 5G SA, and none.
+    [hashtable] $Registration = @{}
+    [hashtable] $Radio = @{}
+    hidden [int] $Searching = 0
+    hidden [bool] $DropPending = $false
+    # Its radio answers follow what it does - a change, a registration, a restart -, never
+    # the answers a scenario starts from.
+    hidden [bool] $RadioDue = $false
+
+    static [string] $RegistrationRead = 'AT+CEREG?;+C5GREG?'
+    static [hashtable] $Rats = @{
+        1 = @('UMTS'); 2 = @('LTE'); 4 = @('UMTS', 'LTE'); 10 = @('UMTS', 'LTE', 'NR'); 14 = @('NR')
+        16 = @('UMTS', 'NR'); 17 = @('LTE', 'NR'); 20 = @('UMTS', 'LTE', 'NR')
+    }
+
+    # The answer to an AT+GTACT command, or $null for any other command.
+    [string[]] Answer([string] $command) {
+        if ($command -eq 'AT+GTACT?') {
+            $values = [System.Collections.Generic.List[string]]::new()
+            $values.Add([string]$this.Rat)
+            $values.AddRange([string[]]$this.Preferences)
+            foreach ($kind in 'UMTS', 'LTE', 'NR') {
+                if ($kind -in [SimulatedNetworkMode]::Rats[$this.Rat]) {
+                    foreach ($code in $this.Bands[$kind]) {
+                        $values.Add([string]$code)
+                    }
+                }
+            }
+            return @("+GTACT: $($values -join ',')", 'OK')
+        }
+        if ($command -eq 'AT+GTACT=?') {
+            $lists = @(
+                ($this.SupportedRats -join ','), '2,3,6', '2,3,6', '', ($this.Supported['UMTS'] -join ','),
+                ($this.Supported['LTE'] -join ','), '', '', ($this.Supported['NR'] -join ',')
+            )
+            return @("+GTACT: $(($lists | ForEach-Object { "($_)" }) -join ',')", 'OK')
+        }
+        if ($command -match '^AT\+GTACT=(.+)$') {
+            if ($this.Write($Matches[1])) {
+                return @('OK')
+            }
+            return @('ERROR')
+        }
+        return $null
+    }
+
+    # A write: the mode, then for each RAT named by a code its new list - code 0 gives every RAT
+    # of the mode all its bands. Refused whole when a value is not one it takes.
+    hidden [bool] Write([string] $text) {
+        $fields = @($text.Split(',') | ForEach-Object { $_.Trim() })
+        $value = 0
+        if (-not [int]::TryParse($fields[0], [ref]$value) -or $value -notin $this.SupportedRats) {
+            return $false
+        }
+        $preferred = @(foreach ($index in 1, 2) { if ($index -lt $fields.Count) { $fields[$index] } else { '' } })
+        if (@($preferred | Where-Object { $_ -notin '', '2', '3', '6' }).Count -gt 0) {
+            return $false
+        }
+        $offered = $this.Supported
+        $named = @{ UMTS = [System.Collections.Generic.List[int]]::new(); LTE = [System.Collections.Generic.List[int]]::new(); NR = [System.Collections.Generic.List[int]]::new() }
+        $all = $false
+        foreach ($field in @($fields | Select-Object -Skip 3)) {
+            $code = 0
+            if (-not [int]::TryParse($field, [ref]$code)) {
+                return $false
+            }
+            if ($code -eq 0) {
+                $all = $true
+                continue
+            }
+            $kind = @('UMTS', 'LTE', 'NR' | Where-Object { $code -in $offered[$_] })
+            if ($kind.Count -eq 0) {
+                return $false
+            }
+            $named[$kind[0]].Add($code)
+        }
+        $this.Rat = if ($value -eq 10) { 20 } else { $value }
+        $this.Preferences = [string[]]$preferred
+        foreach ($kind in 'UMTS', 'LTE', 'NR') {
+            if ($all -and $kind -in [SimulatedNetworkMode]::Rats[$this.Rat]) {
+                $this.Bands[$kind] = [int[]]$this.Supported[$kind]
+            }
+            elseif ($named[$kind].Count -gt 0) {
+                $chosen = $named[$kind]
+                $this.Bands[$kind] = [int[]]@($this.Supported[$kind] | Where-Object { $_ -in $chosen })
+            }
+        }
+        $this.DropPending = $true
+        return $true
+    }
+
+    # What follows a command: a write registers the modem again, after SearchReads registration
+    # reads, if the network around it has cells it may use; registered, its radio answers match
+    # its mode and n77 goes.
+    [void] After([string] $command, [bool] $succeeded, [object] $modem) {
+        if ($succeeded -and $command -match '^AT\+GTACT=[^?]') {
+            $modem.SetAnswer([SimulatedNetworkMode]::RegistrationRead, [string[]]$this.Registration['Searching'])
+            # The data context goes with the registration.
+            $modem.SetAnswer('AT+CGACT?', @('OK'))
+            $this.Searching = $this.SearchReads
+            $this.RadioDue = $true
+        }
+        elseif ($command -eq [SimulatedNetworkMode]::RegistrationRead -and $this.Searching -gt 0) {
+            $this.Searching--
+            if ($this.Searching -eq 0) {
+                $this.Drop()
+                $found = $this.Found()
+                if ($found -eq 'Lte') {
+                    $modem.SetAnswer([SimulatedNetworkMode]::RegistrationRead, [string[]]$this.Registration['Lte'])
+                }
+                elseif ($found -eq 'Sa') {
+                    $modem.SetAnswer([SimulatedNetworkMode]::RegistrationRead, [string[]]$this.Registration['Sa'])
+                }
+                $this.RadioDue = $true
+            }
+        }
+        $this.Settle($modem)
+    }
+
+    # Keeps what the modem answers consistent with its mode: a registration on LTE that the mode
+    # can't have - after a reset, the radio back on - is the one the mode finds, or none.
+    [void] Settle([object] $modem) {
+        $current = ($modem.GetAnswer([SimulatedNetworkMode]::RegistrationRead) -join '|')
+        $onLte = $current -eq ($this.Registration['Lte'] -join '|')
+        $onSa = $current -eq ($this.Registration['Sa'] -join '|')
+        if (($onLte -or $onSa) -and $this.Searching -eq 0) {
+            $found = $this.Found()
+            if (($onLte -and $found -ne 'Lte') -or ($onSa -and $found -ne 'Sa')) {
+                $answer = if ($found) { $this.Registration[$found] } else { $this.Registration['Searching'] }
+                $modem.SetAnswer([SimulatedNetworkMode]::RegistrationRead, [string[]]$answer)
+                $onLte = $found -eq 'Lte'
+                $onSa = $found -eq 'Sa'
+                $this.RadioDue = $true
+            }
+        }
+        if (($onLte -or $onSa) -and $this.DropPending) {
+            $this.Drop()
+        }
+        if ($this.RadioDue) {
+            $situation = if ($onLte -and $this.NrLeg()) { 'Endc' } elseif ($onLte) { 'Lte' } elseif ($onSa) { 'Sa' } else { 'None' }
+            if ($this.Radio.ContainsKey($situation)) {
+                foreach ($read in $this.Radio[$situation].Keys) {
+                    $modem.SetAnswer($read, [string[]]$this.Radio[$situation][$read])
+                }
+            }
+            $this.RadioDue = $false
+        }
+    }
+
+    # The codes it drops by itself, once it has tried to register.
+    hidden [void] Drop() {
+        foreach ($kind in 'UMTS', 'LTE', 'NR') {
+            $list = $this.Bands[$kind]
+            $pairs = $this.Dropped
+            $gone = @($pairs.Keys | Where-Object { $_ -in $list -and $pairs[$_] -in $list })
+            $this.Bands[$kind] = [int[]]@($list | Where-Object { $_ -notin $gone })
+        }
+        $this.DropPending = $false
+    }
+
+    # Back from a restart: its answers, back to their defaults, are made to match its mode.
+    [void] Restarted() {
+        $this.Searching = 0
+        $this.RadioDue = $true
+    }
+
+    # 'Lte' or 'Sa': the network the modem finds in its mode and bands; '' for none.
+    [string] Found() {
+        $inMode = [SimulatedNetworkMode]::Rats[$this.Rat]
+        $lte = $this.Bands['LTE']
+        $nr = $this.Bands['NR']
+        if ('LTE' -in $inMode -and @($this.NetworkLte | Where-Object { $_ -in $lte }).Count -gt 0) {
+            return 'Lte'
+        }
+        if ('NR' -in $inMode -and $this.Standalone -and @($this.NetworkNr | Where-Object { $_ -in $nr }).Count -gt 0) {
+            return 'Sa'
+        }
+        return ''
+    }
+
+    # Whether an LTE registration gets an NR leg: the mode has NR, and its bands a cell's.
+    [bool] NrLeg() {
+        $nr = $this.Bands['NR']
+        return 'NR' -in [SimulatedNetworkMode]::Rats[$this.Rat] -and @($this.NetworkNr | Where-Object { $_ -in $nr }).Count -gt 0
+    }
+}
+
 [NoRunspaceAffinity()]
 class SimulatedModem {
     [string] $PortName
@@ -17,6 +227,8 @@ class SimulatedModem {
     # The device's state beyond its answers, which scripted commands can change: DataPath ('Down':
     # traffic doesn't get through), read by the simulated device.
     [System.Collections.Generic.Dictionary[string, string]] $Flags = [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    # Its network mode and bands (SimulatedNetworkMode), or $null: AT+GTACT answered from fixtures.
+    [object] $NetworkMode
 
     hidden [System.Collections.Generic.Dictionary[string, string[]]] $Answers
     hidden [System.Collections.Generic.Dictionary[string, System.Collections.Generic.Queue[hashtable]]] $Behaviors
@@ -38,6 +250,14 @@ class SimulatedModem {
     # The standing answer to $command: its lines as the modem sends them, final result last.
     [void] SetAnswer([string] $command, [string[]] $lines) {
         $this.Answers[$command.Trim()] = $lines
+    }
+
+    # The standing answer to $command, or none.
+    [string[]] GetAnswer([string] $command) {
+        if ($this.Answers.ContainsKey($command.Trim())) {
+            return $this.Answers[$command.Trim()]
+        }
+        return @()
     }
 
     # A one-shot behaviour for the next time $command arrives (queued: several can be lined up).
@@ -83,6 +303,9 @@ class SimulatedModem {
     # The device is back, possibly under another COM number, with its power-on defaults; it can
     # be opened again by a new channel.
     [void] Reappear([string] $portName) {
+        if ($this.NetworkMode) {
+            $this.NetworkMode.Restarted()
+        }
         $this.PortName = $portName
         $this.Lost = $false
         $this.Closed = $false
@@ -171,8 +394,13 @@ class SimulatedModem {
         # The echo reflects the setting in force when the command arrives.
         $echoText = if ($this.Echo) { "$command`r" } else { '' }
         $lines = [System.Collections.Generic.List[string]]::new()
+        # A scripted answer stands in for the network mode's own: the command then changes nothing.
+        $own = if ($this.NetworkMode -and -not $behavior.ContainsKey('Lines')) { $this.NetworkMode.Answer($command) } else { $null }
         if ($behavior.ContainsKey('Lines')) {
             $lines.AddRange([string[]]$behavior['Lines'])
+        }
+        elseif ($null -ne $own) {
+            $lines.AddRange([string[]]$own)
         }
         else {
             $lines.AddRange($this.StandingAnswer($command))
@@ -224,6 +452,9 @@ class SimulatedModem {
                 $this.Flags[$flag] = [string]$behavior['Flags'][$flag]
             }
         }
+        if ($this.NetworkMode) {
+            $this.NetworkMode.After($command, $succeeded, $this)
+        }
     }
 
     hidden [string[]] StandingAnswer([string] $command) {
@@ -251,6 +482,30 @@ class SimulatedModem {
         }
         $this.Output.Insert($index, @{ Due = $due; Text = $text })
     }
+}
+
+function New-SimulatedNetworkMode {
+    # A simulated modem's network mode (SimulatedNetworkMode), from its description in
+    # Data/Simulation.psd1: each key sets the property of the same name.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Creates an in-memory object; changes no system state.')]
+    param([hashtable] $Description)
+
+    $mode = [SimulatedNetworkMode]::new()
+    foreach ($key in $Description.Keys) {
+        $value = $Description[$key]
+        $mode.$key = switch ($key) {
+            { $_ -in 'Supported', 'Bands' } {
+                $lists = @{}
+                foreach ($rat in $value.Keys) {
+                    $lists[$rat] = [int[]]@($value[$rat])
+                }
+                $lists
+            }
+            default { $value }
+        }
+    }
+    $mode
 }
 
 function Import-AtFixture {

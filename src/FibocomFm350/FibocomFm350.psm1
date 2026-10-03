@@ -13,6 +13,7 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Settings.ps1')
 . (Join-Path $PSScriptRoot 'Sim.ps1')
 . (Join-Path $PSScriptRoot 'Fcc.ps1')
+. (Join-Path $PSScriptRoot 'Modes.ps1')
 . (Join-Path $PSScriptRoot 'Connection.ps1')
 . (Join-Path $PSScriptRoot 'Network.ps1')
 . (Join-Path $PSScriptRoot 'Log.ps1')

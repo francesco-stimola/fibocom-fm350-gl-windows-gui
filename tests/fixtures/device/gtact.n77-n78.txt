@@ -1,0 +1,4 @@
+# Source: captured 2026-10-03, FM350-GL firmware 81600.0000.00.29.22.06; after AT+GTACT=20,6,3,5077,5078, 30 s after registering: n77 dropped, n78 kept, the other lists as they were.
+AT+GTACT?
++GTACT: 20,6,3,1,2,4,5,8,101,102,103,104,105,107,108,112,113,114,117,118,119,120,125,126,128,129,130,132,134,138,139,140,141,142,143,146,148,166,171,5078
+OK

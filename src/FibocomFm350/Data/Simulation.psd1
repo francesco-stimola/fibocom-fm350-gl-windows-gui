@@ -41,6 +41,64 @@
         )
     }
 
+    # The network mode (AT+GTACT, AT-COMMANDS section 5): what the modem supports and keeps - the
+    # device's lists, automatic mode with every band but n77, which it drops once it has tried to
+    # register when n78 is listed too - and the network around it: LTE cells on B1, B3, B7 and
+    # B20, NR on n78 under EN-DC, no 5G SA. Its answers when registered on LTE or on 5G SA, while
+    # searching, and its radio on EN-DC (the base answers), LTE alone, 5G SA, and nothing.
+    NetworkMode = @{
+        Rat          = 20
+        Preferences  = @('6', '3')
+        Supported    = @{
+            UMTS = @(1, 2, 4, 5, 8)
+            LTE  = @(101, 102, 103, 104, 105, 107, 108, 112, 113, 114, 117, 118, 119, 120, 125, 126, 128, 129, 130, 132, 134, 138, 139, 140, 141, 142, 143, 146, 148, 166, 171)
+            NR   = @(501, 502, 503, 505, 507, 508, 5020, 5025, 5028, 5030, 5038, 5040, 5041, 5048, 5066, 5071, 5077, 5078, 5079)
+        }
+        Bands        = @{
+            UMTS = @(1, 2, 4, 5, 8)
+            LTE  = @(101, 102, 103, 104, 105, 107, 108, 112, 113, 114, 117, 118, 119, 120, 125, 126, 128, 129, 130, 132, 134, 138, 139, 140, 141, 142, 143, 146, 148, 166, 171)
+            NR   = @(501, 502, 503, 505, 507, 508, 5020, 5025, 5028, 5030, 5038, 5040, 5041, 5048, 5066, 5071, 5078, 5079)
+        }
+        Dropped      = @{ 5077 = 5078 }
+        NetworkLte   = @(101, 103, 107, 120)
+        NetworkNr    = @(5078)
+        Standalone   = $false
+        Registration = @{
+            Lte       = @('+CEREG: 0,1', '+C5GREG: 0', 'OK')
+            Sa        = @('+CEREG: 0,0', '+C5GREG: 0,1', 'OK')
+            Searching = @('+CEREG: 0,2', '+C5GREG: 0', 'OK')
+        }
+        Radio        = @{
+            Lte  = @{
+                'AT+CESQ'                 = @('+CESQ: 99,99,255,255,14,44,255,255,255', 'OK')
+                'AT+GTCCINFO?;+GTCAINFO?' = @(
+                    '+GTCCINFO:'
+                    '1,4,001,01,ABCD,00ABCDEF0,1850,123,103,100,4,44,44,13'
+                    '2,4,,,FFFF,00FFFFFFF,1850,137,,41,41,71'
+                    '+GTCAINFO:'
+                    'PCC:103,123,1850,100,100,1,1,3,1,-95'
+                    'SCC 1:2,1,101,144,525,75,50,1,1,3,3,-95'
+                    'SCC 2:2,0,107,151,3025,75,255,1,255,3,255,-95'
+                    'OK'
+                )
+            }
+            Sa   = @{
+                'AT+CESQ'                 = @('+CESQ: 99,99,255,255,255,255,40,49,69', 'OK')
+                'AT+GTCCINFO?;+GTCAINFO?' = @(
+                    '+GTCCINFO:'
+                    '1,9,001,01,00ABCD,000ABCDEF0,645312,130,5078,400,2,49,49,69'
+                    '+GTCAINFO:'
+                    'PCC:5078,130,645312,400,400,2,1,1,3,-107'
+                    'OK'
+                )
+            }
+            None = @{
+                'AT+CESQ'                 = @('+CESQ: 99,99,255,255,255,255,255,255,255', 'OK')
+                'AT+GTCCINFO?;+GTCAINFO?' = @('+GTCCINFO:', 'OK')
+            }
+        }
+    }
+
     # What the recovery steps and the steps that follow them do, every time they succeed: the
     # answers they change ('Base': the base answer; 'Answers = Base': every answer back to the
     # base), the device flags they set (DataPath), and whether the modem drops off USB.
@@ -73,6 +131,7 @@
     #   address just set still being checked by Windows. LostRounds: probe rounds lost after it.
     #   PassedRounds: probe rounds that pass before a path that is down shows it.
     # - Presence: how PnP sees the modem - 'Present', 'Absent' or 'NoDriver'.
+    # - NetworkMode: what differs from the base network mode (above), or the network around it.
     Scenarios = @{
         # Online: the app attaches and changes nothing.
         Online           = @{
@@ -199,6 +258,27 @@
         ModemHung        = @{
             Adapter = 'Configured'
             Hung    = $true
+        }
+
+        # The modem in LTE-only mode, set before the app: online on LTE, left so until the user
+        # chooses a mode.
+        LteOnlyMode      = @{
+            Adapter     = 'Configured'
+            NetworkMode = @{ Rat = 2; Preferences = @('3', '3') }
+        }
+
+        # The modem in NR-only mode, where there is no 5G SA network: it finds none. Choosing
+        # 4G + 5G brings it online.
+        NrOnlyMode       = @{
+            Adapter     = 'Fresh'
+            Answers     = @{ 'AT+CGACT?' = @('OK') }
+            NetworkMode = @{ Rat = 14; Preferences = @('6', '6') }
+        }
+
+        # A network with 5G SA on n78: in NR-only mode the modem registers on it.
+        Standalone       = @{
+            Adapter     = 'Configured'
+            NetworkMode = @{ Standalone = $true }
         }
 
         # The network refuses the registration, whatever is done.

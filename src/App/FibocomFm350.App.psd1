@@ -14,6 +14,8 @@
         'Enter-AppInstance'
         'Exit-AppInstance'
         'Get-GuiResourceCount'
+        'Get-NetworkModeView'
+        'Get-TrayModeMenu'
         'New-MainWindow'
         'New-TrayIconHandle'
         'Receive-WorkerMessage'

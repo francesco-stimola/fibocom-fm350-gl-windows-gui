@@ -1,0 +1,4 @@
+# Source: captured 2026-10-03, FM350-GL firmware 81600.0000.00.29.22.06; after AT+GTACT=14,6,6,0, 90 s without registering (no 5G SA network): only NR codes listed, n77 left out.
+AT+GTACT?
++GTACT: 14,6,6,501,502,503,505,507,508,5020,5025,5028,5030,5038,5040,5041,5048,5066,5071,5078,5079
+OK

@@ -45,3 +45,59 @@ Start-Fm350App -Simulated -Scenario Connect -Hidden
         $log -match 'ERROR' | Should -BeNullOrEmpty
     }
 }
+
+Describe 'The tray menu' {
+    BeforeAll {
+        Import-Module "$PSScriptRoot/../src/FibocomFm350/FibocomFm350.psd1" -Force
+        Import-Module "$PSScriptRoot/../src/App/FibocomFm350.App.psd1" -Force
+        $link = New-ModemWorkerLink
+        $worker = New-ModemWorker -Link $link -Simulation (New-SimulatedDevice -Scenario Online) -DataFolder (Join-Path $TestDrive 'data')
+        try {
+            Invoke-ModemWorkerCycle -Worker $worker
+            $script:snapshot = $link['Snapshot']
+        }
+        finally {
+            Close-ModemWorker -Worker $worker
+            Close-ModemWorkerLink -Link $link
+        }
+    }
+
+    AfterAll {
+        Remove-Module FibocomFm350.App, FibocomFm350 -ErrorAction SilentlyContinue
+    }
+
+    It 'lists the network modes as it opens, the modem''s checked, and a click sends the mode chosen' {
+        $link = New-ModemWorkerLink
+        try {
+            $items = & (Get-Module FibocomFm350.App) {
+                param($snapshot, $link)
+                $script:App = @{ LastSnapshot = $snapshot; Worker = @{ Link = $link }; ResumedAt = 0; Tray = New-AppTray }
+                try {
+                    Update-AppTrayMenu
+                    $modes = $script:App.Tray.ContextMenuStrip.Items['NetworkMode']
+                    $state = @($modes.DropDownItems | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Text = $_.Text; Checked = $_.Checked; Enabled = $_.Enabled } })
+                    $modes.DropDownItems['LteOnly'].PerformClick()
+                    [pscustomobject]@{ Text = $modes.Text; Items = $state }
+                }
+                finally {
+                    $script:App.Tray.ContextMenuStrip.Dispose()
+                    $script:App.Tray.Dispose()
+                    $script:App = $null
+                }
+            } $script:snapshot $link
+            $items.Text | Should -Be 'Network mode: 4G + 5G'
+            $items.Items.Text | Should -Be @('4G + 5G', '4G only', '5G only (SA)')
+            $items.Items.Checked | Should -Be @($true, $false, $false)
+            $items.Items.Enabled | Should -Be @($false, $true, $true)
+            $command = $null
+            $link['Commands'].TryDequeue([ref]$command) | Should -BeTrue
+            $command.Kind | Should -Be 'SetNetworkMode'
+            $command.Parameter | Should -BeOfType ([hashtable])
+            $command.Parameter['NetworkMode'] | Should -Be 'LteOnly'
+            $command.Parameter.ContainsKey('LteBands') | Should -BeFalse -Because 'the bands stay as the settings have them'
+        }
+        finally {
+            Close-ModemWorkerLink -Link $link
+        }
+    }
+}

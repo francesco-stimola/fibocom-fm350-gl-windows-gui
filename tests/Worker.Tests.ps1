@@ -753,6 +753,420 @@ Describe 'Health and recovery on the simulated modem' {
     }
 }
 
+Describe 'The network mode on the simulated modem' {
+    BeforeAll {
+        $script:timings = & (Get-Module FibocomFm350) { $script:RecoveryTimings }
+        $script:modeData = (Import-PowerShellDataFile -Path "$PSScriptRoot/../src/FibocomFm350/Data/Simulation.psd1").NetworkMode
+        # The writes of AT+GTACT the modem received.
+        function Get-ModeWrite {
+            param($Modem)
+            @($Modem.Received | Where-Object { $_ -match '^AT\+GTACT=[^?]' })
+        }
+        function Save-TestSetting {
+            param([hashtable] $Values)
+            Export-AppSetting -Path (Join-Path $script:folder 'settings.json') -Settings $Values -Confirm:$false
+        }
+        function Get-SavedSetting {
+            (Import-AppSetting -Path (Join-Path $script:folder 'settings.json')).Settings
+        }
+        # What the simulated modem reads in automatic mode once registered: every band, n77 dropped.
+        $script:automatic = 'AT+GTACT=20,6,3,' + ((@($script:modeData.Bands.UMTS) + @($script:modeData.Bands.LTE) + @($script:modeData.Bands.NR)) -join ',')
+        $script:lteOnly = 'AT+GTACT=2,3,3,' + (@($script:modeData.Supported.LTE) -join ',')
+    }
+
+    BeforeEach {
+        $script:folder = Join-Path $TestDrive ([guid]::NewGuid())
+        $script:now = 100000
+    }
+
+    Context 'keeping the mode the settings ask' {
+        It 'leaves the modem''s mode alone while the settings don''t manage it, and shows it' {
+            $device = New-SimulatedDevice -Scenario LteOnlyMode
+            $worker = Get-TestWorker -Device $device
+            [void](Invoke-TestCycle -Worker $worker -Max 10)
+            Get-ModeWrite -Modem $device.Modem | Should -BeNullOrEmpty
+            $mode = $script:link['Snapshot'].NetworkMode
+            $mode.Current.Mode | Should -Be 'LteOnly'
+            $mode.Decision.Managed | Should -BeFalse
+            $mode.Support.Modes | Should -Be @('Automatic', 'LteOnly', 'NrOnly')
+            @($device.Modem.Received | Where-Object { $_ -eq 'AT+GTACT=?' }).Count | Should -Be 1 -Because 'what the modem supports is read once per channel'
+        }
+
+        It 'never writes a mode the modem keeps: automatic, n77 left out by the modem' {
+            Save-TestSetting @{ NetworkMode = 'Automatic' }
+            $device = New-SimulatedDevice -Scenario Online
+            $worker = Get-TestWorker -Device $device
+            $trace = Invoke-TestCycle -Worker $worker -Max 20
+            Get-ModeWrite -Modem $device.Modem | Should -BeNullOrEmpty
+            @($trace | Where-Object State -NE 'Online') | Should -BeNullOrEmpty
+            $mode = $script:link['Snapshot'].NetworkMode
+            $mode.Decision.Satisfied | Should -BeTrue
+            $mode.Decision.Missing.Nr | Should -Be @(77)
+        }
+
+        It 'writes the mode the settings ask over the modem''s once, in a maintenance window, and comes back online without a recovery step' {
+            Save-TestSetting @{ NetworkMode = 'Automatic' }
+            $device = New-SimulatedDevice -Scenario LteOnlyMode
+            $worker = Get-TestWorker -Device $device
+            $trace = Invoke-TestCycle -Worker $worker -Jump -Max 60 -Until { param($s) $s.State -eq 'Online' -and $s.Recovery.Status -eq 'Healthy' -and $s.NetworkMode.Current.Mode -eq 'Automatic' }
+            $trace[-1].State | Should -Be 'Online'
+            Get-ModeWrite -Modem $device.Modem | Should -Be @('AT+GTACT=20,6,3,' + ((@($script:modeData.Supported.LTE) + @($script:modeData.Supported.NR)) -join ','))
+            @($trace | Where-Object { $_.Recovery -notin 'Healthy', 'Maintenance' }) | Should -BeNullOrEmpty
+            Get-RecoveryCommand -Modem $device.Modem | Should -BeNullOrEmpty
+            $script:link['Snapshot'].Radio.Technology | Should -Be '5G NSA'
+            # n77 is gone from the list once the modem registered: that is no reason to write again.
+            [void](Invoke-TestCycle -Worker $worker -Max 10)
+            @(Get-ModeWrite -Modem $device.Modem).Count | Should -Be 1
+            @(Get-TestLog) -match 'ApplyNetworkMode: Done' | Should -Not -BeNullOrEmpty
+        }
+
+        It 'never writes again a mode the modem doesn''t keep' {
+            Save-TestSetting @{ NetworkMode = 'LteOnly' }
+            $device = New-SimulatedDevice -Scenario Online
+            $device.Modem.Script($script:lteOnly, @{ Lines = @('OK'); Keep = $true })
+            $worker = Get-TestWorker -Device $device
+            [void](Invoke-TestCycle -Worker $worker -Jump -Max 30)
+            Get-ModeWrite -Modem $device.Modem | Should -Be @($script:lteOnly)
+            $script:link['Snapshot'].NetworkMode.Decision.Problem | Should -Be 'NotKept'
+            @(Get-TestLog | Where-Object { $_ -match 'Network mode: not as the settings ask \(NotKept\)' }).Count | Should -Be 1
+        }
+
+        It 'remembers a write the modem refused: the context comes up, nothing escalates, the write is not repeated' {
+            Save-TestSetting @{ NetworkMode = 'Automatic' }
+            $device = New-SimulatedDevice -Scenario LteOnlyMode
+            $device.Modem.SetAnswer('AT+CGACT?', @('OK'))
+            $write = 'AT+GTACT=20,6,3,' + ((@($script:modeData.Supported.LTE) + @($script:modeData.Supported.NR)) -join ',')
+            $device.Modem.Script($write, @{ Lines = @('ERROR'); Keep = $true })
+            $worker = Get-TestWorker -Device $device
+            $trace = Invoke-TestCycle -Worker $worker -Jump -Max 30
+            Get-ModeWrite -Modem $device.Modem | Should -Be @($write)
+            $device.Modem.Received | Should -Contain 'AT+CGACT=1,1'
+            $trace[-1].State | Should -Be 'Online'
+            Get-RecoveryCommand -Modem $device.Modem | Should -BeNullOrEmpty
+            $script:link['Snapshot'].NetworkMode.Decision.Problem | Should -Be 'NotKept'
+        }
+
+        It 'takes no recovery step on a narrowed mode while its setting can''t be read' {
+            Save-TestSetting @{ NetworkMode = 'NrOnly' }
+            $device = New-SimulatedDevice -Scenario Standalone
+            $worker = Get-TestWorker -Device $device
+            [void](Invoke-TestCycle -Worker $worker -Jump -Max 40 -Until { param($s) $s.State -eq 'Online' -and $s.Recovery.Status -eq 'Healthy' })
+            $device.Modem.NetworkMode.Standalone = $false
+            $device.Modem.SetAnswer('AT+CEREG?;+C5GREG?', [string[]]$script:modeData.Registration.Searching)
+            $device.Modem.SetAnswer('AT+CGACT?', @('OK'))
+            $device.Modem.Script('AT+GTACT?', @{ Lines = @('ERROR'); Keep = $true })
+            foreach ($i in 1..13) {
+                Invoke-ModemWorkerCycle -Worker $worker
+                $script:now += 600000
+            }
+            $script:link['Snapshot'].NetworkMode.Decision.Satisfied | Should -BeNullOrEmpty
+            Get-RecoveryCommand -Modem $device.Modem | Should -BeNullOrEmpty
+        }
+
+        It 'writes nothing while it only observes' {
+            Save-TestSetting @{ NetworkMode = 'Automatic' }
+            $device = New-SimulatedDevice -Scenario LteOnlyMode
+            $worker = Get-TestWorker -Device $device -Extra @{ ObserveOnly = $true }
+            Invoke-ModemWorkerCycle -Worker $worker
+            $script:link['Snapshot'].Action | Should -Be 'ApplyNetworkMode'
+            Get-ModeWrite -Modem $device.Modem | Should -BeNullOrEmpty
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'LteOnly' }).Result | Should -Be 'Refused'
+            Get-ModeWrite -Modem $device.Modem | Should -BeNullOrEmpty
+        }
+
+        It 'takes no recovery step for a network a narrowed mode doesn''t find: 5G SA gone' {
+            Save-TestSetting @{ NetworkMode = 'NrOnly' }
+            $device = New-SimulatedDevice -Scenario Standalone
+            $worker = Get-TestWorker -Device $device
+            [void](Invoke-TestCycle -Worker $worker -Jump -Max 40 -Until { param($s) $s.State -eq 'Online' -and $s.Recovery.Status -eq 'Healthy' })
+            $script:link['Snapshot'].Radio.Technology | Should -Be '5G SA'
+            # The 5G SA network goes away.
+            $device.Modem.NetworkMode.Standalone = $false
+            $device.Modem.SetAnswer('AT+CEREG?;+C5GREG?', [string[]]$script:modeData.Registration.Searching)
+            $device.Modem.SetAnswer('AT+CGACT?', @('OK'))
+            foreach ($i in 1..13) {
+                Invoke-ModemWorkerCycle -Worker $worker
+                $script:now += 600000
+            }
+            $snapshot = $script:link['Snapshot']
+            $snapshot.State | Should -Be 'SimReady'
+            $snapshot.Recovery.Check | Should -Be 'H4'
+            $snapshot.Recovery.Status | Should -Be 'Watching'
+            $snapshot.NetworkMode.Decision.Narrowed | Should -BeTrue
+            Get-RecoveryCommand -Modem $device.Modem | Should -BeNullOrEmpty
+        }
+    }
+
+    Context 'a mode the user chooses' {
+        It 'writes it at once, tries it, and saves it once the modem registers with it' {
+            $device = New-SimulatedDevice -Scenario Online
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            $result = Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'LteOnly' }
+            $result.Result | Should -Be 'Applied'
+            $result.Detail | Should -Be $script:lteOnly
+            $script:link['Snapshot'].NetworkMode.Trial.Selection.NetworkMode | Should -Be 'LteOnly'
+            (Get-SavedSetting).NetworkMode | Should -Be '' -Because 'it is saved once the modem has found a network with it'
+            $trace = Invoke-TestCycle -Worker $worker -Jump -Max 40 -Until { param($s) -not $s.NetworkMode.Trial -and $s.State -eq 'Online' }
+            $snapshot = $script:link['Snapshot']
+            $snapshot.NetworkMode.Notice.Kind | Should -Be 'Kept'
+            (Get-SavedSetting).NetworkMode | Should -Be 'LteOnly'
+            $snapshot.Radio.Technology | Should -Not -BeLike '5G*'
+            Get-ModeWrite -Modem $device.Modem | Should -Be @($script:lteOnly)
+            @($trace | Where-Object { $_.Recovery -notin 'Healthy', 'Maintenance' }) | Should -BeNullOrEmpty
+            Get-RecoveryCommand -Modem $device.Modem | Should -BeNullOrEmpty
+        }
+
+        It 'undoes a mode that finds no network - 5G only without 5G SA -, writing back what the modem had, each code as read' {
+            $device = New-SimulatedDevice -Scenario Online
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            $applied = $script:now
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'NrOnly' }).Result | Should -Be 'Applied'
+            $trace = Invoke-TestCycle -Worker $worker -Jump -Max 60 -Until { param($s) $s.NetworkMode.Notice -and $s.State -eq 'Online' }
+            $snapshot = $script:link['Snapshot']
+            $snapshot.NetworkMode.Notice.Kind | Should -Be 'Reverted'
+            $snapshot.NetworkMode.Notice.Mode | Should -Be 'NrOnly'
+            $writes = Get-ModeWrite -Modem $device.Modem
+            $writes.Count | Should -Be 2
+            $writes[0] | Should -BeLike 'AT+GTACT=14,6,6,*'
+            $writes[1] | Should -Be $script:automatic -Because 'the setting before goes back as read, UMTS codes and all'
+            $reverted = $trace | Where-Object { $_.State -ne 'Online' } | Select-Object -Last 1
+            $reverted.Now - $applied | Should -BeGreaterOrEqual $script:timings.Maintenance
+            (Get-SavedSetting).NetworkMode | Should -Be ''
+            @($trace | Where-Object { $_.Recovery -notin 'Healthy', 'Maintenance' }) | Should -BeNullOrEmpty
+            Get-RecoveryCommand -Modem $device.Modem | Should -BeNullOrEmpty
+            @(Get-TestLog) -match 'Network mode NrOnly: no network' | Should -Not -BeNullOrEmpty
+        }
+
+        It 'registers on 5G SA where there is one' {
+            $device = New-SimulatedDevice -Scenario Standalone
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'NrOnly' }).Result | Should -Be 'Applied'
+            [void](Invoke-TestCycle -Worker $worker -Jump -Max 40 -Until { param($s) -not $s.NetworkMode.Trial -and $s.State -eq 'Online' })
+            $script:link['Snapshot'].NetworkMode.Notice.Kind | Should -Be 'Kept'
+            $script:link['Snapshot'].Radio.Technology | Should -Be '5G SA'
+        }
+
+        It 'keeps the mode on trial against the saved one: the pass doesn''t undo it' {
+            Save-TestSetting @{ NetworkMode = 'Automatic' }
+            $device = New-SimulatedDevice -Scenario Online
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'LteOnly' }).Result | Should -Be 'Applied'
+            [void](Invoke-TestCycle -Worker $worker -Jump -Max 40 -Until { param($s) -not $s.NetworkMode.Trial -and $s.State -eq 'Online' })
+            Get-ModeWrite -Modem $device.Modem | Should -Be @($script:lteOnly)
+            (Get-SavedSetting).NetworkMode | Should -Be 'LteOnly'
+        }
+
+        It 'goes back to the setting before the first change, after two changes on trial' {
+            $device = New-SimulatedDevice -Scenario Online
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'LteOnly' }).Result | Should -Be 'Applied'
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'NrOnly' }).Result | Should -Be 'Applied'
+            [void](Invoke-TestCycle -Worker $worker -Jump -Max 60 -Until { param($s) $s.NetworkMode.Notice -and $s.State -eq 'Online' })
+            (Get-ModeWrite -Modem $device.Modem)[-1] | Should -Be $script:automatic
+        }
+
+        It 'carries a mode on trial to the worker that replaces this one, which undoes it' {
+            $device = New-SimulatedDevice -Scenario Online
+            $first = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $first
+            (Invoke-TestCommand -Worker $first -Kind SetNetworkMode -Parameter @{ NetworkMode = 'NrOnly' }).Result | Should -Be 'Applied'
+            $last = $script:link['Snapshot']
+            Close-ModemWorker -Worker $first
+            $second = Get-TestWorker -Device $device -Extra @{ Previous = $last; Generation = 2 }
+            [void](Invoke-TestCycle -Worker $second -Jump -Max 60 -Until { param($s) $s.NetworkMode.Notice -and $s.State -eq 'Online' })
+            $script:link['Snapshot'].NetworkMode.Notice.Kind | Should -Be 'Reverted'
+            (Get-ModeWrite -Modem $device.Modem)[-1] | Should -Be $script:automatic
+        }
+
+        It 'saves a mode the modem has already, and writes nothing' {
+            $device = New-SimulatedDevice -Scenario LteOnlyMode
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'LteOnly' }).Result | Should -Be 'Unchanged'
+            (Get-SavedSetting).NetworkMode | Should -Be 'LteOnly'
+            Get-ModeWrite -Modem $device.Modem | Should -BeNullOrEmpty
+        }
+
+        It 'restricts the bands, and keeps the setting of what it doesn''t name' {
+            Save-TestSetting @{ NetworkMode = 'Automatic'; LteBands = @(3, 20) }
+            $device = New-SimulatedDevice -Scenario Online
+            $worker = Get-TestWorker -Device $device
+            [void](Invoke-TestCycle -Worker $worker -Jump -Max 40 -Until { param($s) $s.State -eq 'Online' -and $s.Recovery.Status -eq 'Healthy' -and @(Get-ModeWrite -Modem $device.Modem).Count -gt 0 })
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NrBands = @(78) }).Result | Should -Be 'Applied'
+            (Get-ModeWrite -Modem $device.Modem)[-1] | Should -Be 'AT+GTACT=20,6,3,103,120,5078'
+            [void](Invoke-TestCycle -Worker $worker -Jump -Max 40 -Until { param($s) -not $s.NetworkMode.Trial })
+            $saved = Get-SavedSetting
+            $saved.LteBands | Should -Be @(3, 20)
+            $saved.NrBands | Should -Be @(78)
+        }
+
+        It 'stops managing the mode when asked: the modem keeps what it has' {
+            Save-TestSetting @{ NetworkMode = 'LteOnly' }
+            $device = New-SimulatedDevice -Scenario LteOnlyMode
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = '' }).Result | Should -Be 'Done'
+            (Get-SavedSetting).NetworkMode | Should -Be ''
+            Get-ModeWrite -Modem $device.Modem | Should -BeNullOrEmpty
+        }
+
+        It 'saves 4G + 5G on a modem that has it, n77 left out by the modem, without a write' {
+            $device = New-SimulatedDevice -Scenario Online
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'Automatic' }).Result | Should -Be 'Unchanged'
+            (Get-SavedSetting).NetworkMode | Should -Be 'Automatic'
+            Get-ModeWrite -Modem $device.Modem | Should -BeNullOrEmpty
+        }
+
+        It 'keeps a mode on trial when it is applied again, and still undoes it without a network' {
+            $device = New-SimulatedDevice -Scenario Online
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            # LTE on B5 only: no cell of the network around it.
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'LteOnly'; LteBands = @(5) }).Result | Should -Be 'Applied'
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'LteOnly'; LteBands = @(5) }).Result | Should -Be 'Applied'
+            $script:link['Snapshot'].NetworkMode.Trial | Should -Not -BeNullOrEmpty
+            (Get-SavedSetting).NetworkMode | Should -Be '' -Because 'only a registration with it saves it'
+            [void](Invoke-TestCycle -Worker $worker -Jump -Max 60 -Until { param($s) $s.NetworkMode.Notice -and $s.State -eq 'Online' })
+            $script:link['Snapshot'].NetworkMode.Notice.Kind | Should -Be 'Reverted'
+            (Get-ModeWrite -Modem $device.Modem)[-1] | Should -Be $script:automatic
+            (Get-SavedSetting).NetworkMode | Should -Be ''
+        }
+
+        It 'writes the setting before back first when it stops managing a mode on trial' {
+            $device = New-SimulatedDevice -Scenario Online
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'NrOnly' }).Result | Should -Be 'Applied'
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = '' }).Result | Should -Be 'Done'
+            (Get-ModeWrite -Modem $device.Modem)[-1] | Should -Be $script:automatic
+            $script:link['Snapshot'].NetworkMode.Trial | Should -BeNullOrEmpty
+            (Get-SavedSetting).NetworkMode | Should -Be ''
+            $trace = Invoke-TestCycle -Worker $worker -Jump -Max 40 -Until { param($s) $s.State -eq 'Online' -and $s.Recovery.Status -eq 'Healthy' }
+            $trace[-1].State | Should -Be 'Online'
+            Get-RecoveryCommand -Modem $device.Modem | Should -BeNullOrEmpty
+        }
+
+        It 'undoes a mode only once the modem took the setting before back: refused once, written again' {
+            $device = New-SimulatedDevice -Scenario Online
+            $device.Modem.Script($script:automatic, @{ Lines = @('+CME ERROR: 14') })
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'NrOnly' }).Result | Should -Be 'Applied'
+            $trace = Invoke-TestCycle -Worker $worker -Jump -Max 80 -Until { param($s) $s.NetworkMode.Notice -and $s.State -eq 'Online' }
+            $script:link['Snapshot'].NetworkMode.Notice.Kind | Should -Be 'Reverted'
+            @(Get-ModeWrite -Modem $device.Modem | Where-Object { $_ -eq $script:automatic }).Count | Should -Be 2
+            @($trace | Where-Object { $_.Recovery -notin 'Healthy', 'Maintenance' }) | Should -BeNullOrEmpty
+            @(Get-TestLog | Where-Object { $_ -match "can't be written back yet" }).Count | Should -Be 1
+        }
+
+        It 'waits for the modem, without spinning, when a mode on trial is due to be undone and the modem is gone' {
+            $device = New-SimulatedDevice -Scenario Online
+            $device.AwayMs = 3600000
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'NrOnly' }).Result | Should -Be 'Applied'
+            $device.Modem.Vanish()
+            $script:now += $script:timings.Maintenance + 1000
+            # The port found lost, then a look for the modem at once.
+            foreach ($i in 1..2) {
+                Invoke-ModemWorkerCycle -Worker $worker
+                $script:now += [Math]::Max(1, $worker.WaitMs)
+            }
+            $worker.Channel | Should -BeNullOrEmpty
+            foreach ($i in 1..3) {
+                Invoke-ModemWorkerCycle -Worker $worker
+                $worker.WaitMs | Should -BeGreaterThan 0
+                $script:now += $worker.WaitMs
+            }
+            $script:link['Snapshot'].NetworkMode.Trial | Should -Not -BeNullOrEmpty -Because 'it is undone once the modem is back'
+        }
+
+        It 'tries a write that got no answer as one that landed' {
+            $saved = & (Get-Module FibocomFm350) { $script:AtMinimumTimeoutMs }
+            & (Get-Module FibocomFm350) { $script:AtMinimumTimeoutMs = 300 }
+            try {
+                $device = New-SimulatedDevice -Scenario Online
+                $device.Modem.Script($script:lteOnly, @{ NoFinal = $true })
+                $worker = Get-TestWorker -Device $device
+                Invoke-ModemWorkerCycle -Worker $worker
+                $result = Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'LteOnly' }
+                $result.Result | Should -Be 'Applied'
+                $result.Detail | Should -Match 'Timeout$'
+                $script:link['Snapshot'].Recovery.History.MaintenanceUntil | Should -Not -BeNullOrEmpty
+                [void](Invoke-TestCycle -Worker $worker -Jump -Max 40 -Until { param($s) -not $s.NetworkMode.Trial -and $s.State -eq 'Online' })
+                $script:link['Snapshot'].NetworkMode.Notice.Kind | Should -Be 'Kept'
+            }
+            finally {
+                & (Get-Module FibocomFm350) { param($value) $script:AtMinimumTimeoutMs = $value } $saved
+            }
+        }
+
+        It 'never saves a mode the modem didn''t keep, though it stays registered' {
+            $device = New-SimulatedDevice -Scenario Online
+            $device.Modem.Script($script:lteOnly, @{ Lines = @('OK'); Keep = $true })
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'LteOnly' }).Result | Should -Be 'Applied'
+            [void](Invoke-TestCycle -Worker $worker -Jump -Max 60 -Until { param($s) $s.NetworkMode.Notice })
+            $script:link['Snapshot'].NetworkMode.Notice.Kind | Should -Be 'Reverted'
+            (Get-SavedSetting).NetworkMode | Should -Be ''
+        }
+
+        It 'publishes a mode on trial and its window at once: a cycle that fails after the command loses neither' {
+            $device = New-SimulatedDevice -Scenario Online
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            Mock -ModuleName FibocomFm350 Invoke-ModemConnect { throw 'the pass failed' }
+            [void](Send-ModemCommand -Link $worker.Link -Kind SetNetworkMode -Parameter @{ NetworkMode = 'NrOnly' })
+            $worker.PassForced = $true
+            { Invoke-ModemWorkerCycle -Worker $worker } | Should -Throw '*the pass failed*'
+            $snapshot = $script:link['Snapshot']
+            $snapshot.NetworkMode.Trial.Selection.NetworkMode | Should -Be 'NrOnly'
+            $snapshot.Recovery.History.MaintenanceUntil | Should -Not -BeNullOrEmpty
+            $next = New-ModemWorker -Link (New-ModemWorkerLink) -Simulation $device -DataFolder $script:folder -Clock { $script:now } -Previous $snapshot -Generation 2
+            $next.NetworkModeTrial.Selection.NetworkMode | Should -Be 'NrOnly'
+            $next.Recovery.MaintenanceUntil | Should -Not -BeNullOrEmpty
+        }
+
+        It 'refuses a mode that is not one: <Value>' -ForEach @(@{ Value = 'FiveG' }, @{ Value = 20 }) {
+            $device = New-SimulatedDevice -Scenario Online
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            $result = Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = $Value }
+            $result.Result | Should -Be 'Failed'
+            $result.Detail | Should -Match 'NetworkMode'
+            Get-ModeWrite -Modem $device.Modem | Should -BeNullOrEmpty
+        }
+
+        It 'says there is no modem, and changes nothing' {
+            $device = New-SimulatedDevice -Scenario NoDevice
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'LteOnly' }).Result | Should -Be 'NoModem'
+            (Get-SavedSetting).NetworkMode | Should -Be ''
+        }
+
+        It 'keeps the saved mode when the other settings are saved' {
+            Save-TestSetting @{ NetworkMode = 'LteOnly'; LteBands = @(3) }
+            $device = New-SimulatedDevice -Scenario LteOnlyMode
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            (Invoke-TestCommand -Worker $worker -Kind SaveSettings -Parameter @{ Settings = @{ Apn = 'internet'; NetworkMode = '' } }).Result | Should -Be 'Done'
+            $saved = Get-SavedSetting
+            $saved.Apn | Should -Be 'internet'
+            $saved.NetworkMode | Should -Be 'LteOnly'
+            $saved.LteBands | Should -Be @(3)
+        }
+    }
+}
+
 Describe 'The worker and the AT port' {
     BeforeAll {
         # The PnP records of one modem, its AT port on -PortName; -Instance tells the device

@@ -41,7 +41,10 @@ $script:WorkerFailedCyclesAllowed = 3
 $script:WorkerPassUrcPattern = '^\s*\+(CREG|CGREG|CEREG|C5GREG|CGEV)\s*:'
 
 # The commands the UI can send (Send-ModemCommand).
-$script:WorkerCommandKinds = @('ConnectNow', 'SaveSettings', 'SaveSimPin', 'ForgetSimPin', 'DisableSimPin', 'UnlockFcc', 'EnableAdapter')
+$script:WorkerCommandKinds = @('ConnectNow', 'SaveSettings', 'SetNetworkMode', 'SaveSimPin', 'ForgetSimPin', 'DisableSimPin', 'UnlockFcc', 'EnableAdapter')
+
+# The settings that make the network mode, set by the SetNetworkMode command only.
+$script:NetworkModeSettings = @('NetworkMode', 'LteBands', 'NrBands')
 
 # A transport around the real one (the shape is in Transport.ps1) that keeps the worker's heartbeat
 # fresh while a command waits for its answer: a read waits at most SliceMs at a time, and the
@@ -153,7 +156,10 @@ function Send-ModemCommand {
         - ConnectNow: a connect pass now.
         - SaveSettings: Settings (validated by the worker, which refuses an invalid value);
           ApnPassword, a SecureString - an empty one removes the stored password - or left out
-          to keep it.
+          to keep it. The network mode in them is left as it is: SetNetworkMode sets it.
+        - SetNetworkMode: NetworkMode, LteBands, NrBands - each left out keeps its setting. A
+          mode is written at once, in a maintenance window, and tried: saved once the modem
+          registers with it, undone when it finds no network. '' stops managing it.
         - SaveSimPin: Pin, a SecureString; stored for the SIM in the modem.
         - ForgetSimPin: deletes the stored PIN.
         - DisableSimPin: Pin; turns the SIM's PIN request off (Disable-SimPin). Only after the
@@ -171,7 +177,7 @@ function Send-ModemCommand {
         [hashtable] $Link,
 
         [Parameter(Mandatory)]
-        [ValidateSet('ConnectNow', 'SaveSettings', 'SaveSimPin', 'ForgetSimPin', 'DisableSimPin', 'UnlockFcc', 'EnableAdapter')]
+        [ValidateSet('ConnectNow', 'SaveSettings', 'SetNetworkMode', 'SaveSimPin', 'ForgetSimPin', 'DisableSimPin', 'UnlockFcc', 'EnableAdapter')]
         [string] $Kind,
 
         [hashtable] $Parameter = @{}
@@ -210,7 +216,8 @@ function Resolve-WorkerSchedule {
           that failed or could not be sent (-ProbeFailed) - and -ProbeNotBefore reached: the
           settle time after the address was set.
         - WaitMs: until the next of those falls due, or -RecoveryAt (when the recovery decision
-          may change); 0 when one is due now.
+          may change), or -TrialAt (when a network mode on trial is undone); 0 when one is due
+          now.
     .EXAMPLE
         Resolve-WorkerSchedule -Now 60000 -LastPass 25000 -State Online -PortOpen
     #>
@@ -246,7 +253,9 @@ function Resolve-WorkerSchedule {
 
         [Nullable[long]] $ProbeNotBefore,
 
-        [Nullable[long]] $RecoveryAt
+        [Nullable[long]] $RecoveryAt,
+
+        [Nullable[long]] $TrialAt
     )
 
     $intervals = $script:WorkerIntervals
@@ -287,8 +296,10 @@ function Resolve-WorkerSchedule {
             $waits.Add($wait)
         }
     }
-    if ($null -ne $RecoveryAt) {
-        $waits.Add([Math]::Max(0, $RecoveryAt - $Now))
+    foreach ($at in @($RecoveryAt, $TrialAt)) {
+        if ($null -ne $at) {
+            $waits.Add([Math]::Max(0, $at - $Now))
+        }
     }
     [pscustomobject]@{
         Scan        = $scan
@@ -317,8 +328,12 @@ function New-ModemSnapshot {
         Radio (Resolve-RadioStatus); DataPath (the probes: Healthy - $true, $false or $null -,
         the last round's Result and Time, Proven: a reply since the app started); Recovery (Resolve-RecoveryAction's Status, Check,
         Step, Cycles, with StepTime and NextTime as clock times, and History, which a worker
-        that replaces this one carries on); Settings, ApnPasswordStored, SettingsProblems;
-        Results (the last commands' outcomes: Id, Kind, Result, Detail, AttemptsLeft, Time).
+        that replaces this one carries on); NetworkMode (Current: the modem's setting as read;
+        Support: what it supports; Decision: Resolve-NetworkMode's; Trial: a mode the user chose,
+        being tried - Selection, Until, and what a worker that replaces this one carries on -;
+        Notice: how the last trial ended, or a mode the modem didn't keep); Settings,
+        ApnPasswordStored, SettingsProblems; Results (the last commands' outcomes: Id, Kind,
+        Result, Detail, AttemptsLeft, Time).
     .EXAMPLE
         $Link['Snapshot'] = New-ModemSnapshot -Worker $worker -Time ([DateTimeOffset]::Now)
     #>
@@ -376,6 +391,14 @@ function New-ModemSnapshot {
             Proven  = $Worker.Probe.Proven
         }
         Recovery          = $Worker.RecoveryView
+        NetworkMode       = [pscustomobject]@{
+            Current  = & $fact 'NetworkModeRead'
+            Support  = if ($Worker.NetworkModeSupport) { $Worker.NetworkModeSupport } else { & $fact 'NetworkModeSupport' }
+            Decision = & $fact 'NetworkMode'
+            # A copy: the worker's trial changes as it goes on.
+            Trial    = if ($Worker.NetworkModeTrial) { $Worker.NetworkModeTrial | Select-Object -Property * } else { $null }
+            Notice   = $Worker.NetworkModeNotice
+        }
         Settings          = if ($Worker.Settings) { $Worker.Settings | Select-Object -Property * } else { $null }
         ApnPasswordStored = $Worker.ApnPasswordStored
         SettingsProblems  = [string[]]@($Worker.SettingsProblems)
@@ -490,6 +513,14 @@ function New-ModemWorker {
         RecoveryView      = if ($Previous -and $Previous.PSObject.Properties['Recovery']) { $Previous.Recovery } else { $null }
         RecoveryAt        = $null
         RecoveryLogged    = $null
+        # The network mode: what the modem supports (read once per channel), the app's last
+        # write of it (never repeated over the same setting), a mode the user chose on trial and
+        # how the last one ended - those two carried over from the worker this one replaces.
+        NetworkModeSupport = $null
+        NetworkModeWrite   = $null
+        NetworkModeLogged  = $null
+        NetworkModeTrial   = if ($Previous -and $Previous.PSObject.Properties['NetworkMode'] -and $Previous.NetworkMode) { $Previous.NetworkMode.Trial } else { $null }
+        NetworkModeNotice  = if ($Previous -and $Previous.PSObject.Properties['NetworkMode'] -and $Previous.NetworkMode) { $Previous.NetworkMode.Notice } else { $null }
         # The computer slept: Invoke-ModemWorker sets it, the next cycle takes it into account.
         Resumed           = $false
     }
@@ -538,6 +569,10 @@ function Close-WorkerChannel {
     $Worker.Facts = $null
     $Worker.Radio = $null
     $Worker.PinRequestOn = $null
+    # Another modem may come back on the port, or this one after a reset: what it supports is
+    # read again, and a write it refused or didn't keep is tried once more.
+    $Worker.NetworkModeSupport = $null
+    $Worker.NetworkModeWrite = $null
     $Worker.LastScan = $null
     $Worker.LastAdapterLook = $null
     Set-WorkerProbeAddress -Worker $Worker -Address $null
@@ -695,8 +730,14 @@ function Invoke-WorkerRecovery {
     # After a reset a SIM whose PIN request is on asks for its PIN: without a stored one, the
     # reset would leave the connection waiting for the user.
     $noReset = $Worker.PinRequestOn -eq $true -and -not $Worker.PinStored
+    # A network mode the user narrowed, in force on the modem: no network found with it is the
+    # mode's doing, which no step mends.
+    $mode = if ($Worker.Facts -and $Worker.Facts.PSObject.Properties['NetworkMode']) { $Worker.Facts.NetworkMode } else { $null }
+    # Narrowed counts unless the modem is known to have another mode: one read that failed
+    # escalates nothing.
+    $narrowed = [bool]($mode -and $mode.Narrowed -and $mode.Satisfied -ne $false)
     $recovery = Resolve-RecoveryAction -Now $now @failing -Blocked:$health.Blocked -Unknown:$health.Unknown -History $before `
-        -Elevated:$Worker.Elevated -Withhold:$Worker.ObserveOnly -Resumed:$Resumed -NoReset:$noReset
+        -Elevated:$Worker.Elevated -Withhold:$Worker.ObserveOnly -Resumed:$Resumed -NoReset:$noReset -Narrowed:$narrowed
     $Worker.Recovery = $recovery.History
     $Worker.RecoveryAt = if ($null -ne $recovery.WaitMs) { $now + $recovery.WaitMs } else { $null }
     $setView = {
@@ -782,6 +823,264 @@ function Invoke-WorkerRecovery {
     & $setView $status
 }
 
+function ConvertTo-WorkerSettingTable {
+    # Settings - an object or a dictionary - as a hashtable of their values, to change some.
+    param([object] $Settings)
+
+    $values = @{}
+    if ($Settings -is [System.Collections.IDictionary]) {
+        foreach ($key in $Settings.Keys) {
+            $values[[string]$key] = $Settings[$key]
+        }
+    }
+    elseif ($null -ne $Settings) {
+        foreach ($property in $Settings.PSObject.Properties) {
+            $values[$property.Name] = $property.Value
+        }
+    }
+    $values
+}
+
+function Get-WorkerSetting {
+    # The settings a pass works with: the saved ones, with the network mode on trial in place of
+    # the saved one - the pass keeps the modem as the user just chose until the trial ends.
+    param([hashtable] $Worker)
+
+    $trial = $Worker.NetworkModeTrial
+    if (-not $trial -or -not $Worker.Settings) {
+        return $Worker.Settings
+    }
+    $settings = $Worker.Settings | Select-Object -Property *
+    foreach ($name in $script:NetworkModeSettings) {
+        $settings.$name = $trial.Selection.$name
+    }
+    $settings
+}
+
+function Save-WorkerNetworkMode {
+    # Saves a network mode in the settings file, the other settings as they are saved, and reads
+    # them back for the worker.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Called only for what the user asked, through the worker''s command or its trial.')]
+    param([hashtable] $Worker, [object] $Selection)
+
+    $settings = ConvertTo-WorkerSettingTable -Settings (Import-AppSetting -Path $Worker.Paths.Settings).Settings
+    foreach ($name in $script:NetworkModeSettings) {
+        $settings[$name] = $Selection.$name
+    }
+    Export-AppSetting -Settings $settings -Path $Worker.Paths.Settings -Confirm:$false
+    $read = Import-AppSetting -Path $Worker.Paths.Settings
+    $Worker.Settings = $read.Settings
+    $Worker.SettingsProblems = [string[]]@($read.Problems)
+}
+
+function Open-WorkerNetworkModeWindow {
+    # A maintenance window for a network mode written, in the worker's recovery history and in
+    # the view a snapshot carries: published before the cycle ends, it reaches a worker that
+    # replaces this one.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Changes the worker''s in-memory state only.')]
+    param([hashtable] $Worker, [long] $Now)
+
+    $Worker.Recovery = Open-MaintenanceWindow -History $Worker.Recovery -Now $Now
+    $view = if ($Worker.RecoveryView) { $Worker.RecoveryView | Select-Object -Property * } else { [pscustomobject]@{ Status = $null; Check = $null; Step = $null; Cycles = 0; StepTime = $null; NextTime = $null; History = $null } }
+    $view.History = $Worker.Recovery
+    $Worker.RecoveryView = $view
+}
+
+function Undo-WorkerNetworkMode {
+    # Writes back the setting the modem had before the first change on trial, each code as read
+    # (invariant 9). Returns the modem's answer.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Undoes what the user''s own command wrote.')]
+    param([hashtable] $Worker)
+
+    $before = $Worker.NetworkModeTrial.Before
+    $command = ConvertTo-AtNetworkModeCommand -Rat $before.Rat -Preferences $before.Preferences -Code $before.Codes
+    $answer = Invoke-AtCommand -Channel $Worker.Channel -Command $command
+    [pscustomobject]@{ Command = $command; Status = $answer.Status; ErrorCode = $answer.ErrorCode }
+}
+
+function Set-WorkerNetworkMode {
+    # The SetNetworkMode command: writes the mode the user chose at once and tries it (ARCHITECTURE
+    # -> Modes and bands). Returns Result and Detail.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'The user''s command, carried out by the worker.')]
+    param([hashtable] $Worker, [hashtable] $Parameter)
+
+    $values = ConvertTo-WorkerSettingTable -Settings (Import-AppSetting -Path $Worker.Paths.Settings).Settings
+    foreach ($name in $script:NetworkModeSettings) {
+        if ($Parameter.ContainsKey($name)) {
+            $values[$name] = $Parameter[$name]
+        }
+    }
+    $checked = ConvertTo-AppSetting -InputObject $values
+    if ($checked.Problems.Count -gt 0) {
+        return [pscustomobject]@{ Result = 'Failed'; Detail = $checked.Problems -join ' ' }
+    }
+    $selection = $checked.Settings
+    $open = $Worker.Channel -and $Worker.Channel.State -eq 'Open'
+    $trial = $Worker.NetworkModeTrial
+    if (-not $selection.NetworkMode) {
+        # The app stops managing it: the modem keeps what it has - but never a mode on trial,
+        # which goes back first to the setting known to find a network.
+        if ($trial) {
+            if ($Worker.ObserveOnly) {
+                return [pscustomobject]@{ Result = 'Refused'; Detail = $null }
+            }
+            if (-not $open) {
+                return [pscustomobject]@{ Result = 'NoModem'; Detail = $null }
+            }
+            $undo = Undo-WorkerNetworkMode -Worker $Worker
+            if ($undo.Status -ne 'OK') {
+                return [pscustomobject]@{ Result = 'Failed'; Detail = "$($undo.Command) $($undo.Status)" }
+            }
+            $Worker.NetworkModeNotice = [pscustomobject]@{ Kind = 'Reverted'; Mode = $trial.Selection.NetworkMode; Time = [DateTimeOffset]::Now }
+            $Worker.NetworkModeTrial = $null
+            Open-WorkerNetworkModeWindow -Worker $Worker -Now (& $Worker.Clock)
+            $Worker.PassForced = $true
+        }
+        Save-WorkerNetworkMode -Worker $Worker -Selection $selection
+        return [pscustomobject]@{ Result = 'Done'; Detail = $null }
+    }
+    if ($Worker.ObserveOnly) {
+        return [pscustomobject]@{ Result = 'Refused'; Detail = $null }
+    }
+    if (-not $open) {
+        return [pscustomobject]@{ Result = 'NoModem'; Detail = $null }
+    }
+
+    if (-not $Worker.NetworkModeSupport) {
+        $test = Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+GTACT=?'
+        if ($test.Status -eq 'OK') {
+            $Worker.NetworkModeSupport = ConvertFrom-AtNetworkModeSupport -Lines $test.Lines
+        }
+    }
+    $read = Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+GTACT?'
+    $current = if ($read.Status -eq 'OK') { ConvertFrom-AtNetworkMode -Lines $read.Lines } else { $null }
+    $decision = Resolve-NetworkMode -Settings $selection -Current $current -Support $Worker.NetworkModeSupport -Exact
+    if ($decision.Problem) {
+        return [pscustomobject]@{ Result = $decision.Problem; Detail = $null }
+    }
+    if ($null -eq $decision.Satisfied) {
+        return [pscustomobject]@{ Result = 'Unknown'; Detail = $null }
+    }
+    $chosen = [pscustomobject]@{ NetworkMode = $selection.NetworkMode; LteBands = $selection.LteBands; NrBands = $selection.NrBands }
+    if ($decision.Satisfied) {
+        if ($trial) {
+            # The modem has it already, on trial: it is saved once it has found a network.
+            $trial.Selection = $chosen
+            return [pscustomobject]@{ Result = 'Applied'; Detail = $null }
+        }
+        Save-WorkerNetworkMode -Worker $Worker -Selection $selection
+        return [pscustomobject]@{ Result = 'Unchanged'; Detail = $null }
+    }
+
+    $answer = Invoke-AtCommand -Channel $Worker.Channel -Command $decision.Command
+    # A write that got no answer may have landed: it is tried as one that did.
+    if ($answer.Status -notin 'OK', 'Timeout') {
+        return [pscustomobject]@{ Result = 'Failed'; Detail = "$($decision.Command) $($answer.Status)$(if ($null -ne $answer.ErrorCode) { " $($answer.ErrorCode)" })" }
+    }
+    $now = & $Worker.Clock
+    # Undone, it goes back to what the modem had before the first of the changes on trial: the
+    # last setting known to find a network.
+    $Worker.NetworkModeTrial = [pscustomobject]@{
+        Selection = $chosen
+        Command   = $decision.Command
+        Before    = if ($trial) { $trial.Before } else { $current }
+        Since     = $now
+        Until     = [DateTimeOffset]::Now.AddMilliseconds($script:RecoveryTimings.Maintenance)
+        # When it may be tried again to save or undo it, after an attempt that failed.
+        NextTry   = $null
+        Failed    = $null
+    }
+    $Worker.NetworkModeWrite = [pscustomobject]@{ Command = $decision.Command; Before = $current.Text; Status = $answer.Status }
+    # It registers the modem again: an intentional operation, which nothing escalates over.
+    Open-WorkerNetworkModeWindow -Worker $Worker -Now $now
+    [pscustomobject]@{ Result = 'Applied'; Detail = "$($decision.Command)$(if ($answer.Status -ne 'OK') { " $($answer.Status)" })" }
+}
+
+function Get-WorkerTrialWake {
+    # When the trial of a network mode needs the worker next, by the clock: the end of its window,
+    # or the next attempt after one that failed. None while the port is closed: undoing it waits
+    # for the modem, and the look for it wakes the worker.
+    param([hashtable] $Worker)
+
+    $trial = $Worker.NetworkModeTrial
+    if (-not $trial -or -not $Worker.Channel) {
+        return $null
+    }
+    $at = $trial.Since + $script:RecoveryTimings.Maintenance
+    if ($null -ne $trial.NextTry -and $trial.NextTry -gt $at) {
+        $at = $trial.NextTry
+    }
+    $at
+}
+
+function Invoke-WorkerNetworkModeTrial {
+    # Ends the trial of a network mode the user chose, once the modem registered with it in force
+    # (saved) or found no network by the end of its window (the setting before written back).
+    # Returns $true when something changed.
+    param([hashtable] $Worker)
+
+    $trial = $Worker.NetworkModeTrial
+    $now = & $Worker.Clock
+    if (-not $trial -or ($null -ne $trial.NextTry -and $now -lt $trial.NextTry)) {
+        return $false
+    }
+    $facts = $Worker.Facts
+    $registered = if ($facts -and $facts.PSObject.Properties['Registered']) { $facts.Registered } else { $null }
+    $inForce = if ($facts -and $facts.PSObject.Properties['NetworkMode'] -and $facts.NetworkMode) { $facts.NetworkMode.Satisfied } else { $null }
+    $readAt = if ($facts) { $Worker.LastPass } else { $null }
+    $decision = Resolve-NetworkModeTrial -Trial $trial -Registered $registered -InForce $inForce -ReadAt $readAt -Now $now
+    $mode = $trial.Selection.NetworkMode
+    $failed = {
+        param($what, $message)
+        # Tried again a pass later; said once.
+        $trial.NextTry = $now + $script:WorkerIntervals.PassWorking
+        if ($trial.Failed -ne $what) {
+            $trial.Failed = $what
+            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Network mode ${mode}: $message"
+        }
+    }
+    switch ($decision.Action) {
+        'Confirm' {
+            # Kept on trial until it is saved: an unsaved mode would be undone by the next pass.
+            try {
+                Save-WorkerNetworkMode -Worker $Worker -Selection $trial.Selection
+            }
+            catch {
+                & $failed 'Save' "registered with it, but the settings can't be saved: $($_.Exception.Message)"
+                return $false
+            }
+            $Worker.NetworkModeTrial = $null
+            $Worker.NetworkModeNotice = [pscustomobject]@{ Kind = 'Kept'; Mode = $mode; Time = [DateTimeOffset]::Now }
+            Write-WorkerLog -Worker $Worker -Level 'Info' -Message "Network mode ${mode}: registered with it - saved"
+            return $true
+        }
+        'Revert' {
+            if (-not $Worker.Channel -or $Worker.Channel.State -ne 'Open') {
+                # Undone once the modem is back.
+                return $false
+            }
+            $undo = Undo-WorkerNetworkMode -Worker $Worker
+            # The modem is given its window again, written back or not.
+            Open-WorkerNetworkModeWindow -Worker $Worker -Now $now
+            $minutes = [Math]::Round($script:RecoveryTimings.Maintenance / 60000)
+            if ($undo.Status -ne 'OK') {
+                # Not undone until the modem says so: the trial stays, and is undone again.
+                & $failed $undo.Status "no network in $minutes min, and the setting before can't be written back yet: $($undo.Command) $($undo.Status)"
+                return $true
+            }
+            $Worker.NetworkModeTrial = $null
+            $Worker.NetworkModeNotice = [pscustomobject]@{ Kind = 'Reverted'; Mode = $mode; Time = [DateTimeOffset]::Now }
+            $Worker.PassForced = $true
+            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Network mode ${mode}: no network in $minutes min - the setting before is written back: $($undo.Command) OK"
+            return $true
+        }
+    }
+    $false
+}
 function Invoke-WorkerCommand {
     # Carries out one of the user's commands; returns its outcome for the snapshot. Never logs or
     # returns a secret.
@@ -804,7 +1103,14 @@ function Invoke-WorkerCommand {
             switch ($Command.Kind) {
                 'ConnectNow' { }
                 'SaveSettings' {
-                    Export-AppSetting -Settings $parameter['Settings'] -Path $Worker.Paths.Settings -Confirm:$false
+                    # The network mode stays as saved: SetNetworkMode sets it, and saves it only
+                    # once the modem has found a network with it.
+                    $settings = ConvertTo-WorkerSettingTable -Settings $parameter['Settings']
+                    $saved = (Import-AppSetting -Path $Worker.Paths.Settings).Settings
+                    foreach ($name in $script:NetworkModeSettings) {
+                        $settings[$name] = $saved.$name
+                    }
+                    Export-AppSetting -Settings $settings -Path $Worker.Paths.Settings -Confirm:$false
                     if ($parameter.ContainsKey('ApnPassword')) {
                         $password = $parameter['ApnPassword']
                         if ($password -and $password.Length -gt 0) {
@@ -815,6 +1121,11 @@ function Invoke-WorkerCommand {
                         }
                     }
                     $Worker.Settings = $null
+                }
+                'SetNetworkMode' {
+                    $outcome = Set-WorkerNetworkMode -Worker $Worker -Parameter $parameter
+                    $result = $outcome.Result
+                    $detail = $outcome.Detail
                 }
                 'SaveSimPin' {
                     # The PIN goes with the SIM it belongs to (ARCHITECTURE -> SIM PIN).
@@ -917,7 +1228,8 @@ function Invoke-ModemWorkerCycle {
             -LastAdapterLook $Worker.LastAdapterLook -State $Worker.State -Blocked:($decision -and $decision.Blocked) `
             -PortOpen:([bool]$Worker.Channel) -PassForced:$Worker.PassForced -AdapterMissing:($decision -and $decision.Reason -eq 'NoAdapter') `
             -ProbeWanted:([bool]$probe.Address) -LastProbe $probe.LastAt -ProbeFailed:($probe.LastResult -in 'Failed', 'NotReady') `
-            -ProbeNotBefore $probe.NotBefore -RecoveryAt $Worker.RecoveryAt
+            -ProbeNotBefore $probe.NotBefore -RecoveryAt $Worker.RecoveryAt `
+            -TrialAt (Get-WorkerTrialWake -Worker $Worker)
     }
     $resumed = $Worker.Resumed
     if ($resumed) {
@@ -949,6 +1261,11 @@ function Invoke-ModemWorkerCycle {
     $command = $null
     while ($link['Commands'].TryDequeue([ref]$command)) {
         $Worker.Results.Add((Invoke-WorkerCommand -Worker $Worker -Command $command))
+        if ($command.Kind -eq 'SetNetworkMode') {
+            # A mode on trial is published at once, with its maintenance window: should the rest
+            # of the cycle fail, the worker that replaces this one carries them on.
+            & $publish
+        }
         while ($Worker.Results.Count -gt $script:WorkerResultsKept) {
             $Worker.Results.RemoveAt(0)
         }
@@ -1002,13 +1319,32 @@ function Invoke-ModemWorkerCycle {
         if ($Worker.Simulation) {
             $options['SimulatedAdapter'] = $Worker.Simulation.Adapter
         }
-        $pass = Invoke-ModemConnect -Channel $Worker.Channel -Settings $Worker.Settings -AdapterInstanceId $Worker.AdapterInstanceId `
+        $pass = Invoke-ModemConnect -Channel $Worker.Channel -Settings (Get-WorkerSetting -Worker $Worker) -AdapterInstanceId $Worker.AdapterInstanceId `
             -SimPinPath $Worker.Paths.SimPin -ApnSecretPath $Worker.Paths.ApnSecret -LogFolder $Worker.Paths.Log `
-            -DataPath (Get-WorkerDataPath -Worker $Worker) -WhatIf:$Worker.ObserveOnly -Confirm:$false @options
+            -DataPath (Get-WorkerDataPath -Worker $Worker) -NetworkModeSupport $Worker.NetworkModeSupport -NetworkModeLastWrite $Worker.NetworkModeWrite `
+            -WhatIf:$Worker.ObserveOnly -Confirm:$false @options
         $Worker.LastPass = $started
         $Worker.PassForced = $false
         Register-WorkerDecision -Worker $Worker -Decision $pass -Logged
         $Worker.Facts = $pass.Observation
+        if ($pass.Observation.NetworkModeSupport) {
+            $Worker.NetworkModeSupport = $pass.Observation.NetworkModeSupport
+        }
+        if ($pass.Written) {
+            # Never written again over the same setting, taken or refused.
+            $Worker.NetworkModeWrite = $pass.Written
+            if ($pass.Written.Status -in 'OK', 'Timeout', 'PortLost') {
+                # The mode the settings ask, written over the modem's: it registers again - an
+                # intentional operation, which nothing escalates over.
+                Open-WorkerNetworkModeWindow -Worker $Worker -Now (& $Worker.Clock)
+            }
+        }
+        $modeDecision = $pass.Observation.NetworkMode
+        $modeProblem = if ($modeDecision -and $modeDecision.Problem) { "$($modeDecision.Problem) $($modeDecision.Managed)" } else { $null }
+        if ($modeProblem -and $modeProblem -ne $Worker.NetworkModeLogged) {
+            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Network mode: not as the settings ask ($($modeDecision.Problem)); nothing written"
+        }
+        $Worker.NetworkModeLogged = $modeProblem
         # The probes follow the address the adapter carries; one set anew is proven anew.
         $facts = $Worker.Facts
         $configured = @($pass.Steps | Where-Object { $_.Action -eq 'ConfigureAdapter' -and $_.Result -eq 'Done' }).Count -gt 0
@@ -1025,6 +1361,13 @@ function Invoke-ModemWorkerCycle {
         if ($script:ConnectionStates.IndexOf($Worker.State) -lt $script:ConnectionStates.IndexOf('SimReady')) {
             $Worker.Radio = $null
         }
+        $published = $true
+        & $lost
+    }
+
+    # A network mode the user chose, on trial: saved once the modem registers with it, undone when
+    # it finds no network.
+    if ($Worker.NetworkModeTrial -and (Invoke-WorkerNetworkModeTrial -Worker $Worker)) {
         $published = $true
         & $lost
     }

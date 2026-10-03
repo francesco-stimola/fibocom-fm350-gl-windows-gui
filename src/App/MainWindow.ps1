@@ -9,6 +9,7 @@ $script:WindowControlNames = @(
     'ResultText', 'FooterText', 'CheckNowButton'
     'SignalText', 'CellsGrid', 'CarriersGrid'
     'SimStateText', 'SimRequestText', 'SimStoredText', 'SimNoteText', 'SimPinBox', 'StorePinButton', 'ForgetPinButton', 'DisablePinButton'
+    'CurrentModeText', 'NetworkModeBox', 'BandsPanel', 'LteAllBox', 'LteBandsPanel', 'NrAllBox', 'NrBandsPanel', 'ModeNoteText', 'ApplyModeButton', 'ReloadModeButton'
     'ApnBox', 'PdpTypeBox', 'AuthenticationBox', 'ApnUserBox', 'ApnPasswordBox', 'ClearPasswordBox', 'ApnPasswordStoredText'
     'DnsBox', 'MetricBox', 'SaveSettingsButton', 'ReloadSettingsButton', 'SettingsProblemText'
 )
@@ -82,6 +83,13 @@ function New-MainWindow {
         LastResultId = $null
         # A hint on the SIM tab, until the next PIN action.
         SimHint      = $null
+        # The network tab: the choices and bands its controls were built for, the selection the
+        # form was last filled with, and a hint until the next apply.
+        ModeChoices  = $null
+        ModeBands    = $null
+        ModeRevision = $null
+        FormMode     = $null
+        ModeHint     = $null
         Exiting      = $false
     }
 
@@ -117,6 +125,17 @@ function New-MainWindow {
                 Update-MainWindow -View $script:MainWindow.View
             }
         })
+    $controls.ApplyModeButton.Add_Click({ Send-WindowNetworkMode })
+    $controls.ReloadModeButton.Add_Click({
+            $script:MainWindow.FormMode = $null
+            $script:MainWindow.ModeHint = $null
+            if ($script:MainWindow.View) {
+                Update-MainWindow -View $script:MainWindow.View
+            }
+        })
+    $controls.NetworkModeBox.Add_SelectionChanged({ Sync-WindowBandState })
+    $controls.LteAllBox.Add_Click({ Sync-WindowBandState })
+    $controls.NrAllBox.Add_Click({ Sync-WindowBandState })
     $controls.SaveSettingsButton.Add_Click({ Save-WindowSetting })
     $controls.ReloadSettingsButton.Add_Click({
             $script:MainWindow.FormSettings = $null
@@ -162,7 +181,121 @@ function Invoke-BlockerAction {
                 & $script:MainWindow.Send 'UnlockFcc' @{}
             }
         }
+        'NetworkMode' {
+            & $script:MainWindow.Send 'SetNetworkMode' @{ NetworkMode = 'Automatic'; LteBands = [int[]]@(); NrBands = [int[]]@() }
+            $script:MainWindow.FormMode = $null
+        }
     }
+}
+
+function Get-WindowBandChoice {
+    # The bands checked in one of the network tab's panels.
+    param([object] $Panel)
+
+    [int[]]@($Panel.Children | Where-Object { $_.IsChecked } | ForEach-Object { [int]$_.Tag })
+}
+
+function Sync-WindowBandState {
+    # The band checkboxes follow the form: only for a mode the app manages, for the RATs the mode
+    # uses, and each band only when 'every band' is unchecked.
+    $controls = $script:MainWindow.Controls
+    $choice = $controls.NetworkModeBox.SelectedItem
+    $mode = if ($choice) { [string]$choice.Name } else { '' }
+    $controls.BandsPanel.IsEnabled = [bool]$mode
+    foreach ($rat in @(@('Lte', 'NrOnly'), @('Nr', 'LteOnly'))) {
+        $used = $mode -ne $rat[1]
+        $controls["$($rat[0])AllBox"].IsEnabled = $used
+        $controls["$($rat[0])BandsPanel"].IsEnabled = $used -and -not $controls["$($rat[0])AllBox"].IsChecked
+    }
+}
+
+function Send-WindowNetworkMode {
+    # The network tab's Apply: the mode and bands chosen, sent to the worker, which writes and
+    # tries them. A RAT the mode uses needs a band at least.
+    $controls = $script:MainWindow.Controls
+    $choice = $controls.NetworkModeBox.SelectedItem
+    if (-not $choice) {
+        return
+    }
+    $mode = [string]$choice.Name
+    $bands = @{}
+    foreach ($rat in 'Lte', 'Nr') {
+        $bands[$rat] = [int[]]@(if (-not $controls["${rat}AllBox"].IsChecked) { Get-WindowBandChoice -Panel $controls["${rat}BandsPanel"] })
+    }
+    $script:MainWindow.ModeHint = $null
+    foreach ($rat in @(@('Lte', 'NrOnly', 'LTE'), @('Nr', 'LteOnly', 'NR'))) {
+        if ($mode -and $mode -ne $rat[1] -and -not $controls["$($rat[0])AllBox"].IsChecked -and $bands[$rat[0]].Count -eq 0) {
+            $script:MainWindow.ModeHint = "Choose at least one $($rat[2]) band, or every band."
+        }
+    }
+    if (-not $script:MainWindow.ModeHint) {
+        & $script:MainWindow.Send 'SetNetworkMode' @{ NetworkMode = $mode; LteBands = $bands['Lte']; NrBands = $bands['Nr'] }
+        # Filled again from the snapshot once the worker has it.
+        $script:MainWindow.FormMode = $null
+    }
+    if ($script:MainWindow.View) {
+        Update-MainWindow -View $script:MainWindow.View
+    }
+}
+
+function Initialize-WindowBandPanel {
+    # Fills a band panel with a checkbox per band the modem supports.
+    param([object] $Panel, [int[]] $Band, [string] $Prefix)
+
+    $Panel.Children.Clear()
+    foreach ($number in $Band) {
+        $box = [System.Windows.Controls.CheckBox]::new()
+        $box.Content = "$Prefix$number"
+        $box.Tag = $number
+        $box.MinWidth = 56
+        $box.Margin = [System.Windows.Thickness]::new(0, 0, 8, 4)
+        [void]$Panel.Children.Add($box)
+    }
+}
+
+function Show-WindowNetworkMode {
+    # The network tab, from the view. The form is filled from the settings only when it was never
+    # filled, after Undo, and after an apply, as the connection form is.
+    param([object] $View)
+
+    $controls = $script:MainWindow.Controls
+    $mode = $View.NetworkMode
+    $controls.CurrentModeText.Text = $mode.CurrentText
+    $note = @($mode.Note, $script:MainWindow.ModeHint | Where-Object { $_ }) -join ' '
+    $controls.ModeNoteText.Text = $note
+    $controls.ModeNoteText.Visibility = if ($note) { 'Visible' } else { 'Collapsed' }
+    $controls.ApplyModeButton.IsEnabled = $mode.CanApply
+
+    $choices = @($mode.Modes | ForEach-Object Name) -join ','
+    if ($choices -ne $script:MainWindow.ModeChoices) {
+        $controls.NetworkModeBox.ItemsSource = $mode.Modes
+        $script:MainWindow.ModeChoices = $choices
+        $script:MainWindow.FormMode = $null
+    }
+    if ($mode.Revision -ne $script:MainWindow.ModeRevision) {
+        $script:MainWindow.ModeRevision = $mode.Revision
+        $script:MainWindow.FormMode = $null
+    }
+    $bands = "$($mode.Lte -join ',')/$($mode.Nr -join ',')"
+    if ($bands -ne $script:MainWindow.ModeBands) {
+        Initialize-WindowBandPanel -Panel $controls.LteBandsPanel -Band $mode.Lte -Prefix 'B'
+        Initialize-WindowBandPanel -Panel $controls.NrBandsPanel -Band $mode.Nr -Prefix 'n'
+        $script:MainWindow.ModeBands = $bands
+        $script:MainWindow.FormMode = $null
+    }
+    if ($mode.Selection -and $null -eq $script:MainWindow.FormMode) {
+        $selection = $mode.Selection
+        $controls.NetworkModeBox.SelectedItem = @($controls.NetworkModeBox.Items | Where-Object { $_.Name -eq $selection.NetworkMode }) | Select-Object -First 1
+        foreach ($rat in 'Lte', 'Nr') {
+            $chosen = @($selection."${rat}Bands")
+            $controls["${rat}AllBox"].IsChecked = $chosen.Count -eq 0
+            foreach ($box in $controls["${rat}BandsPanel"].Children) {
+                $box.IsChecked = $chosen.Count -eq 0 -or [int]$box.Tag -in $chosen
+            }
+        }
+        $script:MainWindow.FormMode = $selection
+    }
+    Sync-WindowBandState
 }
 
 function Get-WindowSetting {
@@ -275,13 +408,19 @@ function Update-MainWindow {
     }
 
     $controls.ApnPasswordStoredText.Text = if ($View.ApnPasswordStored) { 'A password is stored.' } else { 'No password is stored.' }
-    # The form is filled again after a save the worker carried out.
+    # The forms are filled again after a save the worker carried out.
     $newest = $View.LastResult
     if ($newest -and $newest.Id -ne $script:MainWindow.LastResultId) {
         $script:MainWindow.LastResultId = $newest.Id
         if ($newest.Kind -eq 'SaveSettings') {
             $script:MainWindow.FormSettings = $null
         }
+        if ($newest.Kind -eq 'SetNetworkMode') {
+            $script:MainWindow.FormMode = $null
+        }
+    }
+    if ($View.NetworkMode) {
+        Show-WindowNetworkMode -View $View
     }
     if ($View.Settings -and $null -eq $script:MainWindow.FormSettings) {
         $settings = $View.Settings

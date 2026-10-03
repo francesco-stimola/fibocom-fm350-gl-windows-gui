@@ -19,6 +19,9 @@ Describe 'ConvertTo-AppSetting' {
         $result.Settings.ApnUser | Should -Be ''
         @($result.Settings.DnsServers).Count | Should -Be 0
         $result.Settings.InterfaceMetric | Should -Be 500
+        $result.Settings.NetworkMode | Should -Be '' -Because 'the app leaves the modem''s mode alone until the user picks one'
+        @($result.Settings.LteBands).Count | Should -Be 0
+        @($result.Settings.NrBands).Count | Should -Be 0
     }
 
     It 'takes valid values from a hashtable and from an object' {
@@ -52,6 +55,14 @@ Describe 'ConvertTo-AppSetting' {
         @{ Name = 'InterfaceMetric'; Value = 2.5 }
         @{ Name = 'InterfaceMetric'; Value = '1,000' }
         @{ Name = 'InterfaceMetric'; Value = $true }
+        @{ Name = 'NetworkMode'; Value = 'FiveG' }
+        @{ Name = 'NetworkMode'; Value = 20 }
+        @{ Name = 'LteBands'; Value = @(3, 100) }
+        @{ Name = 'LteBands'; Value = @(0) }
+        @{ Name = 'LteBands'; Value = @(3, 3) }
+        @{ Name = 'LteBands'; Value = @('B3') }
+        @{ Name = 'NrBands'; Value = @(78, 513) }
+        @{ Name = 'NrBands'; Value = @($true) }
     ) {
         $result = ConvertTo-AppSetting -InputObject @{ $Name = $Value }
         $result.Problems.Count | Should -Be 1
@@ -64,6 +75,15 @@ Describe 'ConvertTo-AppSetting' {
         $result = ConvertTo-AppSetting -InputObject @{ Apn = 'internet'; Colour = 'blue' }
         $result.Problems | Should -Be @("Unknown setting 'Colour' is ignored.")
         $result.Settings.Apn | Should -Be 'internet'
+    }
+
+    It 'takes a network mode by its name, in any case, and bands sorted' {
+        $result = ConvertTo-AppSetting -InputObject @{ NetworkMode = 'lteonly'; LteBands = @(20, 3, 7); NrBands = 78 }
+        $result.Problems | Should -BeNullOrEmpty
+        $result.Settings.NetworkMode | Should -Be 'LteOnly'
+        $result.Settings.LteBands | Should -Be @(3, 7, 20)
+        $result.Settings.NrBands | Should -Be @(78)
+        (ConvertTo-AppSetting -InputObject @{ NetworkMode = 'NrOnly'; NrBands = @('78', 512) }).Settings.NrBands | Should -Be @(78, 512)
     }
 
     It 'accepts a metric written as text, read in the invariant culture' {
@@ -85,6 +105,9 @@ Describe 'Settings file' {
         $result = Import-AppSetting -Path $script:path
         $result.Problems | Should -BeNullOrEmpty
         $result.Settings.InterfaceMetric | Should -Be 500
+        $result.Settings.NetworkMode | Should -Be '' -Because 'the app leaves the modem''s mode alone until the user picks one'
+        @($result.Settings.LteBands).Count | Should -Be 0
+        @($result.Settings.NrBands).Count | Should -Be 0
     }
 
     It 'reads back what it wrote' {
@@ -95,6 +118,16 @@ Describe 'Settings file' {
         $result.Settings.DnsServers | Should -Be @('203.0.113.53')
         $result.Settings.InterfaceMetric | Should -Be 20
         $result.Settings.PdpType | Should -Be 'IPV4V6'
+    }
+
+    It 'reads back a network mode with one band, and with none' {
+        Export-AppSetting -Path $script:path -Settings @{ NetworkMode = 'Automatic'; LteBands = @(20); NrBands = @() }
+        $result = Import-AppSetting -Path $script:path
+        $result.Problems | Should -BeNullOrEmpty
+        $result.Settings.NetworkMode | Should -Be 'Automatic'
+        $result.Settings.LteBands | Should -Be @(20)
+        , $result.Settings.LteBands | Should -BeOfType ([int[]])
+        @($result.Settings.NrBands).Count | Should -Be 0
     }
 
     It 'refuses to write an invalid setting, and leaves the file as it was' {

@@ -115,8 +115,19 @@ function New-AppTray {
     $menu = [System.Windows.Forms.ContextMenuStrip]::new()
     [void]$menu.Items.Add('Open', $null, { Open-AppWindow })
     [void]$menu.Items.Add('Check now', $null, { Send-AppCommand -Kind 'ConnectNow' })
+    # The quick switch of the network mode: the bands stay as the settings have them.
+    $modes = [System.Windows.Forms.ToolStripMenuItem]::new('Network mode')
+    $modes.Name = 'NetworkMode'
+    foreach ($name in $script:NetworkModeTexts.Keys) {
+        $item = [System.Windows.Forms.ToolStripMenuItem]::new($script:NetworkModeTexts[$name])
+        $item.Name = $name
+        $item.Add_Click({ Send-AppCommand -Kind 'SetNetworkMode' -Parameter @{ NetworkMode = [string]$args[0].Name } })
+        [void]$modes.DropDownItems.Add($item)
+    }
+    [void]$menu.Items.Add($modes)
     [void]$menu.Items.Add([System.Windows.Forms.ToolStripSeparator]::new())
     [void]$menu.Items.Add('Exit', $null, { Stop-App })
+    $menu.Add_Opening({ Update-AppTrayMenu })
     $tray.ContextMenuStrip = $menu
     $tray.Text = 'FM350-GL'
     $tray.Add_MouseClick({
@@ -126,6 +137,24 @@ function New-AppTray {
             }
         })
     $tray
+}
+
+function Update-AppTrayMenu {
+    # The tray menu, as it opens: the network modes from the latest snapshot - the modem's
+    # checked, those it doesn't support hidden, none to choose while the modem can't take one.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Updates the menu''s items; changes no system state.')]
+    param()
+
+    $menu = Get-TrayModeMenu -Snapshot $script:App.LastSnapshot -Worker (Get-AppWorkerState)
+    $modes = $script:App.Tray.ContextMenuStrip.Items['NetworkMode']
+    $modes.Text = $menu.Text
+    foreach ($item in $modes.DropDownItems) {
+        $choice = @($menu.Items | Where-Object Name -EQ $item.Name) | Select-Object -First 1
+        $item.Visible = [bool]$choice
+        $item.Checked = [bool]($choice -and $choice.Checked)
+        $item.Enabled = [bool]($choice -and $choice.Enabled)
+    }
 }
 
 function Update-App {
@@ -251,7 +280,7 @@ function Start-Fm350App {
         [switch] $Simulated,
 
         [ValidateSet('Online', 'Connect', 'ApnNeeded', 'PinRequired', 'FccLocked', 'AdapterDisabled', 'NoDevice', 'NoDriver',
-            'Settling', 'DataPathDown', 'IcmpDropped', 'RegistrationLost', 'ModemHung', 'Unrecoverable')]
+            'Settling', 'DataPathDown', 'IcmpDropped', 'RegistrationLost', 'ModemHung', 'Unrecoverable', 'LteOnlyMode', 'NrOnlyMode', 'Standalone')]
         [string] $Scenario = 'Online',
 
         [switch] $ObserveOnly,

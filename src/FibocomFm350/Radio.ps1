@@ -21,7 +21,10 @@ function Resolve-RadioStatus {
         serving cell: the NR leg in use), 'LTE-A' (an LTE serving cell with an active secondary
         carrier), 'LTE' (an LTE serving cell), or $null when no serving cell is reported.
         NrAvailable: NR measured (+CESQ) while no NR leg is in use - 5G the modem could add
-        (decided 2026-10-01: the app says '5G' only for the leg in use).
+        (decided 2026-10-01: the app says '5G' only for the leg in use). Neither while the
+        operator read says the modem is not registered: the cells it lists then are cells it
+        camps on, not cells it uses - in NR-only mode with no 5G SA network of its own, the
+        FM350 lists another operator's NR cell as serving (AT-COMMANDS section 4.1).
 
         Rsrp is the serving RSRP in dBm - the LTE anchor's, the NR cell's on 5G SA - and Bars
         (0 to 4) follow from it; both $null when nothing is measured.
@@ -54,8 +57,13 @@ function Resolve-RadioStatus {
     $nrMeasured = [bool]($Signal -and $null -ne $Signal.NrRsrp)
     $secondary = @($Carrier | Where-Object { -not $_.Primary -and $_.Active }).Count -gt 0
     $operatorName = if ($Operator) { $Operator.Operator } else { $null }
+    # An operator read without an operator: not registered. No operator read: not known.
+    $registered = -not $Operator -or [bool]$operatorName
 
-    $technology = if ($nr -and -not $lte) {
+    $technology = if (-not $registered) {
+        $null
+    }
+    elseif ($nr -and -not $lte) {
         '5G SA'
     }
     elseif ($lte -and $nr) {
@@ -87,7 +95,7 @@ function Resolve-RadioStatus {
     [pscustomobject]@{
         Operator    = $operatorName
         Technology  = $technology
-        NrAvailable = $nrMeasured -and -not $nr -and [bool]$lte
+        NrAvailable = $registered -and $nrMeasured -and -not $nr -and [bool]$lte
         Rsrp        = $rsrp
         Bars        = $bars
         Signal      = $Signal

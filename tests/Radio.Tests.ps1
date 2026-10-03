@@ -80,6 +80,27 @@ Describe 'Resolve-RadioStatus' {
         $status.Operator | Should -BeNullOrEmpty
     }
 
+    It 'names no technology for the cell a modem camps on without registering: another operator''s NR cell in NR-only mode' {
+        $report = Get-TestReport -Name 'gtccinfo.nr-camped.txt'
+        @($report.Cell | Where-Object { $_.Serving -and $_.Technology -eq 'NR' }).Count | Should -Be 1
+        $searching = ConvertFrom-AtOperator -Lines @('+COPS:0,255,"",0')
+        $nrOnly = ConvertFrom-AtSignalQuality -Lines '+CESQ: 99,99,255,255,255,255,80,63,63'
+        $status = Resolve-RadioStatus -Operator $searching -Signal $nrOnly @report
+        $status.Technology | Should -BeNullOrEmpty
+        $status.NrAvailable | Should -BeFalse
+        $status.Bars | Should -BeNullOrEmpty -Because 'no LTE cell is measured, and the NR one is not in use'
+        @($status.Cells).Count | Should -Be 5 -Because 'the cells are still shown'
+        (Resolve-RadioStatus -Signal $nrOnly @report).Technology | Should -Be '5G SA' -Because 'with no operator read, registration is not known'
+    }
+
+    It 'says no 5G is available while not registered' {
+        $searching = ConvertFrom-AtOperator -Lines @('+COPS: 0')
+        $report = Get-TestReport -Name 'gtccinfo.lte.txt'
+        $status = Resolve-RadioStatus -Operator $searching -Signal (ConvertFrom-AtSignalQuality -Lines (Get-FixtureAnswer -Name 'cesq.idle-anchor.txt' -Folder device)) @report
+        $status.Technology | Should -BeNullOrEmpty
+        $status.NrAvailable | Should -BeFalse
+    }
+
     It 'names no technology from an operator alone, without a serving cell' {
         (Resolve-RadioStatus -Operator $script:lteOperator -Signal $script:lteSignal -Cell @() -Carrier @()).Technology | Should -BeNullOrEmpty
     }

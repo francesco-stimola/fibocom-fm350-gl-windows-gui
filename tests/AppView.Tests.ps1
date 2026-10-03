@@ -321,6 +321,15 @@ Describe 'Command outcomes' {
         @{ Kind = 'UnlockFcc'; Result = 'PortLost' }
         @{ Kind = 'EnableAdapter'; Result = 'Done' }
         @{ Kind = 'EnableAdapter'; Result = 'Failed' }
+        @{ Kind = 'SetNetworkMode'; Result = 'Applied' }
+        @{ Kind = 'SetNetworkMode'; Result = 'Unchanged' }
+        @{ Kind = 'SetNetworkMode'; Result = 'Done' }
+        @{ Kind = 'SetNetworkMode'; Result = 'ModeUnsupported' }
+        @{ Kind = 'SetNetworkMode'; Result = 'NoSupportedBand' }
+        @{ Kind = 'SetNetworkMode'; Result = 'Unknown' }
+        @{ Kind = 'SetNetworkMode'; Result = 'NoModem' }
+        @{ Kind = 'SetNetworkMode'; Result = 'Refused' }
+        @{ Kind = 'SetNetworkMode'; Result = 'Failed' }
     ) {
         $result = [pscustomobject]@{ Id = '1'; Kind = $Kind; Result = $Result; Detail = $null; AttemptsLeft = $null; Time = [DateTimeOffset]::new(2026, 10, 1, 12, 0, 0, [timespan]::Zero) }
         $text = (ConvertTo-WindowView -Snapshot (Copy-Snapshot $script:online @{ Results = @($result) })).Result
@@ -419,5 +428,111 @@ Describe 'Recovery in the tray and the window' {
         $snapshot = Get-ScenarioSnapshot -Scenario PinRequired
         $snapshot.Recovery.Status | Should -Be 'Blocked'
         (ConvertTo-WindowView -Snapshot $snapshot).Title | Should -Be 'Action needed'
+    }
+}
+
+Describe 'The network mode in the window and the tray' {
+    BeforeAll {
+        $script:time = [DateTimeOffset]::new(2026, 10, 3, 14, 0, 0, [timespan]::Zero)
+        $script:mode = $script:online.NetworkMode
+        # A copy of the online snapshot with its network mode changed.
+        function Copy-ModeSnapshot {
+            param([hashtable] $Mode = @{}, [hashtable] $Change = @{})
+            $copy = $script:online.NetworkMode | Select-Object -Property *
+            foreach ($key in $Mode.Keys) { $copy.$key = $Mode[$key] }
+            $Change['NetworkMode'] = $copy
+            Copy-Snapshot $script:online $Change
+        }
+    }
+
+    It 'shows the modem''s mode and bands as read, n77 left out' {
+        $view = Get-NetworkModeView -Snapshot $script:online
+        $view.CurrentText | Should -Be 'The modem now: 4G + 5G. LTE: every band. NR: every band but n77.'
+        $view.Modes.Text | Should -Be @('As the modem has it', '4G + 5G', '4G only', '5G only (SA)')
+        $view.Modes.Name | Should -Be @('', 'Automatic', 'LteOnly', 'NrOnly')
+        $view.Lte.Count | Should -Be 31
+        $view.Nr | Should -Contain 77
+        $view.Selection.NetworkMode | Should -Be ''
+        $view.CanApply | Should -BeTrue
+        $view.Note | Should -BeNullOrEmpty
+    }
+
+    It 'shows LTE-only mode, and the bands of a restriction' {
+        $view = Get-NetworkModeView -Snapshot (Get-ScenarioSnapshot -Scenario LteOnlyMode)
+        $view.CurrentText | Should -Be 'The modem now: 4G only. LTE: every band.'
+        $current = ConvertFrom-AtNetworkMode -Lines @('+GTACT: 20,6,3,1,2,4,5,8,103,120,5078')
+        (Get-NetworkModeView -Snapshot (Copy-ModeSnapshot -Mode @{ Current = $current })).CurrentText | Should -Be 'The modem now: 4G + 5G. LTE: B3, B20. NR: n78.'
+    }
+
+    It 'says the mode is not read yet, and offers no change without the modem' {
+        $view = Get-NetworkModeView -Snapshot (Get-ScenarioSnapshot -Scenario NoDevice)
+        $view.CurrentText | Should -Be 'The modem''s network mode is not read yet.'
+        $view.CanApply | Should -BeFalse
+        (Get-NetworkModeView -Snapshot $null).CanApply | Should -BeFalse
+    }
+
+    It 'offers no change while the app only observes' {
+        (Get-NetworkModeView -Snapshot (Copy-Snapshot $script:online @{ ObserveOnly = $true })).CanApply | Should -BeFalse
+    }
+
+    It 'says a mode is on trial, and until when, with the choice on trial in the form' {
+        $trial = [pscustomobject]@{ Selection = [pscustomobject]@{ NetworkMode = 'NrOnly'; LteBands = [int[]]@(); NrBands = [int[]]@(78) }; Since = 5; Until = $script:time.AddMinutes(3) }
+        $view = Get-NetworkModeView -Snapshot (Copy-ModeSnapshot -Mode @{ Trial = $trial })
+        $view.Note | Should -Be 'Trying 5G only (SA): if the modem finds no network with it by 14:03, it goes back to what it had.'
+        $view.Selection.NetworkMode | Should -Be 'NrOnly'
+        $view.Selection.NrBands | Should -Be @(78)
+        $view.Revision | Should -Not -Be (Get-NetworkModeView -Snapshot $script:online).Revision
+    }
+
+    It 'says how the last trial ended: <Kind>' -ForEach @(
+        @{ Kind = 'Reverted'; Text = 'At 14:00 the modem had found no network with 5G only \(SA\): it went back to what it had\.' }
+        @{ Kind = 'Kept'; Text = 'At 14:00 the modem registered with 5G only \(SA\): it is kept\.' }
+    ) {
+        $notice = [pscustomobject]@{ Kind = $Kind; Mode = 'NrOnly'; Time = $script:time }
+        (Get-NetworkModeView -Snapshot (Copy-ModeSnapshot -Mode @{ Notice = $notice })).Note | Should -Match $Text
+    }
+
+    It 'says what the modem leaves out, and a mode it doesn''t keep' {
+        $decision = [pscustomobject]@{ Managed = $true; Satisfied = $false; Command = $null; Problem = 'NotKept'; Narrowed = $false; Missing = [pscustomobject]@{ Lte = [int[]]@(); Nr = [int[]]@(77) } }
+        $note = (Get-NetworkModeView -Snapshot (Copy-ModeSnapshot -Mode @{ Decision = $decision })).Note
+        $note | Should -Match 'doesn''t keep the network mode'
+        $note | Should -Match 'leaves out n77'
+    }
+
+    It 'lists the modes in the tray, the modem''s checked and not to choose again' {
+        $menu = Get-TrayModeMenu -Snapshot $script:online
+        $menu.Text | Should -Be 'Network mode: 4G + 5G'
+        $menu.Items.Name | Should -Be @('Automatic', 'LteOnly', 'NrOnly')
+        $menu.Items.Checked | Should -Be @($true, $false, $false)
+        $menu.Items.Enabled | Should -Be @($false, $true, $true)
+    }
+
+    It 'offers no mode in the tray while <Case>' -ForEach @(
+        @{ Case = 'the worker restarts'; Worker = 'Restarting'; Snapshot = 'online' }
+        @{ Case = 'there is no modem'; Worker = 'Running'; Snapshot = 'none' }
+    ) {
+        $snapshot = if ($Snapshot -eq 'online') { $script:online } else { Get-ScenarioSnapshot -Scenario NoDevice }
+        $menu = Get-TrayModeMenu -Snapshot $snapshot -Worker $Worker
+        @($menu.Items | Where-Object Enabled) | Should -BeNullOrEmpty
+    }
+
+    It 'says when a narrowed mode finds no network, and offers a wider one' {
+        $decision = [pscustomobject]@{ Managed = $true; Satisfied = $true; Command = $null; Problem = $null; Narrowed = $true; Missing = [pscustomobject]@{ Lte = [int[]]@(); Nr = [int[]]@() } }
+        $current = ConvertFrom-AtNetworkMode -Lines @('+GTACT: 14,6,6,5078')
+        $recovery = [pscustomobject]@{ Status = 'Watching'; Check = 'H4'; Step = $null; Cycles = 0; StepTime = $null; NextTime = $null; History = $null }
+        $snapshot = Copy-ModeSnapshot -Mode @{ Decision = $decision; Current = $current } -Change @{ State = 'SimReady'; Reason = 'Searching'; Recovery = $recovery }
+        $view = ConvertTo-WindowView -Snapshot $snapshot
+        $view.Tone | Should -Be 'Attention'
+        $view.Title | Should -Be 'No network'
+        $view.Detail | Should -Be 'No network found with 5G only (SA). No reset finds one: choose a wider network mode.'
+        $view.Blocker.Kind | Should -Be 'NetworkMode'
+        $view.Blocker.ActionText | Should -Be 'Use 4G + 5G, every band'
+        (Resolve-TrayIcon -Snapshot $snapshot).Tone | Should -Be 'Attention'
+        # The same while its setting can't be read.
+        $decision.Satisfied = $null
+        (ConvertTo-WindowView -Snapshot $snapshot).Title | Should -Be 'No network'
+        # During its grace time it is only searching.
+        $recovery.NextTime = $script:time
+        (ConvertTo-WindowView -Snapshot $snapshot).Tone | Should -Be 'Working'
     }
 }

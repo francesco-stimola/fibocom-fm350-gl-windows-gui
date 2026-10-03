@@ -101,6 +101,35 @@
                 </StackPanel>
             </TabItem>
 
+            <TabItem Header="Network">
+                <DockPanel Margin="10">
+                    <StackPanel DockPanel.Dock="Top">
+                        <TextBlock x:Name="CurrentModeText" TextWrapping="Wrap"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                            <TextBlock Text="Network mode" Width="110" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="NetworkModeBox" Width="200" DisplayMemberPath="Text"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                        <TextBlock x:Name="ModeNoteText" TextWrapping="Wrap" Foreground="#606060" Visibility="Collapsed"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                            <Button x:Name="ApplyModeButton" Content="Apply" Padding="16,3"/>
+                            <Button x:Name="ReloadModeButton" Content="Undo changes" Margin="8,0,0,0" Padding="10,3"/>
+                        </StackPanel>
+                        <TextBlock TextWrapping="Wrap" Foreground="#606060" Margin="0,8,0,0"
+                                   Text="The modem keeps its network mode and bands, after the app exits too. A mode is tried first: if the modem finds no network with it, it goes back to what it had."/>
+                    </StackPanel>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,10,0,0">
+                        <StackPanel x:Name="BandsPanel">
+                            <CheckBox x:Name="LteAllBox" Content="LTE: every band" FontWeight="SemiBold"/>
+                            <WrapPanel x:Name="LteBandsPanel" Margin="20,4,0,8"/>
+                            <CheckBox x:Name="NrAllBox" Content="NR: every band" FontWeight="SemiBold"/>
+                            <WrapPanel x:Name="NrBandsPanel" Margin="20,4,0,0"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+            </TabItem>
+
             <TabItem Header="Connection">
                 <Grid Margin="10">
                     <Grid.ColumnDefinitions>

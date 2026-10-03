@@ -1,0 +1,9 @@
+# Source: captured 2026-10-03, FM350-GL firmware 81600.0000.00.29.22.06; NR-only mode (AT+GTACT=14,6,6,0) where the SIM's operator offers no 5G SA: not registered, the modem lists an NR cell of another operator as serving (MCC/MNC replaced by 001/01, TAC and cell identity by fakes, PCIs invented).
+AT+GTCCINFO?;+GTCAINFO?
++GTCCINFO:
+1,9,001,01,00ABCD,00ABCDEF0,638016,300,,,16,63,63,80
+2,9,,,FFFFFFF,00FFFFFFF,638016,301,,126,126,49
+2,9,,,FFFFFFF,00FFFFFFF,638016,302,,126,126,36
+2,9,,,FFFFFFF,00FFFFFFF,638016,303,,126,126,43
+2,9,,,FFFFFFF,00FFFFFFF,368890,304,,58,58,65
+OK
