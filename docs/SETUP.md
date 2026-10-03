@@ -40,10 +40,12 @@ would (`tools/New-ReleasePackage.ps1`), publishes nothing, and says what it buil
   PSScriptAnalyzer 1.24–1.25 on PowerShell 7.6 intermittently fails its own command lookups
   ("the term 'Get-Command' is not recognized") — an error of the analyzer, not a finding — and
   stays broken for the rest of the process. The script analyzes the files one at a time in a
-  child process and moves whatever is left to a fresh process after such a failure, for as long
-  as each process gets a file done; it exits with 1 on any diagnostic, or when three processes in
-  a row analyzed nothing. The list of files reaches the child in a temporary file, so a clone in a
-  deep folder doesn't outgrow Windows' command-line limit.
+  child process and moves whatever is left to a fresh process after such a failure, the file it
+  broke on first. It exits with 1 on any diagnostic, or for a file the analyzer failed on in 20
+  processes (`-MaxFileAttempts`); no process starts after 80 in all (`-MaxProcesses`), so a run
+  that can't succeed still ends. Diagnostics are never retried. The list of files reaches the
+  child in a temporary file, so a clone in a deep folder doesn't outgrow Windows' command-line
+  limit.
 - **This test command needs no modem and no admin rights.** Tests that talk to a real device are
   tagged `Hardware`, and every documented command excludes them: Pester itself runs every tag
   unless told otherwise. Run them on purpose on a machine where the modem is attached **and this
@@ -91,6 +93,7 @@ pwsh -NoProfile -File src/App/Start-Fm350App.ps1 -ObserveOnly
 |---|---|
 | `tests/Bands.Tests.ps1` | `AT+GTACT` band codes: encoding matrix per RAT, rejected inputs, decoding matrix, unknown codes kept as-is, empty or malformed fields refused (never read as "all bands"), full encode→decode round trip; the supported and current band lists captured from the device (`AT+GTACT=?`, LTE-only, automatic, combined writes). |
 | `tests/Modes.Tests.ps1` | The network mode: `AT+GTACT?` and `AT+GTACT=?` parsed from the device's captures (automatic, LTE-only, NR-only, combined writes, n77 with n78 and alone), unknown codes kept and written back; the command written; the decision matrix — not managed, not known, the mode and the preferences that count, bands restricted or every one, a band the modem leaves out no reason to write, a band it uses that the settings leave out, unsupported bands and modes, a write the modem didn't keep, what counts as narrowed; the trial's confirm and revert, a registration read too soon after the write ignored. |
+| `tests/Lint.Tests.ps1` | The linter's retry decision (`tools/LintRetry.ps1`): the file a process broke on — one that died without a word included — counts one attempt and goes first in the next process; failures counted per file, never added up across files; a file given up at its last attempt while the others go on; no process past the limit; a run driven end to end against a made-up analyzer — a file failing nineteen times in a row, several in turn, one that always fails, an analyzer that fails on everything. |
 | `tests/Module.Tests.ps1` | Both manifests — the core module and the tray app — are valid and export exactly their public functions, each with a synopsis. |
 | `tests/AtText.Tests.ps1` | Framing the port's text into lines (split reads, CR-only echo, noise) and classifying each line: echo, answer, final result with its error code, unsolicited, stale. |
 | `tests/AtChannel.Tests.ps1` | The AT channel over the simulated modem, and every fault scenario of ROADMAP M1: timeout, split answer, garbled bytes, a URC mid-answer, the port vanishing, the device back under another COM number, SIM busy after a band change, registration lost and regained, a slow `AT+COPS=0`, a late answer after a timeout, echo turned off. Also the bounded URC queue and closing. |

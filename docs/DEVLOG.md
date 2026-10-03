@@ -4,6 +4,25 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-04 — CI: the linter counts the analyzer's failures per file
+
+CI on main failed at the lint step with ten files "the analyzer could not finish" and no
+diagnostic: three analyzer processes in a row had stopped at their first file, the limit that
+ended a run. Measured since: analyzed first in a new process, each of the three largest files of
+the repository makes PSScriptAnalyzer fail its own command lookups about one time in two (6 of
+12), a small file never (0 of 12); limiting the process to one processor changes nothing. So one
+large file alone reached the limit about once in eight runs.
+- **Failures count against the file the process broke on**, which goes first in the next process.
+  A file is given up only after 20 processes failed on it — at one chance in two, about once in a
+  million —, and fails the run; the other files go on, so their diagnostics are still reported.
+- **No process starts after 80 in all**: a run that can't succeed still ends within minutes.
+  A run usually takes about ten.
+- **Diagnostics are never retried**, and a PSScriptAnalyzer that can't be loaded ends the run at
+  once — before, a missing module would have read as zero diagnostics.
+- The decision is a pure function, `Resolve-LintRetry` (`tools/LintRetry.ps1`), with a matrix of
+  tests and a run driven end to end against a made-up analyzer; the same rules apply locally and
+  in CI.
+
 ## 2026-10-04 — eSIM: a profile enabled and disabled on the device
 
 The second part of M9's device session, on slot 1 and back to slot 0, the factory test profile

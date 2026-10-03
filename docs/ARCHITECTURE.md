@@ -1073,6 +1073,7 @@ tests/
     fakes.psd1           the only identifier-like values a fixture may carry
 tools/
   Invoke-Lint.ps1        the linter, as CI runs it (docs/SETUP.md)
+  LintRetry.ps1          when the linter starts another analyzer process, and gives a file up (pure)
   New-ReleasePackage.ps1 the release zip and its notes (M7): CI builds them at every push, the
                          release workflow publishes them
 assets/                  logo (source: logo.html)
