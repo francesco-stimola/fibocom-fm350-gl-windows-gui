@@ -442,7 +442,7 @@ index `0` also covers *not detectable*.
 
 Collected for the first session with the modem; each answer became a fixture and flipped a row
 above to ✅. What one session could not answer says where it will be: a data session (M2), the
-modes and bands work (M5), the recovery work (M4), a module with an eUICC (M8).
+modes and bands work (M5), the recovery work (M4), a module with an eUICC (M9).
 
 1. `AT+CLAC` — which commands this firmware accepts, in particular `+CGAUTH`, `+C5GREG`, `+CCHO`/`+CGLA`/`+CCHC`, and any undocumented traffic-statistics command. Then `ATI`, `+CGMM?`, `+CGMR`, `+GTPKGVER?` — which exact model and firmware. *Answered (§4): `+CLAC` lists only 37 MediaTek commands, so the `=?` forms decide — `+C5GREG` and the logical-channel commands are there; `+CGAUTH=?` answers `+CME ERROR: 100` but `AT+CGAUTH?` works (§3). No traffic-statistics command was found. Firmware `81600.0000.00.29.22.06`.*
 2. Which USB composition (`7126`/`7127`), which COM port is "MD AT", which driver serves the network adapter, and whether it shares a container ID with the AT port. *Answered in §1.*
@@ -459,7 +459,7 @@ modes and bands work (M5), the recovery work (M4), a module with an eUICC (M8).
 13. The serial port: does the FM350 answer with DTR and RTS asserted (and without)? Which URCs arrive unprompted after power-on, and with which prefixes? *Answered (§2): DTR and RTS make no difference; after power-on `+ESIMS: 1,29` waits on the port.*
 14. Unplugging the modem while the app holds the AT port: does the `pwsh` process survive? `System.IO.Ports` has a history of crashing the process from its background thread when a USB serial device disappears; if it happens, the transport needs a different implementation. *Answered (§2): it survives, and the port is reported lost at once.*
 
-## 8. eSIM (M8)
+## 8. eSIM (M9)
 
 The eUICC is driven by [lpac](https://github.com/estkme-group/lpac), an open-source LPA (the
 component that speaks GSMA SGP.22 to the eSIM and to the operator's SM-DP+ server). This app does
@@ -471,7 +471,7 @@ eUICC over the AT port it already owns.
 | The eUICC is reached through **logical channels**: `AT+CCHO=<AID>` opens one and returns `<sessionid>`; `AT+CGLA=<sessionid>,<length>,<command>` exchanges an APDU and answers `+CGLA: <length>,<response>`; `AT+CCHC=<sessionid>` closes it. | 📄 | `[27.007]`, `[LPAC-WRAPPER]` |
 | `+CCHO`/`+CGLA`/`+CCHC` are **in neither vendor manual**; `AT+CSIM=<length>,<command>` is (`<length>` counts hex characters). Without the logical-channel commands, a channel could be opened with a MANAGE CHANNEL APDU sent through `+CSIM`. | ❓ | `[FIBOCOM]` §10.1.4 p.139; `[DEVICE]` |
 | The firmware takes the test forms `AT+CCHO=?`, `AT+CGLA=?`, `AT+CCHC=?` and `AT+CSIM=?` (`OK`, no values). Whether the commands themselves work needs a SIM. | ✅ | `[DEVICE]` |
-| Without a SIM, `AT+EID?` answers an empty `+EID:` and `+SIMTYPE?` / `+SIMTYPE=?` answer `+CME ERROR: 0`. With a physical SIM, unlocked: `+SIMTYPE: 0` (USIM) and still an empty `+EID:` — **our module has no eUICC**, so the questions below wait for one that has. `+GTESIMCFG: 0,0,0`. | ✅ | `[DEVICE]` |
+| Without a SIM, `AT+EID?` answers an empty `+EID:` and `+SIMTYPE?` / `+SIMTYPE=?` answer `+CME ERROR: 0`. With a physical SIM on slot 0 (SIM1), unlocked: `+SIMTYPE: 0` (USIM) and still an empty `+EID:`. Read **on slot 0 only**: whether our module has an eUICC on slot 1 is question 2 below. `+GTESIMCFG: 0,0,0`. | ✅ | `[DEVICE]` |
 | The FM350 needs the eSIM slot selected first: `AT+GTDUALSIM=1`. The manual only calls the slots SIM1 and SIM2 and says the setting is **persistent** (§4) — switching slots writes persistent modem state. | 📄 | `[LPAC-WRAPPER]`, `[FIBOCOM]` §4.3 p.50 |
 | `AT+SIMTYPE?` tells which kind of SIM is in use: `0` USIM (default), `1` eSIM. | 📄 | `[FIBOCOM]` §3.15 p.32 |
 | `AT+EID?` answers the EID quoted, 32 digits, or an empty string when there is none; needs the SIM unlocked. **Identifier.** | 📄 | `[FIBOCOM]` §3.13 p.30 |
@@ -488,7 +488,7 @@ Open questions for the device (a module **with** an eUICC — not every FM350 ha
 2. Which slot holds the eUICC (`+SIMTYPE?` after each `+GTDUALSIM`), and does a slot change need re-registration or `+CFUN` cycling?
 3. After `profile enable`, what does the modem need to use the new profile (refresh, re-registration)?
 
-## 9. SMS and USSD (M9)
+## 9. SMS and USSD (M8)
 
 Standard commands from `[27.005]` (SMS) and `[27.007]` (USSD), message formats from `[23.040]` and
 `[23.038]`. The vendor manual documents all of them for the FM350 (`[FIBOCOM]` §8 and §5.3.1).
@@ -533,7 +533,7 @@ Open questions for the device:
 4. `AT+CMGD=1,4` — accepted?
 5. `AT+CUSD=?` and a real request on LTE, NSA and SA — the string format under the default character set, the coding scheme of the reply, the errors or `+CUSD: 4` seen.
 
-## 10. Data usage (M9)
+## 10. Data usage (M8)
 
 | Fact | Status | Source |
 |---|---|---|

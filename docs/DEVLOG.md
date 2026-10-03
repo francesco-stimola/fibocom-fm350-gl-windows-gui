@@ -4,6 +4,18 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-03 — Decided: SMS, USSD and data usage before eSIM
+
+M8 is now *SMS, USSD and data usage* (`v1.1.0`) and M9 *eSIM* (`v1.2.0`); lpac ships from
+`v1.2.0`. The SMS milestone needs only a physical SIM, which every device session so far has had.
+The eSIM milestone needs a module whose eUICC answers, and none has been reached yet: our module's
+empty `+EID:` was read with slot 0 (SIM1) selected only, so `AT-COMMANDS.md` §8 no longer
+concludes that it has no eUICC, and M9 starts by looking on slot 1 — a persistent write
+(`+GTDUALSIM`), put back at the end. Decided with it: eSIM is released only as far as it is
+verified on a real eUICC; nothing of it ships proven on the simulated modem alone (its tests still
+simulate lpac, as every milestone's tests simulate the modem). Older entries call eSIM M8 and SMS
+M9; they are left as written.
+
 ## 2026-10-03 — Decided: the IPv6 DNS servers a network gives are said
 
 The review's open decision, taken by the maintainer before the first release. With encrypted DNS

@@ -34,7 +34,7 @@ When the link drops, nothing brings it back. This app does both, from the system
 - **FM350-GL over USB.** Laptops with an OEM-integrated FM350 (PCIe) that already work through
   Windows' mobile broadband stack are out of scope.
 - **No redistribution of the modem driver**, nor of any binary whose license doesn't allow it.
-  Open-source tools ship only under their own license (lpac, from `v1.1.0` — see *eSIM*).
+  Open-source tools ship only under their own license (lpac, from `v1.2.0` — see *eSIM*).
 - Not a firmware tool: no flashing, no IMEI changes, no NV editing — with one exception the user
   asks for explicitly, the FCC unlock (see *FCC lock*).
 
@@ -535,7 +535,7 @@ window ends, or until the modem is healthy again after the operation broke the l
 reading taken before it did doesn't close it; then a failing check gets its grace time from the
 window's end. A window lasts 3 min; the FCC unlock, which restarts the modem as a reset does,
 opens one of 5 min (decided 2026-10-02). A network mode written — by the pass, by the user's
-choice, by its undoing — opens one of 3 min (*Modes and bands*); M8's profile and slot switches
+choice, by its undoing — opens one of 3 min (*Modes and bands*); M9's profile and slot switches
 will open one too.
 
 ## Modes and bands (M5)
@@ -889,7 +889,7 @@ whether it is safe to install.
 
 `usb2ser_tm` 3.22.43.1 loads with Memory Integrity (core isolation) on (`AT-COMMANDS.md` §1).
 
-## eSIM (M8)
+## eSIM (M9)
 
 Profile management on modules with an embedded SIM. The eUICC protocol (GSMA SGP.22, including
 TLS to the operator's SM-DP+ server) is **not** reimplemented: [lpac](https://github.com/estkme-group/lpac)
@@ -923,7 +923,7 @@ runs as an external process, one invocation per operation (facts: `AT-COMMANDS.m
   source archive for the same tag is attached to the GitHub Release as the corresponding source.
   The binary is never committed to git.
 
-## SMS, USSD and data usage (M9)
+## SMS, USSD and data usage (M8)
 
 What a prepaid or capped SIM needs day to day (facts: `AT-COMMANDS.md` §9).
 
@@ -1000,7 +1000,7 @@ values of the same shape in fixtures.
   and `AT+CLCK=`, the credentials of `+CGAUTH`. The file is opened for each line: the log holds no
   handle. The worker writes it; the UI thread only for rare events (start, a worker replaced,
   exit). A log that can't be written (a full disk) never stops the worker or a pass.
-- Data usage totals (M9): a JSON file under `%LOCALAPPDATA%\fibocom-fm350-gl-windows-gui\`.
+- Data usage totals (M8): a JSON file under `%LOCALAPPDATA%\fibocom-fm350-gl-windows-gui\`.
 
 ## Module layout
 
@@ -1081,7 +1081,7 @@ assets/                  logo (source: logo.html)
 None beyond **PowerShell 7.6+ on Windows**. Everything the app uses ships with it: `System.IO.Ports`
 (serial), WPF and WinForms (UI), `System.Drawing` (icon), `System.Net.Http` (the update notice),
 and the Windows modules `PnpDevice`, `NetAdapter`, `NetTCPIP`, `DnsClient`, `ScheduledTasks`.
-Windows PowerShell 5.1 and its `Appx` module, part of Windows, run the launcher. From `v1.1.0`
+Windows PowerShell 5.1 and its `Appx` module, part of Windows, run the launcher. From `v1.2.0`
 the release zip also carries `lpac.exe` for eSIM (see *eSIM*); nothing has to be installed
 separately.
 

@@ -52,10 +52,10 @@ adapter's IP address by hand. And when the link drops — it does — nothing br
 - **Languages** — English, Italian, German, French, Spanish, Portuguese, Dutch and Polish, as
   Windows' display language asks. Translations other than Italian have had no native speaker's
   review yet: corrections are welcome (`src/App/Strings`, `src/Installer/Strings`).
-- **eSIM** (after 1.0) — on modules with an embedded SIM: list, switch, rename, download and delete
-  eSIM profiles, through [lpac](https://github.com/estkme-group/lpac).
 - **SMS, USSD and data usage** (after 1.0) — read and send text messages, run balance codes like
   `*123#`, and see how much data this billing cycle has used, with an optional quota warning.
+- **eSIM** (after 1.0) — on modules with an embedded SIM: list, switch, rename, download and delete
+  eSIM profiles, through [lpac](https://github.com/estkme-group/lpac).
 
 ## Install
 
@@ -119,7 +119,7 @@ once you turn that on — with one UAC prompt at install time, none afterwards. 
   driver: the app tells you where a verified copy is published, and installs the package you
   download once it has checked it.
 
-Nothing else to install: the app runs on PowerShell alone, and from `v1.1.0` its release carries
+Nothing else to install: the app runs on PowerShell alone, and from `v1.2.0` its release carries
 the one tool eSIM needs.
 
 ## Development
@@ -137,7 +137,7 @@ process: [`docs/SETUP.md`](docs/SETUP.md). Protocol facts and their sources:
 - [prusa-dev/lpac-fibocom-wrapper](https://github.com/prusa-dev/lpac-fibocom-wrapper) (MIT) —
   eSIM management on the FM350 over AT commands.
 - [estkme-group/lpac](https://github.com/estkme-group/lpac) (AGPL-3.0) — the eSIM engine, shipped
-  with releases from `v1.1.0` under its own license.
+  with releases from `v1.2.0` under its own license.
 - [obsy/sms_tool](https://github.com/obsy/sms_tool) (Apache-2.0) and
   [wargio/fm350-util](https://github.com/wargio/fm350-util) (MIT) — how modems deliver SMS and
   USSD replies, and SMS on the FM350-GL.

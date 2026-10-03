@@ -21,8 +21,8 @@ written `(planned)`.
 | [M5 — Modes & bands](#m5) | ✅ complete |
 | [M6 — Driver installation](#m6) | ✅ complete |
 | [M7 — Packaging & first release](#m7) — tag `v1.0.0` (planned) | 🔨 code-complete |
-| [M8 — eSIM](#m8) — tag `v1.1.0` (planned) | 📋 planned |
-| [M9 — SMS, USSD & data usage](#m9) — tag `v1.2.0` (planned) | 📋 planned |
+| [M8 — SMS, USSD & data usage](#m8) — tag `v1.1.0` (planned) | 📋 planned |
+| [M9 — eSIM](#m9) — tag `v1.2.0` (planned) | 📋 planned |
 
 ---
 
@@ -142,24 +142,10 @@ verifies it and installs it (design: ARCHITECTURE → *Drivers*).
 - [ ] Set `ModuleVersion` to `1.0.0` and tag `v1.0.0`.
 
 <a id="m8"></a>
-## M8 — eSIM
-
-Profile management on modules with an embedded SIM, through lpac as an external process (design:
-ARCHITECTURE → *eSIM*; facts: `AT-COMMANDS.md` §8). Everything but erasing the chip.
-
-- [ ] Device session on a module with an eUICC: answer the open questions in `AT-COMMANDS.md` §8.
-- [ ] APDU bridge in the worker: lpac's `stdio` protocol ↔ `AT+CCHO` / `AT+CGLA` / `AT+CCHC` on the AT port the worker owns; the protocol translation as pure functions with a matrix of tests; lpac simulated in the tests.
-- [ ] Slot selection (`AT+GTDUALSIM`) and profile switches inside a maintenance window. The slot is persistent modem state: it is switched only after a confirmation that says so, and the active slot is always shown.
-- [ ] Operations: chip info; profile list, enable, disable, nickname; download from an activation code or a QR code; delete behind a strong confirmation. Notifications processed automatically. `chip purge` never exposed.
-- [ ] EID, ICCIDs and activation codes redacted in logs and fixtures.
-- [ ] UI: an eSIM page in the main window.
-- [ ] lpac bundled in the release: the release workflow downloads the pinned lpac version from its official GitHub releases, verifies its SHA-256, and puts `lpac.exe` with its license in the zip; lpac's source archive for the same tag is attached to the GitHub Release (AGPL-3.0 corresponding source). Never committed to git.
-
-<a id="m9"></a>
-## M9 — SMS, USSD & data usage
+## M8 — SMS, USSD & data usage
 
 What a prepaid or capped SIM needs day to day: the operator's messages, balance codes, and how much
-data is left (design: ARCHITECTURE → *SMS, USSD and data usage*; facts: `AT-COMMANDS.md` §9).
+data is left (design: ARCHITECTURE → *SMS, USSD and data usage*; facts: `AT-COMMANDS.md` §9–§10).
 
 - [ ] Device session: answer the open questions in `AT-COMMANDS.md` §9 — storages, which port gets new-message notices, USSD on LTE / NSA / SA with a real operator.
 - [ ] SMS codec as pure functions written from 3GPP TS 23.040 and 23.038, with a matrix of tests: PDU decoding, GSM 7-bit (with the extension table) and UCS-2, long messages reassembled from their parts; PDU encoding for sending, splitting long messages.
@@ -169,6 +155,22 @@ data is left (design: ARCHITECTURE → *SMS, USSD and data usage*; facts: `AT-CO
 - [ ] Data usage: the modem adapter's byte counters, sampled by the worker, accumulated across counter resets (pure function) and persisted; today and the current billing cycle (start day in settings); an optional quota with a tray warning (thresholds: **human decision**). Never disconnects.
 - [ ] Phone numbers, message text and USSD replies never logged.
 - [ ] UI: messages and USSD in the main window; usage in the window and the tooltip.
+
+<a id="m9"></a>
+## M9 — eSIM
+
+Profile management on modules with an embedded SIM, through lpac as an external process (design:
+ARCHITECTURE → *eSIM*; facts: `AT-COMMANDS.md` §8). Everything but erasing the chip. Released only
+as far as it is verified on a module with an eUICC: nothing of it ships proven on the simulated
+modem alone (decided 2026-10-03).
+
+- [ ] Device session: look for an eUICC on our module's second slot (`AT+GTDUALSIM=1`, persistent, put back to `0` at the end) — its empty `+EID:` was read on slot 0 only (`AT-COMMANDS.md` §8). On a module with an eUICC: answer the open questions in §8.
+- [ ] APDU bridge in the worker: lpac's `stdio` protocol ↔ `AT+CCHO` / `AT+CGLA` / `AT+CCHC` on the AT port the worker owns; the protocol translation as pure functions with a matrix of tests; lpac simulated in the tests.
+- [ ] Slot selection (`AT+GTDUALSIM`) and profile switches inside a maintenance window. The slot is persistent modem state: it is switched only after a confirmation that says so, and the active slot is always shown.
+- [ ] Operations: chip info; profile list, enable, disable, nickname; download from an activation code or a QR code; delete behind a strong confirmation. Notifications processed automatically. `chip purge` never exposed.
+- [ ] EID, ICCIDs and activation codes redacted in logs and fixtures.
+- [ ] UI: an eSIM page in the main window.
+- [ ] lpac bundled in the release: the release workflow downloads the pinned lpac version from its official GitHub releases, verifies its SHA-256, and puts `lpac.exe` with its license in the zip; lpac's source archive for the same tag is attached to the GitHub Release (AGPL-3.0 corresponding source). Never committed to git.
 
 ---
 

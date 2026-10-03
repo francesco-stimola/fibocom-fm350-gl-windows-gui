@@ -15,7 +15,7 @@ same ones locally (`-Version <x.y.z>`) if a result differs between your machine 
 
 That is the whole list. The app needs **nothing beyond PowerShell 7** to develop and run: serial
 port, WPF, WinForms and the Windows networking/PnP modules all ship with it (ARCHITECTURE →
-*Runtime dependencies*). The one bundled tool, lpac for eSIM (`v1.1.0`), is added to the release
+*Runtime dependencies*). The one bundled tool, lpac for eSIM (`v1.2.0`), is added to the release
 zip by the release workflow and never lives in the repository.
 
 Windows PowerShell 5.1 ships an old Pester 3.x in `C:\Program Files\WindowsPowerShell\Modules`.
