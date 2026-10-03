@@ -19,7 +19,7 @@ written `(planned)`.
 | [M3 — Tray app](#m3) | ✅ complete |
 | [M4 — Health & recovery](#m4) | ✅ complete |
 | [M5 — Modes & bands](#m5) | ✅ complete |
-| [M6 — Driver installation](#m6) | 📋 planned |
+| [M6 — Driver installation](#m6) | ✅ complete |
 | [M7 — Packaging & first release](#m7) — tag `v1.0.0` (planned) | 📋 planned |
 | [M8 — eSIM](#m8) — tag `v1.1.0` (planned) | 📋 planned |
 | [M9 — SMS, USSD & data usage](#m9) — tag `v1.2.0` (planned) | 📋 planned |
@@ -115,11 +115,12 @@ verifies it and installs it (design: ARCHITECTURE → *Drivers*).
 
 - [x] Classify the modem's USB functions and their driver state (AT ports present without a driver) as a pure function, tested on a device capture: `Resolve-ModemUsbDevice`.
 - [x] Read the PnP records it classifies: done in M2 (`Get-ModemPnpRecord`), which needs it to find the AT port.
-- [ ] Driver dialog: the project does not distribute the driver; where a known copy is published (commit-pinned page from the manifest) and that it is a third party's copy of MediaTek's driver; actions *open that page* and *choose the downloaded package*.
-- [ ] Package intake: a zip or a folder chosen by the user; locate the INFs in it. Never run an executable from the package.
-- [ ] Verification as a pure decision function with a matrix of tests: catalog signed by Microsoft (WHQL) → required; INF covers the modem's hardware IDs → required; files match a known fingerprint → reported as a verified version.
-- [ ] Known-fingerprints manifest in the repo (SHA-256 of `.cat`, `.inf`, `.sys`, and the commit-pinned page where a copy is published — hashes and links only, no binaries), starting with MediaTek `usb2ser_tm` 3.22.43.1.
-- [ ] Install/uninstall via `pnputil`; surfaced in the UI.
+- [x] Known-fingerprints manifest in the repo (SHA-256 of `.cat`, `.inf`, `.sys`, and the commit-pinned page where a copy is published — hashes and links only, no binaries), starting with MediaTek `usb2ser_tm` 3.22.43.1: `Data/Drivers.psd1`.
+- [x] Package intake: a zip or a folder chosen by the user, copied into a new folder only SYSTEM and administrators can open, where it is checked and installed from (invariant 10); the INFs located in it. Never run an executable from the package.
+- [x] Verification as a pure decision function with a matrix of tests: catalog signed by Microsoft (WHQL) → required; that catalog, and no other, vouches for the INF → required; INF covers the modem's hardware IDs → required; files match a known fingerprint → reported as a verified version. Facts and sources in `AT-COMMANDS.md` §1.1.
+- [x] Install/uninstall via `pnputil` from the system folder, in the worker, with administrator rights; surfaced in the UI. Proven on the simulated modem (scenario `NoDriver`) and with PnP and pnputil mocked.
+- [x] Driver dialog — the window's *Driver* tab, opened from the blocker: the project does not distribute the driver; where a known copy is published (commit-pinned page from the manifest) and that it is a third party's copy of MediaTek's driver; actions *open that page* and *choose the downloaded package*.
+- [x] On the device: the published package checked (hashes, signature, the verdict) without installing it; the installed driver uninstalled and installed again by the app's commands, the modem back on its AT port as before — under new COM numbers and a new published name. The page opened from the elevated app in a browser that is not.
 
 <a id="m7"></a>
 ## M7 — Packaging & first release

@@ -66,7 +66,8 @@ user reopens it and monitoring resumes.
 - **Commands** (`Send-ModemCommand`): check now (a connect pass, which never breaks a connection
   that works), save settings and the APN password, set the network mode (tried, *Modes and*
   *bands*), store or forget the SIM PIN, remove the PIN from the SIM, lift the FCC lock, enable
-  the adapter. Secrets travel as `SecureString`s and stay
+  the adapter, check a driver package, install it, uninstall the AT port's driver (*Drivers*).
+  Secrets travel as `SecureString`s and stay
   in the process. Each command's outcome comes back in the next snapshots (the last ten).
 - **Cadence** (`Resolve-WorkerSchedule`, pure; decided 2026-10-01): a connect pass every 30 s
   online, every 10 s while the connection is on its way, every 30 s while it waits for the user
@@ -108,7 +109,8 @@ user reopens it and monitoring resumes.
   modem in LTE-only mode, in NR-only mode where there is no 5G SA, and a network with 5G SA) — no
   device, no administrator rights,
   nothing changed on the system. The recovery steps act on the simulated modem as on a real one,
-  every time they run. Its settings,
+  every time they run; so do the driver's install and uninstall, while a package chosen is copied
+  and checked for real, in the development folder. Its settings,
   secrets and log live in a folder of their own, and it runs beside the real app.
 - **Observe only** (`-ObserveOnly`): the worker reads and never writes — no step, no command that
   changes the modem or the system. The window says which step it withholds.
@@ -607,18 +609,23 @@ comes back in a later snapshot, so the window never waits on the modem or the sy
 - **What blocks it, with the action that unblocks it**: an APN to give (`ApnNeeded`), the APN
   password to give again (`ApnPasswordUnreadable`), the PIN (`NoPin` and the like), *Enable
   adapter* for an adapter the user disabled (administrator rights; never done by the app on its
-  own), *Unlock…* for an FCC-locked modem. What the app can't act on — a PUK, no SIM, the last PIN
-  attempt, no driver — is said, with nothing to click.
-- **Two actions change something outside the app, and each asks first**: the FCC unlock (it
-  writes the modem's non-volatile memory and lifts the laptop maker's restriction) and removing
-  the PIN from the SIM (it changes the SIM, in any phone too).
+  own), *Unlock…* for an FCC-locked modem, *Install the driver…* for an AT port without its
+  driver (the *Driver* tab). What the app can't act on — a PUK, no SIM, the last PIN attempt — is
+  said, with nothing to click.
+- **What changes something outside the app asks first**: the FCC unlock (it writes the modem's
+  non-volatile memory and lifts the laptop maker's restriction), removing the PIN from the SIM (it
+  changes the SIM, in any phone too), uninstalling the AT port's driver (the app then can't watch
+  the connection), and installing a driver version the app doesn't know. A version it knows is
+  installed at *Install*.
 - **Tabs**: *Signal* — LTE and NR quality, serving and neighbour cells, carrier aggregation
   (uplink values only for a carrier that carries uplink); *SIM* — its state and attempts left, the
   stored PIN (store, forget), removing the PIN from the SIM; *Network* (M5) — the modem's mode and
   bands as read, the mode to keep (or *As the modem has it*), a checkbox per band the modem
   supports with *every band* per RAT, *Apply*, and how the last choice went (on trial until when,
   kept, undone, bands the modem leaves out); *Connection* — the settings, checked as typed with
-  the same validation the worker applies; saving them never changes the network mode.
+  the same validation the worker applies; saving them never changes the network mode; *Driver*
+  (M6) — the AT port's driver, where a known copy is published, the package chosen and what its
+  check found, *Install*, *Uninstall the driver…* (*Drivers*).
 
 ## Drivers (M6)
 
@@ -630,8 +637,9 @@ the user where a known copy is published and by whom, the user downloads it, and
 whether it is safe to install.
 
 1. **Detect** the modem's USB functions by hardware ID and classify them: absent, present without
-   a driver (problem code 28 or 1), present with another problem (disabled, failed to start),
-   working. A modem is the composite device its functions hang from — not their container ID,
+   a driver (problem code 28 or 1; or none, and a service read as none, right after the driver
+   was uninstalled — a service that couldn't be read leaves it to the opening of the port),
+   present with another problem (disabled, failed to start), working. A modem is the composite device its functions hang from — not their container ID,
    which a device on a port the firmware calls non-removable inherits from the computer and shares
    with everything built in. For the same reason the network adapter is found by its own instance
    ID (the adapter's `PnPDeviceID`). Instance IDs are not remembered across runs: the FM350's is
@@ -641,24 +649,55 @@ whether it is safe to install.
    key, given the device object — about 50 ms; given an instance ID, about a second — plus the COM
    port name from the device's registry parameters. Never several devices in one call: the cmdlet
    then sometimes labels one device's properties with another's instance ID.
-2. **Guide.** A dialog explains that the project does not distribute the driver, shows where a
-   known copy is published — a page pinned to a fixed commit, taken from the known-fingerprints
-   manifest — and says plainly that it is a third party's copy of MediaTek's driver. Two actions:
-   *open that page* in the browser, and *choose the downloaded package*. The app itself never
-   fetches it: if the page disappears, any identical copy from anywhere still passes step 4 as the
-   verified version.
-3. **Take the package** the user points to — a zip or a folder — and locate the INFs in it. An
-   executable in the package is **never run**: installers found in the wild are often unsigned.
-4. **Verify**, as a pure decision function:
-   - the catalog (`.cat`) carries a valid signature from *Microsoft Windows Hardware Compatibility
-     Publisher* (WHQL) — **required**. A catalog signature covers the hashes of the files it lists,
-     so authenticity comes from the signature, not from where the package was downloaded;
-   - the INF lists the modem's hardware IDs — **required**;
-   - the files match a known fingerprint from the manifest committed in the repo (SHA-256 of
-     `.cat`, `.inf`, `.sys`, plus the page where a copy is published; hashes and links only, no
-     binaries) — reported as a **verified version**, otherwise as an unknown but signed version.
-5. **Install** with `pnputil /add-driver <inf> /install`, which re-validates the catalog and refuses
-   a tampered package; uninstall by locating the published `oemNN.inf`.
+2. **Guide** — the main window's *Driver* tab, which the blocker of a modem without its AT-port
+   driver opens (*Install the driver…*). It says that the app doesn't come with the driver — it
+   has no license to redistribute it —, where a known copy is published, by whom and as which
+   file — a page pinned to a commit, from the known-fingerprints manifest (`Data/Drivers.psd1`:
+   SHA-256 of `.cat`, `.inf`, `.sys`, the page and the archive; hashes and links only, no
+   binaries) —, and that it is a third party's copy of MediaTek's driver. Two actions: *Open the
+   download page* — Explorer, from the Windows folder, hands it to the browser of the user's
+   session: the elevated app never starts a browser itself — and *Choose the downloaded
+   package…*, a zip or the INF of an extracted folder. The app never fetches the package: if the
+   page disappears, an identical copy from anywhere is still the verified version.
+3. **Take the package** (`Copy-DriverPackage`): copied — a zip extracted, none of its files outside
+   the folder; for an INF, its package's files alone, the catalogs and the files its
+   `[SourceDisksFiles]` sections name, not the rest of a folder it may share, such as Downloads; a
+   folder copied, links left out; at most 1000 files and 64 MB, a bigger folder given up at the
+   first file too many — into a **new folder only SYSTEM and administrators can open**, nothing
+   inherited, in Windows' own temporary folder, where users can create but neither list nor delete
+   what others create (`New-DriverStagingFolder`). Everything after happens on that copy, so what
+   is checked is what pnputil installs: no program running as the user can swap a file in between,
+   and the elevated app installs nothing from a folder the user can write (invariant 10). The copy
+   is deleted once installed, replaced or refused, and when the worker ends; one that can't be
+   deleted yet is tried again, and copies an app ended mid-install left behind are deleted at the
+   next start — only folders of that name that administrators own. Nothing in the package is ever
+   run: installers found in the wild are often unsigned. Copying and checking keep the worker's
+   heartbeat beating, and each file is hashed once.
+4. **Verify** — `Resolve-DriverPackage`, a pure decision over the facts `Get-DriverPackageFact`
+   reads (`AT-COMMANDS.md` §1.1):
+   - only an INF whose x64 models list the modem's AT port counts — its composition's MD AT
+     interface, with or without a revision; either composition's when no modem is attached;
+   - the catalog the INF names is in the package, and its signer is *Microsoft Windows Hardware
+     Compatibility Publisher*, `O=Microsoft Corporation`, with the WHQL enhanced key usage — an
+     attestation signature has another — **required**;
+   - `WinVerifyTrust`, against that catalog and no other, trusts its signature and finds the INF's
+     hash in it — **required**. The INF is the file the app reads; Windows checks every other file
+     against the catalog when the package is staged, and refuses one that doesn't match. Windows'
+     own catalogs are never asked: with a package installed, they vouch for any copy of its files;
+   - every SHA-256 of a known package matches: a **verified version**; else an unknown version,
+     signed — installed only once the user accepts it.
+5. **Install and uninstall**, in the worker, with pnputil from the system folder and administrator
+   rights; only the exit code is read. *Install* runs `/add-driver <inf> /install` on the copy:
+   `0` done, `3010` a restart to finish, `259` added but no device took it (none attached, or one
+   with a driver Windows ranks higher). Never over an AT port that works. *Uninstall the driver…*
+   runs `/delete-driver <oem#.inf> /uninstall` on the package the AT port reports
+   (`DEVPKEY_Device_DriverInfPath`) — only an `oem<n>.inf`, never one of Windows' own — after
+   closing the port, and never while a network mode is on trial: only the AT port can write it
+   back (*Modes and bands*). The data connection stays up — the network adapter has Windows' own driver —
+   but the app can't watch it until the driver is back: `NoDriver` is blocked, never escalated.
+   The worker waits for pnputil at most 5 minutes, its heartbeat beating; the command under way is
+   published before it runs, so the window says so. After an install, a maintenance window as long
+   as R6's settle time: a port just started may stay silent for minutes (`AT-COMMANDS.md` §2).
 
 `usb2ser_tm` 3.22.43.1 loads with Memory Integrity (core isolation) on (`AT-COMMANDS.md` §1).
 
@@ -798,15 +837,17 @@ src/
     Network.ps1          modem adapter: configuration plan (pure), read and apply (M2)
     Log.ps1              redaction (pure), rolling log (M2)
     Devices.ps1          the modem's USB functions: classification (M6, pure), PnP reader (M2),
-                         which modem to open (M3, pure), its USB restart (M4)
+                         which modem to open (M3, pure), its USB restart (M4); pnputil
+    Drivers.ps1          the AT port's driver: the INF read and the verdict on a package (M6,
+                         pure), copying and checking it, installing and uninstalling it
     Radio.ps1            technology, bars, cells for display (M3, pure), and their reads
     Health.ps1           which check fails, the data path's verdict (M4, pure); the probe
     Recovery.ps1         the recovery decision (M4, pure), maintenance windows, the steps
     Simulation.ps1       development mode: the simulated device and adapter (M3)
     Worker.ps1           the worker: link, cadence (pure), snapshots (pure), commands, loop (M3)
     Data/                3GPP band tables, transcribed (EutraBands.psd1, NrBands.psd1); the
-                         simulated modem's answers (Simulation.psd1)
-    …                    drivers (M6)
+                         simulated modem's answers (Simulation.psd1); the driver packages the
+                         app knows (Drivers.psd1)
   App/                   tray app (M3): its own module, FibocomFm350.App
     View.ps1             what the tray and the window show, from a snapshot (pure)
     TrayIcon.ps1         the icon: drawn, swapped, every handle destroyed
@@ -849,8 +890,9 @@ carries `lpac.exe` for eSIM (see *eSIM*); nothing has to be installed separately
 9. **Band codes round-trip.** A code read from the modem survives being written back, even when
    the app does not understand it.
 10. **Elevated code comes only from an admin-only location.** The app and the tools it runs are
-    loaded from under `%ProgramFiles%`; nothing user-writable (profile scripts, per-user modules,
-    paths from settings) is executed by the elevated process.
+    loaded from under `%ProgramFiles%` or the system folder; nothing user-writable (profile
+    scripts, per-user modules, paths from settings) is executed by the elevated process, and a
+    driver package is installed from a copy only administrators can write.
 
 ## Independent implementation
 

@@ -4,6 +4,117 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-03 — M6: the review pass
+
+One lite review of M6's changes found five defects in the product, all fixed; each fix has a test
+that fails without it (mutation-checked). It found the staging folder, the zip extraction, the
+check against the install, the catalog check's native code, pnputil's handling and the UI thread
+sound.
+- **An INF chosen in a shared folder took the folder along.** The published zip has no top
+  folder, so "extract here" puts the package straight into Downloads, and choosing its INF copied
+  all of Downloads — refused as too big, or copied whole into Windows' temporary folder. For an
+  INF only its package's files are copied now: the catalogs and the files its
+  `[SourceDisksFiles]` sections name, under the paths of `[SourceDisksNames]` (`AT-COMMANDS.md`
+  §1.1). A folder is given up at its first file too many, each file is hashed once — every INF
+  hashed its whole subtree before —, and copying and checking keep the heartbeat beating.
+- **Uninstalling during a network-mode trial left the trial unable to undo itself**: its write-back
+  goes through the AT port. Refused while a mode is on trial, and the button off meanwhile.
+- **A PnP read that failed looked like a missing driver**, the window offering an install: since
+  the device session, problem 0 without a service meant "no driver". A service read as none (`""`)
+  is now told from one not read (`$null`), which leaves it to the opening of the port, as before.
+- **The chosen package's folder, which may hold the user's name, reached the log** through the
+  message of a file that can't be read; it is now told with the package's name alone.
+- **A copy that couldn't be deleted was never tried again**, and an app ended mid-install left its
+  copy for good — admin-only, out of the user's clean-up's reach. Such copies are tried again at
+  every later clear and when the worker ends, and the first worker of an app deletes those found
+  at its start, if administrators own them.
+
+## 2026-10-03 — M6 on the device: a driver just uninstalled has no problem code
+
+The published package and the app's own commands on the real modem, elevated — the worker's
+command functions in a process of their own, on a worker that never cycled, so no connect pass
+wrote anything:
+- **The published copy is the known package**: the zip has the manifest's SHA-256 and holds only
+  the package's four files, each with its known SHA-256 — the x86 driver's too, known until now
+  only from the research of 2026-09-28. Checked as the app checks it, in a copy only SYSTEM and
+  administrators could open (owner Administrators, a protected access list): a verified version.
+- **The page opened as the user**: *Open the download page* from the elevated process — Explorer
+  from the Windows folder — showed it in Edge, none of whose processes was elevated.
+- **Uninstalled** (`pnputil /delete-driver oem24.inf /uninstall`, about a second), the serial
+  functions stayed present **without a problem code**, a class or a service, not started — not
+  the code 28 of a modem first plugged in without its driver, which comes only with an
+  enumeration. Two defects showed at once, both fixed with a test that fails without the fix:
+  the PnP reader failed on every key without a value — `Get-PnpDeviceProperty` gives those no
+  `Data` member at all —, so the worker could never have seen a modem without its driver; and a
+  function with no problem code was taken for working. A function with no problem code and no
+  service is now one without its driver (refined by the review: a service read as none). The
+  state is a captured fixture (`pnp.7127.uninstalled.json`).
+- **Installed again** by the app's commands from the downloaded zip (about a second): every
+  serial function at once, on new COM numbers (the AT port on `COM23`, was `COM9`) and under a
+  new published name (`oem10.inf`, was `oem24.inf`); the modem answered at once, its network mode
+  as before. Nothing of either is remembered: the next look by PnP finds them.
+
+## 2026-10-03 — Decided: the Driver tab, its confirmations, an unknown version, pnputil in the worker
+
+Four decisions of M6, taken by the maintainer as proposed:
+- **The *Driver* tab**, opened from the blocker of a modem without its AT-port driver; nothing
+  opens by itself; its texts as built. Rejected: a dialog that opens by itself (a second window to
+  own, a popup at a hidden start at logon), and a tray menu item besides.
+- **Confirmations** before installing a version the app doesn't know and before uninstalling; a
+  version it knows installs at *Install*. Rejected: a confirmation for every install, and none at
+  all (uninstalling takes the AT port away from the app).
+- **A package signed for WHQL for the modem's AT port, with a fingerprint the app doesn't know,
+  may be installed** after that confirmation: Windows would take it anyway, and a new MediaTek
+  version works without a release of the app. Rejected: refusing it.
+- **Uninstall offered; pnputil run by the worker**, its heartbeat beating, stopped after 5 minutes.
+  Rejected: 2 minutes (a slow computer), no uninstall in the app, a runspace of its own for
+  pnputil (a second owner of system changes).
+
+## 2026-10-03 — M6 code-complete: the driver, brought by the user and checked by the app
+
+"Bring your own driver", guided (ARCHITECTURE → *Drivers*; facts in `AT-COMMANDS.md` §1.1, each
+with its source — Microsoft's INF, signing, `WinVerifyTrust` and pnputil pages, and the driver
+installed on our device, read only):
+- **A manifest of known packages** (`Data/Drivers.psd1`): the SHA-256 of `usb2ser_tm` 3.22.43.1's
+  catalog, INF and both drivers, and where a third party publishes a copy — the page pinned to a
+  commit, the archive's own SHA-256. The driver store of our device holds the same catalog, INF
+  and x64 driver.
+- **The package is checked where the user can't change it.** It is copied — a zip extracted, a
+  folder copied, at most 1000 files and 64 MB — into a new folder of Windows' temporary folder
+  that only SYSTEM and administrators can open, nothing inherited; it is checked there and pnputil
+  installs it from there. Checked in place, the package could be swapped between the check and
+  the install by any program running as the user, and the elevated app would install a driver
+  from a folder the user can write (invariant 10, which now says so).
+- **"Signed" is asked of the package's own catalog.** On our device `Get-AuthenticodeSignature`
+  calls the driver store's INF and `.sys` signed — type *Catalog* — because the package is
+  installed: Windows would vouch for any copy of them. So the INF is checked with
+  `WinVerifyTrust` against the catalog it names and no other; a copy with one line added, or the
+  INF against another package's catalog, fails. Only the INF is checked: it is the file the app
+  reads, and Windows checks every file the INF copies against the catalog when it stages the
+  package. PowerShell's `Test-FileCatalog` can't open a driver catalog.
+- **WHQL is the signer and its key usage**: *Microsoft Windows Hardware Compatibility Publisher*,
+  `O=Microsoft Corporation`, with the WHQL enhanced key usage; an attestation signature, Microsoft's
+  too, has another and is refused. The catalog's signer is read with `SignedCms`, nothing fetched
+  from the network.
+- **The verdict is a pure function** (`Resolve-DriverPackage`): only an INF whose x64 models list
+  the modem's AT port counts; required, a catalog in the package, signed for WHQL, vouching for the
+  INF; every known hash matching makes a verified version, else a signed version the app doesn't
+  know. The INF is read as Windows reads it (`ConvertFrom-DriverInf`): comments, continued lines,
+  `[Strings]`, the catalog and the models section decorated for x64 — an undecorated one is x86's.
+- **pnputil, in the worker.** Install from the copy (`/add-driver … /install`: `0`, `3010`, `259`
+  read), never over an AT port that works; uninstall the package the AT port reports
+  (`DEVPKEY_Device_DriverInfPath`, only an `oem<n>.inf`) after closing the port. The worker waits
+  at most 5 minutes with its heartbeat beating (`Invoke-Pnputil`, which R6's USB restart now uses
+  too), and publishes the command under way first. After an install, a maintenance window as long
+  as R6's settle time: a new port may stay silent for minutes. Without the driver the connection
+  stays up but unwatched: `NoDriver` is blocked, never escalated.
+- **The *Driver* tab**, opened from the blocker: the AT port's driver, where the known copy is
+  published and by whom, *Open the download page* (through Explorer: the elevated app never starts
+  a browser itself), *Choose the downloaded package…*, the verdict and why a package is refused,
+  *Install*, *Uninstall the driver…* — as decided (the entry above).
+- **Development mode** checks a package chosen for real, in its own folder; installing and
+  uninstalling act on the simulated modem (`NoDriver` comes online once installed).
+
 ## 2026-10-03 — Decided: encrypted DNS (DoH) on the modem's adapter, before v1.0.0
 
 The modem adapter's DNS servers can only be chosen in the app: the pass rewrites them at every
