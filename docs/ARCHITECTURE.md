@@ -539,6 +539,23 @@ the decisions are pure functions (`Resolve-NetworkMode`, `Resolve-NetworkModeTri
   (`fec0:0:0:ffff::1`–`3`, or router advertisements'), so a list compared whole could fail to match
   for good — an IPv6-first override, IPv6 servers left by an earlier context — and the adapter would
   never count as configured.
+- **Encrypted DNS (DoH), M7** (decided 2026-10-03): a setting turns DNS over HTTPS on for the
+  servers of the DNS override, which it needs — the operator's servers speak no DoH. Each server
+  uses the template Windows knows for it, or the template the settings give, which then applies to
+  every server of the override; a server with neither is a settings problem. It is set **per
+  interface** (`SetInterfaceDnsSettings` with `DNS_INTERFACE_SETTINGS3` and
+  `DnsServerDohProperty`), never per server address system-wide
+  (`Set-DnsClientDohServerAddress -AutoUpgrade`), which would change every adapter using that
+  address. The pass re-applies it like the servers — on the new adapter a re-enumerated modem
+  brings, too — and removes it when the setting is turned off. **No fallback to plain DNS**: who
+  turns encryption on wants no query in the clear; the health checks don't notice a DoH failure,
+  since H7 probes by address, not by name. The window shows whether it is on. No DoT. *Open for
+  M7*: whether that per-interface API exists on Windows 10, which the project supports (*Scope and
+  non-goals*). Microsoft's API reference gives Windows 10 build 19041 for
+  `SetInterfaceDnsSettings`, but builds 19645 and 20348 for `DNS_INTERFACE_SETTINGS3` and
+  `DnsServerDohProperty` — both above 19045, Windows 10's last release (learn.microsoft.com,
+  netioapi, read 2026-10-03). To be tried on Windows 10; the answer decides what the setting does
+  there.
 - **A disabled adapter is the user's choice**: the pass stops there (`AdapterDisabled`, blocked)
   and changes nothing on it; the window offers to enable it again (administrator rights), never
   the app by itself (decided 2026-10-01).
@@ -733,7 +750,9 @@ values of the same shape in fixtures.
 - Settings: a JSON file under `%APPDATA%\fibocom-fm350-gl-windows-gui\`. The elevated scheduled
   task runs as the same user, so the path is the same elevated or not. `Apn` (empty: the
   subscription's own), `PdpType` (`IP` or `IPV4V6`), `ApnAuthentication` (`None`, `PAP`, `CHAP`)
-  with `ApnUser`, `DnsServers` (the override; empty keeps the operator's), `InterfaceMetric` (500:
+  with `ApnUser`, `DnsServers` (the override; empty keeps the operator's) with, from M7,
+  `DnsOverHttps` (off by default; on needs the override) and `DohTemplate` (empty: the template
+  Windows knows for each server — *Network configuration*), `InterfaceMetric` (500:
   the modem as a backup), `NetworkMode` (empty: not managed; `Automatic`, `LteOnly`,
   `NrOnly`) with `LteBands` and `NrBands` (empty: every band). Read leniently — an invalid value falls back to its default and is
   reported, an unknown one is ignored: a bad file never stops the app — and written strictly: an
