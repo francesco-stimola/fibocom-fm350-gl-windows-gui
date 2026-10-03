@@ -52,6 +52,59 @@ function Get-GuiResourceCount {
     }
 }
 
+function New-TrayIconBitmap {
+    # Draws the icon of -Icon (Resolve-TrayIcon's) at -Size pixels: four signal bars, the filled
+    # ones in the tone's color, the others faint; the technology label in the top-left corner when
+    # it is legible. The caller disposes the bitmap.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Creates an in-memory bitmap; changes no system state.')]
+    param([object] $Icon, [int] $Size)
+
+    $color = [System.Drawing.ColorTranslator]::FromHtml($script:ToneColors[$Icon.Tone])
+    $faint = [System.Drawing.Color]::FromArgb(80, 128, 128, 128)
+    $bitmap = [System.Drawing.Bitmap]::new($Size, $Size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $graphics = $null
+    $filled = $null
+    $empty = $null
+    try {
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $filled = [System.Drawing.SolidBrush]::new($color)
+        $empty = [System.Drawing.SolidBrush]::new($faint)
+        $graphics.Clear([System.Drawing.Color]::Transparent)
+        $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::None
+        # Four bars across the icon, rising left to right, with a pixel between them.
+        $bars = if ($null -ne $Icon.Bars) { [int]$Icon.Bars } else { 0 }
+        $width = [Math]::Max(2, [Math]::Floor(($Size - 3) / 4))
+        for ($i = 0; $i -lt 4; $i++) {
+            $height = [Math]::Max(2, [Math]::Round($Size * ($i + 1) / 4))
+            $brush = if ($i -lt $bars) { $filled } else { $empty }
+            $graphics.FillRectangle($brush, [int]($i * ($width + 1)), [int]($Size - $height), [int]$width, [int]$height)
+        }
+        if ($Icon.Label -and $Size -ge $script:TrayLabelMinSize) {
+            $font = [System.Drawing.Font]::new('Segoe UI', [float]($Size * 0.36), [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+            try {
+                $graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+                $graphics.DrawString($Icon.Label, $font, $filled, [float]0, [float]0)
+            }
+            finally {
+                $font.Dispose()
+            }
+        }
+        $bitmap
+    }
+    catch {
+        $bitmap.Dispose()
+        throw
+    }
+    finally {
+        foreach ($drawing in $empty, $filled, $graphics) {
+            if ($drawing) {
+                $drawing.Dispose()
+            }
+        }
+    }
+}
+
 function New-TrayIconHandle {
     <#
     .SYNOPSIS
@@ -76,39 +129,11 @@ function New-TrayIconHandle {
         [int] $Size = 16
     )
 
-    $color = [System.Drawing.ColorTranslator]::FromHtml($script:ToneColors[$Icon.Tone])
-    $faint = [System.Drawing.Color]::FromArgb(80, 128, 128, 128)
-    $bitmap = [System.Drawing.Bitmap]::new($Size, $Size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
-    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-    $filled = [System.Drawing.SolidBrush]::new($color)
-    $empty = [System.Drawing.SolidBrush]::new($faint)
+    $bitmap = New-TrayIconBitmap -Icon $Icon -Size $Size
     try {
-        $graphics.Clear([System.Drawing.Color]::Transparent)
-        $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::None
-        # Four bars across the icon, rising left to right, with a pixel between them.
-        $bars = if ($null -ne $Icon.Bars) { [int]$Icon.Bars } else { 0 }
-        $width = [Math]::Max(2, [Math]::Floor(($Size - 3) / 4))
-        for ($i = 0; $i -lt 4; $i++) {
-            $height = [Math]::Max(2, [Math]::Round($Size * ($i + 1) / 4))
-            $brush = if ($i -lt $bars) { $filled } else { $empty }
-            $graphics.FillRectangle($brush, [int]($i * ($width + 1)), [int]($Size - $height), [int]$width, [int]$height)
-        }
-        if ($Icon.Label -and $Size -ge $script:TrayLabelMinSize) {
-            $font = [System.Drawing.Font]::new('Segoe UI', [float]($Size * 0.36), [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
-            try {
-                $graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
-                $graphics.DrawString($Icon.Label, $font, $filled, [float]0, [float]0)
-            }
-            finally {
-                $font.Dispose()
-            }
-        }
         $bitmap.GetHicon()
     }
     finally {
-        $empty.Dispose()
-        $filled.Dispose()
-        $graphics.Dispose()
         $bitmap.Dispose()
     }
 }

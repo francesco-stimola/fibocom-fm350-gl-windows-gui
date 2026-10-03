@@ -42,11 +42,11 @@ BeforeAll {
 
     # The adapter before and after configuration, as Get-ModemAdapterState reads it.
     $script:freshAdapter = [pscustomobject]@{
-        InterfaceIndex = 12; Name = 'Ethernet 3'; Status = 'Up'; Dhcp = 'Enabled'; InterfaceMetric = 25; AutomaticMetric = $true
+        InterfaceIndex = 12; InterfaceGuid = [guid]'8D1E3C2A-0B4F-4E6D-9A7C-1F2E3D4C5B6A'; Name = 'Ethernet 3'; Status = 'Up'; Dhcp = 'Enabled'; InterfaceMetric = 25; AutomaticMetric = $true
         Addresses = @([pscustomobject]@{ Address = '169.254.10.20'; PrefixLength = 16; Origin = 'WellKnown' }); Gateways = @(); DnsServers = @()
     }
     $script:configuredAdapter = [pscustomobject]@{
-        InterfaceIndex = 12; Name = 'Ethernet 3'; Status = 'Up'; Dhcp = 'Disabled'; InterfaceMetric = 500; AutomaticMetric = $false
+        InterfaceIndex = 12; InterfaceGuid = [guid]'8D1E3C2A-0B4F-4E6D-9A7C-1F2E3D4C5B6A'; Name = 'Ethernet 3'; Status = 'Up'; Dhcp = 'Disabled'; InterfaceMetric = 500; AutomaticMetric = $false
         Addresses = @([pscustomobject]@{ Address = '198.51.100.23'; PrefixLength = 24; Origin = 'Manual' })
         Gateways = @('198.51.100.1'); DnsServers = @('203.0.113.53', '203.0.113.54', '2001:db8::53')
     }

@@ -1,14 +1,16 @@
-# Both modules - the core and the tray app - have a valid manifest and export exactly what it lists.
+# The modules - the core, the tray app and the installer - have a valid manifest and export exactly
+# what it lists.
 
 BeforeDiscovery {
     $script:manifests = @(
         @{ Name = 'FibocomFm350'; Path = "$PSScriptRoot/../src/FibocomFm350/FibocomFm350.psd1" }
         @{ Name = 'FibocomFm350.App'; Path = "$PSScriptRoot/../src/App/FibocomFm350.App.psd1" }
+        @{ Name = 'FibocomFm350.Installer'; Path = "$PSScriptRoot/../src/Installer/FibocomFm350.Installer.psd1" }
     )
 }
 
 AfterAll {
-    Remove-Module FibocomFm350.App, FibocomFm350 -ErrorAction SilentlyContinue
+    Remove-Module FibocomFm350.Installer, FibocomFm350.App, FibocomFm350 -ErrorAction SilentlyContinue
 }
 
 Describe '<Name> module' -ForEach $script:manifests {

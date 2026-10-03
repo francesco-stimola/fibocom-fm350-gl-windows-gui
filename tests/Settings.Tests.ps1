@@ -22,6 +22,10 @@ Describe 'ConvertTo-AppSetting' {
         $result.Settings.NetworkMode | Should -Be '' -Because 'the app leaves the modem''s mode alone until the user picks one'
         @($result.Settings.LteBands).Count | Should -Be 0
         @($result.Settings.NrBands).Count | Should -Be 0
+        $result.Settings.DnsOverHttps | Should -BeFalse
+        $result.Settings.DohTemplate | Should -Be ''
+        $result.Settings.DohRefreshMinutes | Should -Be 60 -Because 'a DoH server named by its template is looked up again every hour'
+        $result.Settings.CheckForUpdates | Should -BeTrue
     }
 
     It 'takes valid values from a hashtable and from an object' {
@@ -63,12 +67,38 @@ Describe 'ConvertTo-AppSetting' {
         @{ Name = 'LteBands'; Value = @('B3') }
         @{ Name = 'NrBands'; Value = @(78, 513) }
         @{ Name = 'NrBands'; Value = @($true) }
+        @{ Name = 'DnsOverHttps'; Value = 'yes' }
+        @{ Name = 'DnsOverHttps'; Value = 1 }
+        @{ Name = 'CheckForUpdates'; Value = 'false' }
+        @{ Name = 'DohTemplate'; Value = 'http://dns.example/dns-query' }
+        @{ Name = 'DohTemplate'; Value = 'dns.example/dns-query' }
+        @{ Name = 'DohTemplate'; Value = 'https://dns.example/dns query' }
+        @{ Name = 'DohTemplate'; Value = 'https://user:secret@dns.example/dns-query' }
+        @{ Name = 'DohTemplate'; Value = 'https://dns.example/"q"' }
+        @{ Name = 'DohTemplate'; Value = 'https://dns.example/' + ('a' * 2048) }
+        @{ Name = 'DohTemplate'; Value = 42 }
+        @{ Name = 'DohRefreshMinutes'; Value = 4 }
+        @{ Name = 'DohRefreshMinutes'; Value = 1441 }
+        @{ Name = 'DohRefreshMinutes'; Value = 7.5 }
+        @{ Name = 'DohRefreshMinutes'; Value = 'hourly' }
+        @{ Name = 'DohRefreshMinutes'; Value = $true }
     ) {
         $result = ConvertTo-AppSetting -InputObject @{ $Name = $Value }
         $result.Problems.Count | Should -Be 1
         $result.Problems[0] | Should -Match "^$Name "
         $defaults = (ConvertTo-AppSetting -InputObject $null).Settings
         "$($result.Settings.$Name)" | Should -Be "$($defaults.$Name)"
+    }
+
+    It 'says which values a rule allows: <Setting>' -ForEach @(
+        @{ Setting = 'InterfaceMetric'; Value = 0; Problem = 'InterfaceMetric must be a whole number from 1 to 9999; the default is used.' }
+        @{ Setting = 'DohRefreshMinutes'; Value = 2; Problem = 'DohRefreshMinutes must be a whole number of minutes from 5 to 1440; the default is used.' }
+        @{ Setting = 'LteBands'; Value = @(0); Problem = 'LteBands must be a list of distinct band numbers from 1 to 99; the default is used.' }
+        @{ Setting = 'PdpType'; Value = 'PPP'; Problem = 'PdpType must be one of IP, IPV4V6; the default is used.' }
+    ) {
+        $result = ConvertTo-AppSetting -InputObject @{ $Setting = $Value }
+        $result.Problems | Should -Be @($Problem)
+        $result.Issues[0].Setting | Should -Be $Setting
     }
 
     It 'ignores an unknown setting and says so, keeping the others' {
@@ -88,6 +118,43 @@ Describe 'ConvertTo-AppSetting' {
 
     It 'accepts a metric written as text, read in the invariant culture' {
         (ConvertTo-AppSetting -InputObject @{ InterfaceMetric = '25' }).Settings.InterfaceMetric | Should -Be 25
+    }
+
+    It 'takes encrypted DNS for the servers of the override, with a template or without' {
+        $result = ConvertTo-AppSetting -InputObject @{ DnsServers = @('1.1.1.1', '1.0.0.1'); DnsOverHttps = $true }
+        $result.Problems | Should -BeNullOrEmpty
+        $result.Settings.DnsOverHttps | Should -BeTrue
+        $template = 'https://dns.example/dns-query{?dns}'
+        $result = ConvertTo-AppSetting -InputObject @{ DnsServers = @('203.0.113.53'); DnsOverHttps = $true; DohTemplate = $template; CheckForUpdates = $false }
+        $result.Problems | Should -BeNullOrEmpty
+        $result.Settings.DohTemplate | Should -Be $template
+        $result.Settings.CheckForUpdates | Should -BeFalse
+    }
+
+    It 'keeps encrypted DNS without servers, and says it needs them: no server is set in the clear' {
+        $result = ConvertTo-AppSetting -InputObject @{ DnsOverHttps = $true }
+        $result.Settings.DnsOverHttps | Should -BeTrue -Because 'falling back to the operator''s servers would send queries in the clear'
+        $result.Problems | Should -HaveCount 1
+        $result.Problems[0] | Should -Match '^DnsOverHttps needs DnsServers'
+        { Export-AppSetting -Settings @{ DnsOverHttps = $true } -Path (Join-Path $TestDrive 'never.json') -Confirm:$false -ErrorAction Stop } | Should -Throw
+    }
+
+    It 'takes encrypted DNS without servers when the template names its server' {
+        $result = ConvertTo-AppSetting -InputObject @{ DnsOverHttps = $true; DohTemplate = 'https://dns.example.org/dns-query'; DohRefreshMinutes = '5' }
+        $result.Problems | Should -BeNullOrEmpty
+        @($result.Settings.DnsServers).Count | Should -Be 0
+        $result.Settings.DohRefreshMinutes | Should -Be 5
+        (ConvertTo-AppSetting -InputObject @{ DohRefreshMinutes = 1440 }).Settings.DohRefreshMinutes | Should -Be 1440
+    }
+
+    It 'takes a template naming an IP address for that server alone' {
+        $alone = ConvertTo-AppSetting -InputObject @{ DnsServers = @('203.0.113.53'); DnsOverHttps = $true; DohTemplate = 'https://203.0.113.53/dns-query' }
+        $alone.Problems | Should -BeNullOrEmpty
+        $alone.Settings.DohTemplate | Should -Be 'https://203.0.113.53/dns-query'
+        $more = ConvertTo-AppSetting -InputObject @{ DnsServers = @('203.0.113.53', '203.0.113.54'); DnsOverHttps = $true; DohTemplate = 'https://203.0.113.53/dns-query' }
+        $more.Settings.DohTemplate | Should -Be ''
+        $more.Problems | Should -HaveCount 1
+        $more.Problems[0] | Should -Match '^DohTemplate names the address 203\.0\.113\.53'
     }
 
     It 'takes a single DNS server for a list of one, and null for none' {

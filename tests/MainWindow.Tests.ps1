@@ -57,6 +57,51 @@ Describe 'The main window' {
         $script:window.Window.Close()
     }
 
+    It 'carries the app''s icon, for the title bar and the taskbar' {
+        $script:window.Window.Icon.Decoder.Frames.Count | Should -Be 8
+    }
+
+    It 'is titled with the program''s name, as the Start menu and the list of installed apps show it' {
+        $script:window.Window.Title | Should -BeExactly 'Fibocom FM350-GL Windows GUI'
+        $installer = Import-Module "$PSScriptRoot/../src/Installer/FibocomFm350.Installer.psd1" -PassThru -Force
+        try {
+            & $installer { $script:DisplayName } | Should -BeExactly $script:window.Window.Title
+        }
+        finally {
+            Remove-Module -ModuleInfo $installer
+        }
+    }
+
+    It 'is the app''s on the taskbar, and takes that off before it closes' {
+        $handle = [System.Windows.Interop.WindowInteropHelper]::new($script:window.Window).Handle
+        [FibocomFm350.AppIdentity]::GetWindowId($handle) | Should -Be 'FibocomFm350Gl.WindowsGui'
+        # Run after the window's own handler: what is left when the window closes.
+        $script:left = 'not read'
+        $script:window.Window.Add_Closing({ $script:left = [FibocomFm350.AppIdentity]::GetWindowId([System.Windows.Interop.WindowInteropHelper]::new($args[0]).Handle) })
+        $script:window.Exiting = $true
+        $script:window.Window.Close()
+        $script:left | Should -BeNullOrEmpty -Because 'a window''s properties are taken off before it closes'
+    }
+
+    It 'scrolls the <_> tab when the window is too small for it' -ForEach @('ConnectionTab', 'DriverTab', 'SimTab') {
+        $tab = $script:window.Window.FindName($_)
+        $tab.Content | Should -BeOfType ([System.Windows.Controls.ScrollViewer])
+        $tab.Content.VerticalScrollBarVisibility | Should -Be 'Auto'
+    }
+
+    It 'needs that scroll: the Connection tab''s fields are taller than the smallest window' {
+        $fields = $script:controls.ConnectionTab.Content.Content
+        $fields.Measure([System.Windows.Size]::new(500, [double]::PositiveInfinity))
+        $fields.DesiredSize.Height | Should -BeGreaterThan $script:window.Window.MinHeight
+    }
+
+    It 'wraps the outcome and the footer beside the Check now button, never under it' {
+        $script:controls.FooterText.TextWrapping | Should -Be 'Wrap'
+        $script:controls.ResultText.TextWrapping | Should -Be 'Wrap'
+        [System.Windows.Controls.DockPanel]::GetDock($script:controls.CheckNowButton) | Should -Be 'Right'
+        $script:controls.CheckNowButton.Margin.Left | Should -BeGreaterThan 0
+    }
+
     It 'shows the view of the <_> scenario' -ForEach @('Online', 'ApnNeeded', 'PinRequired', 'FccLocked', 'AdapterDisabled', 'NoDevice', 'NoDriver') {
         $view = $script:views[$_]
         Update-MainWindow -View $view
@@ -234,6 +279,92 @@ Describe 'The main window' {
         Get-Plain $script:sent[0].Parameter.ApnPassword | Should -Be 'secret'
         $script:sent[1].Parameter.ApnPassword.Length | Should -Be 0 -Because 'an empty password deletes the stored one'
         $script:sent[2].Parameter.ContainsKey('ApnPassword') | Should -BeFalse -Because 'the stored password is kept'
+    }
+
+    It 'fills encrypted DNS and the update notice from the settings, and sends them' {
+        Update-MainWindow -View $script:views['Online']
+        $script:controls.DohBox.IsChecked | Should -BeFalse
+        $script:controls.DohTemplateBox.Text | Should -Be ''
+        $script:controls.UpdateCheckBox.IsChecked | Should -BeTrue
+        $script:controls.DohStateText.Text | Should -Be 'Encrypted DNS is off.'
+        $script:controls.DohBox.IsEnabled | Should -BeTrue
+        $script:controls.DnsBox.Text = '1.1.1.1, 9.9.9.9'
+        $script:controls.DohBox.IsChecked = $true
+        $script:controls.UpdateCheckBox.IsChecked = $false
+        Invoke-Click $script:controls.SaveSettingsButton
+        $script:controls.SettingsProblemText.Text | Should -Be ''
+        $settings = $script:sent[0].Parameter.Settings
+        $settings.DnsOverHttps | Should -BeTrue
+        $settings.DnsServers | Should -Be @('1.1.1.1', '9.9.9.9')
+        $settings.CheckForUpdates | Should -BeFalse
+    }
+
+    It 'refuses encrypted DNS for a server Windows knows no template for, unless one is given' {
+        Update-MainWindow -View $script:views['Online']
+        $script:controls.DnsBox.Text = '1.1.1.1, 203.0.113.53'
+        $script:controls.DohBox.IsChecked = $true
+        Invoke-Click $script:controls.SaveSettingsButton
+        $script:controls.SettingsProblemText.Text | Should -Match 'no DNS-over-HTTPS template for 203\.0\.113\.53'
+        $script:sent | Should -BeNullOrEmpty
+        $script:controls.DohTemplateBox.Text = 'https://dns.example/dns-query'
+        Invoke-Click $script:controls.SaveSettingsButton
+        $script:sent.Count | Should -Be 1
+        $script:sent[0].Parameter.Settings.DohTemplate | Should -Be 'https://dns.example/dns-query'
+    }
+
+    It 'refuses encrypted DNS without servers of the user''s' {
+        Update-MainWindow -View $script:views['Online']
+        $script:controls.DnsBox.Text = ''
+        $script:controls.DohBox.IsChecked = $true
+        Invoke-Click $script:controls.SaveSettingsButton
+        $script:controls.SettingsProblemText.Text | Should -Match 'DnsOverHttps needs DnsServers'
+        $script:sent | Should -BeNullOrEmpty
+    }
+
+    It 'takes encrypted DNS to a server the template names, and how often its name is looked up' {
+        Update-MainWindow -View $script:views['Online']
+        $script:controls.DohRefreshBox.Text | Should -Be '60'
+        $script:controls.DnsBox.Text = ''
+        $script:controls.DohBox.IsChecked = $true
+        $script:controls.DohTemplateBox.Text = 'https://dns.example.org/dns-query'
+        $script:controls.DohRefreshBox.Text = ' 15 '
+        Invoke-Click $script:controls.SaveSettingsButton
+        $script:controls.SettingsProblemText.Text | Should -Be ''
+        $settings = $script:sent[0].Parameter.Settings
+        @($settings.DnsServers).Count | Should -Be 0
+        $settings.DohTemplate | Should -Be 'https://dns.example.org/dns-query'
+        $settings.DohRefreshMinutes | Should -Be 15
+    }
+
+    It 'refuses an interval it can''t take, and says so' {
+        Update-MainWindow -View $script:views['Online']
+        $script:controls.DohRefreshBox.Text = '2'
+        Invoke-Click $script:controls.SaveSettingsButton
+        $script:controls.SettingsProblemText.Text | Should -Match 'DohRefreshMinutes must be a whole number of minutes from 5 to 1440'
+        $script:sent | Should -BeNullOrEmpty
+    }
+
+    It 'only lets encrypted DNS be turned off where Windows can''t set it' {
+        $view = $script:views['Online'] | Select-Object -Property *
+        $view.Dns = [pscustomobject]@{ Text = 'Encrypted DNS is not available on this Windows.'; CanEnable = $false; Known = [string[]]@() }
+        Update-MainWindow -View $view
+        $script:controls.DohBox.IsEnabled | Should -BeFalse
+        $script:controls.DohStateText.Text | Should -Match 'not available'
+        $script:controls.DnsBox.Text = '1.1.1.1'
+        $script:controls.DohBox.IsChecked = $true
+        Invoke-Click $script:controls.SaveSettingsButton
+        $script:controls.SettingsProblemText.Text | Should -Match 'not available on this Windows'
+        $script:sent | Should -BeNullOrEmpty
+    }
+
+    It 'opens the Connection tab from an encrypted-DNS blocker' {
+        $view = $script:views['Online'] | Select-Object -Property *
+        $view.Blocker = [pscustomobject]@{ Kind = 'Settings'; Message = 'x'; ActionText = 'Open the settings'; Enabled = $true }
+        Update-MainWindow -View $view
+        $script:controls.BlockerButton.Content | Should -Be 'Open the settings'
+        Invoke-Click $script:controls.BlockerButton
+        $script:controls.Tabs.SelectedItem | Should -Be $script:controls.ConnectionTab
+        $script:sent | Should -BeNullOrEmpty
     }
 
     It 'fills the network tab: the modem''s mode, every choice, a checkbox per band' {

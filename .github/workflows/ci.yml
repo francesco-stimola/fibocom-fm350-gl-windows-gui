@@ -1,11 +1,13 @@
 name: CI
 
 # Lint + tests on every push to main and every pull request: the same two commands as
-# docs/SETUP.md, on a Windows runner, because the project is Windows-only.
+# docs/SETUP.md, on a Windows runner, because the project is Windows-only. Then the release zip is
+# built, as a release would build it, and not published. The release workflow runs this one first.
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -14,7 +16,8 @@ jobs:
   lint-and-test:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
+      # Pinned to a commit: a tag can be moved (docs/AT-COMMANDS.md section 11.3).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The module manifest requires PowerShell 7.6: if the runner's pwsh is older,
       # the import fails in the test step. This line makes the reason visible.
@@ -55,3 +58,11 @@ jobs:
           }
           # Explicit either way: a native command run by a test must not decide the step's result.
           exit [int]($result.Result -ne 'Passed')
+
+      # The zip and the notes a release would publish, built from this commit and thrown away: the
+      # packaging is proven at every push, long before a tag. A notice says what was built.
+      - name: Package (not published)
+        shell: pwsh
+        run: |
+          $package = ./tools/New-ReleasePackage.ps1 -OutputFolder "$env:RUNNER_TEMP/package"
+          "::notice title=Package::$(Split-Path -Leaf $package.Zip), $($package.Files) files, notes of $((Get-Content -LiteralPath $package.Notes).Count) lines"

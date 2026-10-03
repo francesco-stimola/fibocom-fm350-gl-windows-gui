@@ -41,8 +41,11 @@ function Resolve-ConnectionState {
         - Adapter: 'Present', 'Disabled' (by the user) or 'Absent' (the modem's network
           adapter). AdapterConfigured: its
           configuration matches the context and the settings. AdapterProblem: why it can't be
-          configured from what the modem reports. Elevated: $false when the app has no
-          administrator rights to configure it.
+          configured from what the modem reports or the settings ask (Resolve-AdapterConfiguration's
+          Problem; an encrypted-DNS one blocks). Elevated: $false when the app has no
+          administrator rights to configure it. DohSupported, DohServers (encrypted now) and
+          DohKnown (the servers Windows has a template for): for display. DnsUnread: what
+          Windows wouldn't read, when encryption is left as it is for it (the plan's Unread).
         - DataPath: the last data-path probe passed ($null: not probed).
         - NetworkMode: Resolve-NetworkMode's decision on the modem's mode and bands.
 
@@ -58,8 +61,9 @@ function Resolve-ConnectionState {
         - Reason: why there is no step to take, or $null.
         - Blocked: $true when what stops the connection is out of the app's reach - no device or
           driver, a SIM waiting for the user, an FCC lock, an APN or an APN password the user
-          must give, an adapter missing or disabled, no administrator rights to configure it: no
-          recovery step changes it, so none is escalated (ARCHITECTURE -> Health checks).
+          must give, an adapter missing or disabled, no administrator rights to configure it,
+          encrypted DNS the settings ask and Windows can't set: no recovery step changes it, so
+          none is escalated (ARCHITECTURE -> Health checks).
 
         A context that is active without an IPv4 address, or on the IMS APN, carries no internet
         traffic. With an empty APN in the settings, the network chose the APN - on some networks
@@ -198,7 +202,8 @@ function Resolve-ConnectionState {
     if ((& $fact 'AdapterConfigured') -ne $true) {
         $problem = & $fact 'AdapterProblem'
         if ($problem) {
-            return & $outcome 'DataActive' 'None' $problem $false
+            # Encrypted DNS that can't be set waits for the user: no step changes it.
+            return & $outcome 'DataActive' 'None' $problem ($problem -like 'Doh*')
         }
         # Configuring the adapter needs administrator rights: without them the step can only fail.
         if ((& $fact 'Elevated') -eq $false) {
@@ -226,7 +231,8 @@ function Get-ModemObservation {
 
         Returns Facts (the observation for Resolve-ConnectionState; also SimState, the SIM's
         state, PinAttemptsLeft, read while the SIM waits for its PIN, NetworkModeRead and
-        NetworkModeSupport, the modem's mode setting and what it supports), and what the steps
+        NetworkModeSupport, the modem's mode setting and what it supports, ContextDns, the
+        operator's DNS servers for the context), and what the steps
         need: Context (the app's context parameters), AdapterState and AdapterPlan. The ICCID is
         read only to match the stored PIN, and kept nowhere.
     .EXAMPLE
@@ -271,9 +277,10 @@ function Get-ModemObservation {
         Device = 'Present'; PortOpen = $true; Responsive = $null; Sim = $null; SimState = $null; PinAttemptsLeft = $null; Fcc = $null
         RadioOn = $null; OperatorMode = $null; Registered = $null; RegistrationState = $null
         NetworkMode = $null; NetworkModeRead = $null; NetworkModeSupport = $null
-        ContextDefined = $null; ContextActive = $null; ContextAddress = $null; ContextApn = $null; ContextRead = $null; ApnSet = [bool]$Settings.Apn
+        ContextDefined = $null; ContextActive = $null; ContextAddress = $null; ContextApn = $null; ContextDns = $null; ContextRead = $null; ApnSet = [bool]$Settings.Apn
         ApnPasswordUnreadable = $Settings.ApnAuthentication -ne 'None' -and (Test-Path -LiteralPath $ApnSecretPath -PathType Leaf) -and -not (Get-ApnPassword -Path $ApnSecretPath)
         Adapter = $null; AdapterConfigured = $null; AdapterProblem = $null; Elevated = $null; DataPath = $null
+        DohSupported = $null; DohServers = $null; DohKnown = $null; DnsUnread = $null
     }
     $result = [pscustomobject]@{ Facts = $null; Context = $null; AdapterState = $null; AdapterPlan = $null }
     $finish = {
@@ -412,16 +419,24 @@ function Get-ModemObservation {
     $result.Context = $context
     $facts.ContextAddress = if ($context) { $context.IPv4Address } else { $null }
     $facts.ContextApn = if ($context) { $context.Apn } else { $null }
+    $facts.ContextDns = if ($context) { [string[]]@($context.Dns | Where-Object { $_ }) } else { $null }
 
     # The adapter.
     $adapter = if ($SimulatedAdapter) { $SimulatedAdapter.Read() } elseif ($AdapterInstanceId) { Get-ModemAdapterState -InstanceId $AdapterInstanceId } else { $null }
     $facts.Adapter = if (-not $adapter -or $adapter.Status -eq 'Not Present') { 'Absent' } elseif ($adapter.Status -eq 'Disabled') { 'Disabled' } else { 'Present' }
     if ($facts.Adapter -eq 'Present') {
-        $plan = Resolve-AdapterConfiguration -Context $context -Adapter $adapter -Settings $Settings
+        # Encrypted DNS: what the adapter carries, and the templates Windows knows.
+        $encryption = if ($adapter.PSObject.Properties['Doh']) { $adapter.Doh } else { $null }
+        $known = if ($SimulatedAdapter) { $SimulatedAdapter.KnownDoh } elseif ($encryption -and $encryption.Supported) { Get-DohKnownServer } else { $null }
+        $facts.DohSupported = if ($encryption) { [bool]$encryption.Supported } else { $null }
+        $facts.DohServers = [string[]]@(if ($encryption) { $encryption.Servers | Where-Object { Test-DohEnabled -Server $_ } | ForEach-Object Address })
+        $facts.DohKnown = if ($known) { [string[]]@($known.Keys | Sort-Object) } else { [string[]]@() }
+        $plan = Resolve-AdapterConfiguration -Context $context -Adapter $adapter -Settings $Settings -DohKnown $known
         $result.AdapterState = $adapter
         $result.AdapterPlan = $plan
         $facts.AdapterConfigured = $plan.Configured
         $facts.AdapterProblem = $plan.Problem
+        $facts.DnsUnread = $plan.Unread
         # The simulated adapter needs no rights.
         $facts.Elevated = [bool]$SimulatedAdapter -or (Test-AppElevation)
         if ($DataPath -and $DataPath.Address -and $DataPath.Address -eq $facts.ContextAddress) {
@@ -544,7 +559,7 @@ function Invoke-ConnectionStep {
                 @($SimulatedAdapter.Apply($Observation.AdapterPlan))
             }
             else {
-                @(Set-ModemAdapterConfiguration -InterfaceIndex $Observation.AdapterState.InterfaceIndex -Plan $Observation.AdapterPlan -Confirm:$false)
+                @(Set-ModemAdapterConfiguration -InterfaceIndex $Observation.AdapterState.InterfaceIndex -InterfaceGuid $Observation.AdapterState.InterfaceGuid -Plan $Observation.AdapterPlan -Confirm:$false)
             }
             foreach ($change in $applied) {
                 $commands.Add([pscustomobject]@{ Command = $change.Action; Status = $(if ($change.Done) { 'OK' } else { 'Error' }); ErrorCode = $null })

@@ -108,6 +108,31 @@ Describe 'Worker runspaces' {
         Get-WriteCommand -Modem $device.Modem | Should -BeNullOrEmpty
     }
 
+    It 'keeps the module path the app started with, which opening the runspace changes' {
+        # As Start-Fm350App.ps1 sets it: this PowerShell's modules and Windows' own, no user folder.
+        $saved = $env:PSModulePath
+        $app = Get-Module FibocomFm350.App
+        $kept = & $app { $script:ModulePath }
+        $restricted = [IO.Path]::Combine($PSHOME, 'Modules') + [IO.Path]::PathSeparator + [IO.Path]::Combine([Environment]::GetFolderPath('System'), 'WindowsPowerShell\v1.0\Modules')
+        & $app { param($path) $script:ModulePath = $path } $restricted
+        $env:PSModulePath = $restricted
+        try {
+            $worker = Start-WorkerRunspace -Generation 1 -Worker @{ Simulation = (New-SimulatedDevice); DataFolder = $script:folder } -Confirm:$false
+            try {
+                $env:PSModulePath | Should -BeExactly $restricted -Because 'opening a runspace prefixes the user''s module folder, for the whole process'
+                Wait-Until { $worker.Link['Snapshot'] -and $worker.Link['Snapshot'].State -eq 'Online' } | Should -BeTrue
+                $env:PSModulePath | Should -BeExactly $restricted
+            }
+            finally {
+                Complete-TestWorker -Worker $worker
+            }
+        }
+        finally {
+            $env:PSModulePath = $saved
+            & $app { param($path) $script:ModulePath = $path } $kept
+        }
+    }
+
     It 'ends a worker whose every cycle fails, and says why' {
         $device = New-SimulatedDevice
         $worker = Start-WorkerRunspace -Generation 1 -Worker @{ Simulation = $device; DataFolder = $script:folder } -Confirm:$false
@@ -179,6 +204,23 @@ Describe 'The single instance' {
         finally {
             Exit-AppInstance -Instance $first
         }
+    }
+
+    It 'waits on an exit event of its session, which the installer signals' {
+        $first = Enter-AppInstance -Name $script:name
+        try {
+            $first.ExitEvent.WaitOne(0) | Should -BeFalse
+            $exit = $null
+            [System.Threading.EventWaitHandle]::TryOpenExisting("Local\$script:name-exit", [ref]$exit) | Should -BeTrue
+            [void]$exit.Set()
+            $exit.Dispose()
+            $first.ExitEvent.WaitOne(0) | Should -BeTrue
+        }
+        finally {
+            Exit-AppInstance -Instance $first
+        }
+        $gone = $null
+        [System.Threading.EventWaitHandle]::TryOpenExisting("Local\$script:name-exit", [ref]$gone) | Should -BeFalse -Because 'it is released on exit'
     }
 
     It 'lets a second launch without the first one''s rights exit quietly' {

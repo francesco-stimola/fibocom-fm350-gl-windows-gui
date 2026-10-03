@@ -171,12 +171,13 @@ Describe 'ConvertTo-WindowView' {
     }
 
     It 'notes development mode, observe-only, pending settings, settings problems and a second modem' {
-        $snapshot = Copy-Snapshot $script:online @{ ObserveOnly = $true; SettingsPending = $true; SettingsProblems = @('Apn must be printable ASCII.'); Modems = 2 }
+        $issue = [pscustomobject]@{ Setting = 'Apn'; Rule = 'Text'; Values = [object[]]@() }
+        $snapshot = Copy-Snapshot $script:online @{ ObserveOnly = $true; SettingsPending = $true; SettingsIssues = @($issue); Modems = 2 }
         $note = (ConvertTo-WindowView -Snapshot $snapshot).Note
         $note | Should -Match 'Development mode'
         $note | Should -Match 'only observes'
         $note | Should -Match 'next connection'
-        $note | Should -Match 'Apn must be printable'
+        $note | Should -Match 'Settings file: Apn must be printable ASCII without double quotes or surrounding blanks; the default is used\.'
         $note | Should -Match '2 modems found'
     }
 
@@ -196,9 +197,9 @@ Describe 'ConvertTo-WindowView' {
         $view.Blocker | Should -BeNullOrEmpty
     }
 
-    It 'shows the port, the time of the update, and missing administrator rights' {
-        $footer = (ConvertTo-WindowView -Snapshot (Copy-Snapshot $script:online @{ Elevated = $false })).Footer
-        $footer | Should -Match '^AT port SIMULATED - updated \d\d:\d\d:\d\d - no administrator rights$'
+    It 'shows the port, the time of the update, missing administrator rights and the app''s version' {
+        $footer = (ConvertTo-WindowView -Snapshot (Copy-Snapshot $script:online @{ Elevated = $false; AppVersion = '1.2.3' })).Footer
+        $footer | Should -Match '^AT port SIMULATED - updated \d\d:\d\d:\d\d - no administrator rights - version 1\.2\.3$'
     }
 
     It 'starts empty, with no snapshot yet' {

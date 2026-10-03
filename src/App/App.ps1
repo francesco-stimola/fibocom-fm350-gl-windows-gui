@@ -60,7 +60,7 @@ function Send-AppCommand {
         [void](Send-ModemCommand -Link $worker.Link -Kind $Kind -Parameter $Parameter)
     }
     elseif ($script:MainWindow) {
-        $script:MainWindow.Controls.ResultText.Text = 'The monitor is restarting: try again in a moment.'
+        $script:MainWindow.Controls.ResultText.Text = Get-AppText 'Result.Restarting'
     }
 }
 
@@ -105,6 +105,16 @@ function Stop-App {
     Write-UiLog -Level 'Info' -Message 'Exiting: monitoring stops, the connection stays as it is.'
 }
 
+function Open-AppPage {
+    # Opens a page of the app's - a release's - in the browser of the user's session, as the
+    # Driver tab does: the elevated app never starts a browser itself.
+    param([string] $Url)
+
+    if ($Url -and $script:MainWindow) {
+        & $script:MainWindow.Open $Url
+    }
+}
+
 function New-AppTray {
     # The tray icon and its menu.
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
@@ -113,20 +123,30 @@ function New-AppTray {
 
     $tray = [System.Windows.Forms.NotifyIcon]::new()
     $menu = [System.Windows.Forms.ContextMenuStrip]::new()
-    [void]$menu.Items.Add('Open', $null, { Open-AppWindow })
-    [void]$menu.Items.Add('Check now', $null, { Send-AppCommand -Kind 'ConnectNow' })
+    # A newer release: shown only when there is one; it opens the release's page.
+    $update = [System.Windows.Forms.ToolStripMenuItem]::new('Update')
+    $update.Name = 'Update'
+    $update.Visible = $false
+    $update.Add_Click({ Open-AppPage -Url ([string]$args[0].Tag) })
+    [void]$menu.Items.Add($update)
+    $separator = [System.Windows.Forms.ToolStripSeparator]::new()
+    $separator.Name = 'UpdateSeparator'
+    $separator.Visible = $false
+    [void]$menu.Items.Add($separator)
+    [void]$menu.Items.Add((Get-AppText 'Tray.Open'), $null, { Open-AppWindow })
+    [void]$menu.Items.Add((Get-AppText 'Tray.CheckNow'), $null, { Send-AppCommand -Kind 'ConnectNow' })
     # The quick switch of the network mode: the bands stay as the settings have them.
-    $modes = [System.Windows.Forms.ToolStripMenuItem]::new('Network mode')
+    $modes = [System.Windows.Forms.ToolStripMenuItem]::new((Get-AppText 'Tray.NetworkMode'))
     $modes.Name = 'NetworkMode'
-    foreach ($name in $script:NetworkModeTexts.Keys) {
-        $item = [System.Windows.Forms.ToolStripMenuItem]::new($script:NetworkModeTexts[$name])
+    foreach ($name in $script:NetworkModeNames) {
+        $item = [System.Windows.Forms.ToolStripMenuItem]::new((Get-AppText "Mode.$name"))
         $item.Name = $name
         $item.Add_Click({ Send-AppCommand -Kind 'SetNetworkMode' -Parameter @{ NetworkMode = [string]$args[0].Name } })
         [void]$modes.DropDownItems.Add($item)
     }
     [void]$menu.Items.Add($modes)
     [void]$menu.Items.Add([System.Windows.Forms.ToolStripSeparator]::new())
-    [void]$menu.Items.Add('Exit', $null, { Stop-App })
+    [void]$menu.Items.Add((Get-AppText 'Tray.Exit'), $null, { Stop-App })
     $menu.Add_Opening({ Update-AppTrayMenu })
     $tray.ContextMenuStrip = $menu
     $tray.Text = 'FM350-GL'
@@ -140,14 +160,21 @@ function New-AppTray {
 }
 
 function Update-AppTrayMenu {
-    # The tray menu, as it opens: the network modes from the latest snapshot - the modem's
-    # checked, those it doesn't support hidden, none to choose while the modem can't take one.
+    # The tray menu, as it opens: a newer release, when there is one; the network modes from the
+    # latest snapshot - the modem's checked, those it doesn't support hidden, none to choose while
+    # the modem can't take one.
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
         Justification = 'Updates the menu''s items; changes no system state.')]
     param()
 
+    $items = $script:App.Tray.ContextMenuStrip.Items
+    $notice = Get-TrayUpdateItem -Snapshot $script:App.LastSnapshot
+    $items['Update'].Visible = $notice.Visible
+    $items['UpdateSeparator'].Visible = $notice.Visible
+    $items['Update'].Text = [string]$notice.Text
+    $items['Update'].Tag = $notice.Url
     $menu = Get-TrayModeMenu -Snapshot $script:App.LastSnapshot -Worker (Get-AppWorkerState)
-    $modes = $script:App.Tray.ContextMenuStrip.Items['NetworkMode']
+    $modes = $items['NetworkMode']
     $modes.Text = $menu.Text
     foreach ($item in $modes.DropDownItems) {
         $choice = @($menu.Items | Where-Object Name -EQ $item.Name) | Select-Object -First 1
@@ -164,8 +191,9 @@ function Update-App {
     .DESCRIPTION
         Releases workers that finished; replaces the current one when it ended or hangs
         (Resolve-SupervisorAction), after the delay it decides; starts the next one when due;
-        on exit, ends the UI loop once the worker has closed the AT port. Shows the window when
-        a second launch asked for it, and redraws the tray icon, its tooltip and the window when
+        on exit - the tray menu's, or the installer's through the exit event - ends the UI loop
+        once the worker has closed the AT port. Shows the window when a second launch asked for
+        it, and redraws the tray icon, its tooltip and the window when
         the snapshot or the worker's state changed. Never waits on the worker.
     .EXAMPLE
         $timer.Add_Tick({ Update-App })
@@ -222,6 +250,12 @@ function Update-App {
         Start-AppWorker
     }
 
+    # The installer asks the app to exit before it replaces its files.
+    if (-not $app.Exiting -and $app.Instance.ExitEvent -and $app.Instance.ExitEvent.WaitOne(0)) {
+        Write-UiLog -Level 'Info' -Message 'Asked to exit by the installer.'
+        Stop-App
+    }
+
     if ($app.Exiting) {
         $done = -not $app.Worker -or (Complete-WorkerRunspace -Worker $app.Worker)
         if ($done -or $now -ge $app.ExitAt) {
@@ -269,7 +303,8 @@ function Start-Fm350App {
         -ObserveOnly reads and never writes. -Hidden starts in the tray, without the window.
 
         The app needs administrator rights to configure the modem's network adapter; without
-        them it says so and leaves the adapter alone.
+        them it says so and leaves the adapter alone. It speaks Windows' display language, when
+        it has it (Set-AppLanguage); its log stays in English.
     .EXAMPLE
         Start-Fm350App -Simulated -Scenario PinRequired
     #>
@@ -295,6 +330,8 @@ function Start-Fm350App {
         return
     }
 
+    $language = Set-AppLanguage
+    Write-Verbose "The app speaks '$language'."
     $root = Join-Path -Path $env:LOCALAPPDATA -ChildPath 'fibocom-fm350-gl-windows-gui'
     $options = @{}
     $logFolder = Join-Path -Path $root -ChildPath 'logs'
@@ -302,6 +339,10 @@ function Start-Fm350App {
         $options['Simulation'] = New-SimulatedDevice -Scenario $Scenario
         $options['DataFolder'] = Join-Path -Path $root -ChildPath 'simulated'
         $logFolder = Join-Path -Path $options['DataFolder'] -ChildPath 'logs'
+    }
+    else {
+        # The update notice: the real app only - development mode never contacts GitHub.
+        $options['CheckForUpdates'] = $true
     }
     if ($ObserveOnly) {
         $options['ObserveOnly'] = $true
@@ -334,7 +375,8 @@ function Start-Fm350App {
                 Write-UiLog -Level 'Error' -Message "UI error: $($failure.Exception.Message)"
                 $failure.Handled = $true
             })
-        [void](New-MainWindow -Send { param($kind, $parameter) Send-AppCommand -Kind $kind -Parameter $parameter })
+        $identity = if ($Simulated) { $script:SimulatedAppUserModelId } else { $script:AppUserModelId }
+        [void](New-MainWindow -Send { param($kind, $parameter) Send-AppCommand -Kind $kind -Parameter $parameter } -AppUserModelId $identity)
         $script:App.Tray = New-AppTray
         Start-AppWorker
         Update-App

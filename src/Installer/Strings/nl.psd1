@@ -1,0 +1,52 @@
+﻿# The texts of the installer and of the launcher in Dutch: every key of the English table, with the
+# same placeholders. UTF-8 with a byte order mark: Windows PowerShell 5.1 reads it too.
+@{
+    # The launcher (Start-Fm350.ps1).
+    'Launcher.Arm'       = 'Fibocom FM350-GL Windows GUI werkt op 64-bits Windows met een x64-processor (Intel of AMD). Deze computer heeft een Arm-processor, die het stuurprogramma van de modem niet kan laden: er is niets geïnstalleerd.'
+    'Launcher.NotX64'    = 'Fibocom FM350-GL Windows GUI werkt op 64-bits Windows met een x64-processor (Intel of AMD), en deze Windows-installatie is dat niet: er is niets geïnstalleerd.'
+    'Launcher.NotFound'  = 'PowerShell 7.6 of hoger is niet gevonden.'
+    'Launcher.TooOld'    = 'De geïnstalleerde PowerShell 7 is ouder dan 7.6.'
+    'Launcher.Untrusted' = 'De gevonden PowerShell 7 staat niet onder Program Files met een handtekening van Microsoft.'
+    'Launcher.GetPwsh'   = '{0} Installeer PowerShell of werk het bij - winget install Microsoft.PowerShell, of via de Microsoft Store - en probeer het opnieuw.'
+    'Launcher.CantStart' = 'Fibocom FM350-GL Windows GUI kan niet starten. {0}'
+    'Launcher.NoAdmin'   = 'Er zijn administratorrechten nodig, en die zijn niet gegeven: er is niets gewijzigd. ({0})'
+
+    # The setup window (Invoke-Fm350Setup.ps1).
+    'Setup.NeedsAdmin'   = 'Hiervoor zijn administratorrechten nodig.'
+    'Setup.OtherAccount' = 'De UAC-prompt is beantwoord met een ander account: de app draait onder het account dat de installatie uitvoert, en dat moet een administrator zijn. Meld je aan met dat account, of maak het administrator, en voer de .cmd opnieuw uit. Er is niets gewijzigd.'
+    'Setup.Installing'   = 'Fibocom FM350-GL Windows GUI installeren vanuit {0}'
+    'Setup.Uninstalling' = 'Fibocom FM350-GL Windows GUI verwijderen'
+    'Setup.AskUserData'  = 'Ook de instellingen, de opgeslagen SIM-PIN en het APN-wachtwoord, en de logboeken verwijderen? [j/N]'
+    # The answers that mean yes, as a regular expression; y and yes always do.
+    'Setup.Yes'          = 'j|ja'
+    'Setup.Done'         = 'Klaar.'
+    'Setup.Failed'       = 'Mislukt: {0}'
+    'Setup.PressEnter'   = 'Druk op Enter om dit venster te sluiten'
+
+    # Installing and uninstalling (Installer.ps1).
+    'Install.FolderExists'  = 'De map waarnaar de app moet worden gekopieerd, bestaat al: {0}'
+    'Install.NotPackage'    = 'Geen pakket van de app: {0}'
+    'Install.StillRunning'  = 'De app draait en is niet binnen {0} s afgesloten - in een andere Windows-sessie? Sluit de app daar af (menu in het systeemvak, Afsluiten) en voer {1} opnieuw uit. Er is niets gewijzigd.'
+    'Install.Exited'        = 'De actieve app is afgesloten; de verbinding blijft zoals die is.'
+    'Install.Leftover'      = 'Overgebleven van een eerdere installatie, verwijderd: {0}'
+    'Install.NotAdminOnly'  = 'Niet alleen administrators konden de kopie wijzigen: {0}'
+    'Install.Copied'        = 'Gekopieerd: {0} bestanden.'
+    'Install.Installed'     = 'Geïnstalleerd in {0}.'
+    'Install.InstalledOver' = 'Geïnstalleerd in {0}, over de eerdere versie heen.'
+    'Install.OldFolder'     = 'De map van de eerdere versie kon nog niet worden verwijderd ({0}); de volgende installatie probeert het opnieuw.'
+    'Install.Task'          = 'Geplande taak geregistreerd: {0}.'
+    'Install.TaskOff'       = 'Geplande taak geregistreerd, uitgeschakeld: {0}. Je schakelt hem in op het tabblad Verbinding van de app.'
+    'Install.Shortcut'      = 'Snelkoppeling in het menu Start: {0}.'
+    'Install.Entry'         = 'Toegevoegd aan Instellingen > Apps > Geïnstalleerde apps, waar de app ook kan worden verwijderd.'
+    'Install.Starting'      = 'De app wordt gestart.'
+    'Install.Restarted'     = 'De installatie is gestopt; de app die draaide wordt opnieuw gestart vanuit de geïnstalleerde map.'
+    'Install.NotRestarted'  = 'De installatie is gestopt en de app die draaide kon niet opnieuw worden gestart ({0}): start de app via het menu Start.'
+    'Install.NoIcon'        = 'Het pictogram van de snelkoppeling kon niet worden getekend: {0}'
+    'Install.NoIdentity'    = 'De taakbalkidentiteit van de snelkoppeling kon niet worden ingesteld: {0}'
+    'Install.ShortcutTip'   = 'Houdt de Fibocom FM350-GL online.'
+    'Uninstall.Task'        = 'Geplande taak verwijderd: {0}.'
+    'Uninstall.Shortcut'    = 'Snelkoppeling in het menu Start verwijderd.'
+    'Uninstall.Folder'      = 'Map verwijderd: {0}.'
+    'Uninstall.Entry'       = 'Verwijderd uit Instellingen > Apps > Geïnstalleerde apps.'
+    'Uninstall.UserData'    = 'Instellingen, geheimen en logboeken verwijderd: {0}.'
+}

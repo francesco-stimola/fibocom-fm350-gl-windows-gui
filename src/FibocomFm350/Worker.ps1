@@ -47,6 +47,11 @@ $script:WorkerCommandKinds = @('ConnectNow', 'SaveSettings', 'SetNetworkMode', '
 # The commands about the AT port's driver: they change the system, and may take a while.
 $script:DriverCommandKinds = @('CheckDriverPackage', 'InstallDriver', 'UninstallDriver')
 
+# A DoH server named by its template: how long its first lookup is waited for before a pass (most
+# end at once), and how long a lookup may take before it counts as failed.
+$script:DohLookupWaitMs = 2000
+$script:DohLookupTimeoutMs = 15000
+
 # The settings that make the network mode, set by the SetNetworkMode command only.
 $script:NetworkModeSettings = @('NetworkMode', 'LteBands', 'NrBands')
 
@@ -177,6 +182,8 @@ function Send-ModemCommand {
           $true once the user accepted a version the app doesn't know.
         - UninstallDriver: removes the AT port's driver package (Uninstall-ModemDriver). Only
           after the user confirmed it.
+        - SetStartAtLogon: turns the installer's logon task on or off (Set-AppLogonTask); Enabled.
+          'NoTask' when the app is not installed.
         Secrets travel as SecureStrings, stay in the process, and never come back in a snapshot.
     .EXAMPLE
         Send-ModemCommand -Link $link -Kind SaveSimPin -Parameter @{ Pin = $passwordBox.SecurePassword }
@@ -189,7 +196,7 @@ function Send-ModemCommand {
 
         [Parameter(Mandatory)]
         [ValidateSet('ConnectNow', 'SaveSettings', 'SetNetworkMode', 'SaveSimPin', 'ForgetSimPin', 'DisableSimPin', 'UnlockFcc', 'EnableAdapter',
-            'CheckDriverPackage', 'InstallDriver', 'UninstallDriver')]
+            'CheckDriverPackage', 'InstallDriver', 'UninstallDriver', 'SetStartAtLogon')]
         [string] $Kind,
 
         [hashtable] $Parameter = @{}
@@ -346,7 +353,12 @@ function New-ModemSnapshot {
         Notice: how the last trial ended, or a mode the modem didn't keep); Driver (the AT port's:
         Device - Resolve-ModemPresence's -, Inf, Version and Provider of its driver; Package, the
         package the user chose: Name, Verdict - Resolve-DriverPackage's - and Time; Operation,
-        the driver command under way); Settings, ApnPasswordStored, SettingsProblems; Results
+        the driver command under way); Update (the update notice: Status - 'Pending', 'Running',
+        'Done' -, Result, Version and Url of a newer release, Detail, Time); Dns (the adapter's
+        encrypted DNS: Supported, Encrypted - the servers encrypted now -, Known - the servers
+        Windows has a DoH template for -, Name - a DoH server named by its template: Host,
+        Addresses, LookedUp, Via, Next, Failure); AppVersion; Settings, ApnPasswordStored,
+        SettingsProblems and SettingsIssues (ConvertTo-AppSetting's Problems and Issues); Results
         (the last commands' outcomes: Id, Kind, Result, Detail, AttemptsLeft, Time).
     .EXAMPLE
         $Link['Snapshot'] = New-ModemSnapshot -Worker $worker -Time ([DateTimeOffset]::Now)
@@ -422,9 +434,32 @@ function New-ModemSnapshot {
             Package   = if ($Worker.DriverPackage) { $Worker.DriverPackage | Select-Object -Property Name, Verdict, Time } else { $null }
             Operation = $Worker.DriverOperation
         }
+        Dns               = [pscustomobject]@{
+            Supported = & $fact 'DohSupported'
+            Encrypted = [string[]]@(& $fact 'DohServers')
+            Known     = [string[]]@(& $fact 'DohKnown')
+            Name      = if ($Worker.DohName -and $Worker.DohName.Name) {
+                $state = $Worker.DohName
+                [pscustomobject]@{
+                    Host      = $state.Name
+                    Addresses = [string[]]@($state.Addresses)
+                    LookedUp  = $state.At
+                    Via       = $state.Via
+                    Next      = if ($null -ne $state.Next) { [DateTimeOffset]::Now.AddMilliseconds([Math]::Max(0, $state.Next - (& $Worker.Clock))) } else { $null }
+                    Failure   = $state.Failure
+                }
+            }
+            else {
+                $null
+            }
+        }
+        Update            = $Worker.Update
+        AppVersion        = if ($Worker.AppVersion) { $Worker.AppVersion.ToString() } else { $null }
+        StartAtLogon      = $Worker.StartAtLogon
         Settings          = if ($Worker.Settings) { $Worker.Settings | Select-Object -Property * } else { $null }
         ApnPasswordStored = $Worker.ApnPasswordStored
         SettingsProblems  = [string[]]@($Worker.SettingsProblems)
+        SettingsIssues    = [object[]]@($Worker.SettingsIssues)
         Results           = [object[]]$Worker.Results.ToArray()
     }
 }
@@ -445,8 +480,11 @@ function New-ModemWorker {
         that only administrators can open, in Windows' temporary folder (ARCHITECTURE ->
         Drivers). -Simulation is
         New-SimulatedDevice's device, driven instead of a real modem. -ObserveOnly reads and
-        never writes: no step, no command that changes the modem or the system. -Clock returns
-        the time in milliseconds; [Environment]::TickCount64 by default.
+        never writes: no step, no command that changes the modem or the system.
+        -CheckForUpdates reads the latest release once the connection is first online, unless
+        the settings turn it off (the app's real worker; never in development mode, and mocked in
+        the tests). -Clock returns the time in milliseconds; [Environment]::TickCount64 by
+        default.
     .EXAMPLE
         $worker = New-ModemWorker -Link $link -Simulation (New-SimulatedDevice)
     #>
@@ -467,6 +505,8 @@ function New-ModemWorker {
         [int] $Generation = 1,
 
         [object] $Previous,
+
+        [switch] $CheckForUpdates,
 
         [scriptblock] $Clock = { [Environment]::TickCount64 }
     )
@@ -503,6 +543,7 @@ function New-ModemWorker {
         Elevated          = [bool]$Simulation -or (Test-AppElevation)
         Settings          = $null
         SettingsProblems  = [string[]]@()
+        SettingsIssues    = [object[]]@()
         Presence          = $null
         PortError         = $null
         Channel           = $null
@@ -549,6 +590,8 @@ function New-ModemWorker {
         NetworkModeSupport = $null
         NetworkModeWrite   = $null
         NetworkModeLogged  = $null
+        # What Windows last wouldn't read about DNS (Resolve-AdapterConfiguration's Unread), logged.
+        DnsUnreadLogged    = $null
         NetworkModeTrial   = if ($Previous -and $Previous.PSObject.Properties['NetworkMode'] -and $Previous.NetworkMode) { $Previous.NetworkMode.Trial } else { $null }
         NetworkModeNotice  = if ($Previous -and $Previous.PSObject.Properties['NetworkMode'] -and $Previous.NetworkMode) { $Previous.NetworkMode.Notice } else { $null }
         # The driver package the user chose last, as copied and checked (Test-WorkerDriverPackage),
@@ -558,8 +601,249 @@ function New-ModemWorker {
         # Copies that couldn't be deleted yet, tried again; each logged once.
         DriverLeftovers   = [System.Collections.Generic.List[string]]::new()
         DriverLeftoversLogged = [System.Collections.Generic.HashSet[string]]::new()
+        # The update notice: one request per app start, carried over from the worker this one
+        # replaces - one that was under way then counts as done (Get-WorkerUpdateState).
+        CheckForUpdates   = [bool]$CheckForUpdates
+        AppVersion        = $MyInvocation.MyCommand.Module.Version
+        Update            = Get-WorkerUpdateState -Previous $Previous
+        UpdateCheck       = $null
+        # A DoH server named by its template: the name, the addresses it was last looked up to -
+        # carried over from the worker this one replaces, and looked up again at once -, when the
+        # next lookup is due, the lookup under way.
+        DohName           = Get-WorkerDohNameState -Previous $Previous
+        # Whether the app starts at sign-in (Get-AppLogonTask): $true, $false, or $null - not
+        # installed -; read once, and again after the user changes it.
+        StartAtLogon      = $null
+        StartAtLogonRead  = $false
         # The computer slept: Invoke-ModemWorker sets it, the next cycle takes it into account.
         Resumed           = $false
+    }
+}
+
+function Get-WorkerDohNameState {
+    # The DoH server name a new worker starts from: the last worker's name and addresses, looked up
+    # again at once; or none.
+    param([object] $Previous)
+
+    $dns = if ($Previous -and $Previous.PSObject.Properties['Dns']) { $Previous.Dns } else { $null }
+    $name = if ($dns -and $dns.PSObject.Properties['Name'] -and $dns.Name) { $dns.Name } else { $null }
+    @{
+        Name      = if ($name) { [string]$name.Host } else { $null }
+        Addresses = if ($name) { [string[]]@($name.Addresses) } else { [string[]]@() }
+        At        = if ($name) { $name.LookedUp } else { $null }
+        # 'Windows', or 'Operator' for a lookup through the operator's DNS.
+        Via       = if ($name) { $name.Via } else { $null }
+        Next      = $null
+        Failure   = $null
+        Logged    = $null
+        Lookup    = $null
+    }
+}
+
+function Update-WorkerDohName {
+    # A DoH server named by its template (Resolve-DohServer): its name looked up when the worker
+    # starts, then every DohRefreshMinutes, and again at the pass cadence while a lookup fails -
+    # the last addresses kept meanwhile. Looked up through Windows; when Windows can't - its DNS
+    # is that server, at an address it left, and the modem alone carries traffic -, through the
+    # operator's DNS, in the clear, from the modem's address: the one exception to encrypted DNS
+    # (ARCHITECTURE -> Encrypted DNS). Never waited on beyond DohLookupWaitMs at a time. Returns
+    # $true when the addresses changed: the pass sets them at once.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Changes the worker''s in-memory state; a lookup changes nothing.')]
+    param([hashtable] $Worker)
+
+    $state = $Worker.DohName
+    $settings = $Worker.Settings
+    $name = if ($settings) { (Resolve-DohServer -Settings $settings -Resolved $state.Addresses).Name } else { $null }
+    if ($name -ne $state.Name) {
+        # Another name, or none any more: looked up from scratch.
+        Stop-WorkerDohLookup -Worker $Worker
+        $state.Name = $name
+        $state.Addresses = [string[]]@()
+        $state.At = $null
+        $state.Via = $null
+        $state.Next = $null
+        $state.Failure = $null
+        $state.Logged = $null
+    }
+    if (-not $name) {
+        return $false
+    }
+    $now = & $Worker.Clock
+    if (-not $state.Lookup) {
+        if ($null -ne $state.Next -and $now -lt $state.Next) {
+            return $false
+        }
+        Start-WorkerDohLookup -Worker $Worker
+    }
+    $result = Receive-WorkerDohLookup -Worker $Worker
+    if ($result -and $result.Failure -and $state.Lookup.Via -eq 'Windows') {
+        $operator = Get-WorkerOperatorServer -Worker $Worker
+        if ($operator) {
+            Start-WorkerDohLookup -Worker $Worker -Operator $operator
+            $result = Receive-WorkerDohLookup -Worker $Worker
+        }
+    }
+    if (-not $result) {
+        return $false
+    }
+    $via = $state.Lookup.Via
+    $state.Lookup = $null
+    $state.At = [DateTimeOffset]::Now
+    if (@($result.Addresses).Count -gt 0) {
+        $changed = (@($result.Addresses) -join ',') -ne (@($state.Addresses) -join ',')
+        $state.Addresses = [string[]]@($result.Addresses)
+        $state.Via = $via
+        $state.Failure = $null
+        $state.Logged = $null
+        $state.Next = $now + [long]$settings.DohRefreshMinutes * 60000
+        $through = if ($via -eq 'Operator') { ' through the operator''s DNS, in the clear' } else { '' }
+        Write-WorkerLog -Worker $Worker -Level 'Info' -Message "DoH server's name looked up$($through): $($state.Addresses.Count) address(es)$(if ($changed) { ', new' } else { ', as before' })"
+        return $changed
+    }
+    # Tried again at the pass cadence; the last addresses stay meanwhile. Logged once per cause.
+    $state.Failure = $result.Failure
+    $state.Next = $now + $script:WorkerIntervals.PassOnline
+    if ($state.Logged -ne $result.Failure) {
+        $state.Logged = $result.Failure
+        Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "DoH server's name can't be looked up ($($result.Failure)); trying again every $($script:WorkerIntervals.PassOnline / 1000) s"
+    }
+    $false
+}
+
+function Get-WorkerOperatorServer {
+    # The operator's DNS servers for the context, and the modem's address to ask them from - as
+    # the last pass read them -, or nothing.
+    param([hashtable] $Worker)
+
+    $facts = $Worker.Facts
+    $source = if ($facts -and $facts.PSObject.Properties['ContextAddress']) { [string]$facts.ContextAddress } else { '' }
+    $servers = [string[]]@(if ($facts -and $facts.PSObject.Properties['ContextDns']) { $facts.ContextDns | Where-Object { $_ -and $_ -notmatch ':' } })
+    if (-not $source -or $servers.Count -eq 0) {
+        return
+    }
+    [pscustomobject]@{ Source = $source; Servers = $servers }
+}
+
+function Start-WorkerDohLookup {
+    # Starts a lookup of the DoH server's name - through Windows, or with -Operator through the
+    # operator's DNS - and waits for it DohLookupWaitMs at most. The simulated adapter answers at
+    # once.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Changes the worker''s in-memory state; a lookup changes nothing.')]
+    param([hashtable] $Worker, [object] $Operator)
+
+    $state = $Worker.DohName
+    $lookup = @{ Via = if ($Operator) { 'Operator' } else { 'Windows' }; Started = & $Worker.Clock; Pending = $null; Result = $null }
+    if ($Worker.Simulation) {
+        $lookup.Result = $Worker.Simulation.Adapter.Lookup($state.Name, $(if ($Operator) { $Operator.Source } else { '' }))
+    }
+    else {
+        $lookup.Pending = if ($Operator) { Start-DohNameLookup -Name $state.Name -Servers $Operator.Servers -Source $Operator.Source } else { Start-DohNameLookup -Name $state.Name }
+        [void][System.Threading.Tasks.Task]::WaitAny([System.Threading.Tasks.Task[]]@($lookup.Pending.Task), $script:DohLookupWaitMs)
+    }
+    $state.Lookup = $lookup
+}
+
+function Receive-WorkerDohLookup {
+    # The lookup under way, once it has ended - or failed for want of an answer in
+    # DohLookupTimeoutMs; nothing while it runs.
+    param([hashtable] $Worker)
+
+    $lookup = $Worker.DohName.Lookup
+    if ($lookup.Result) {
+        return $lookup.Result
+    }
+    $result = Receive-DohNameLookup -Lookup $lookup.Pending
+    if (-not $result) {
+        if ((& $Worker.Clock) - $lookup.Started -lt $script:DohLookupTimeoutMs) {
+            return
+        }
+        Stop-DohNameLookup -Lookup $lookup.Pending
+        $result = [pscustomobject]@{ Addresses = [string[]]@(); Failure = 'No answer in time.' }
+    }
+    $result
+}
+
+function Stop-WorkerDohLookup {
+    # Drops the lookup under way, if any: its socket closed.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Changes the worker''s in-memory state; closes a socket of its own.')]
+    param([hashtable] $Worker)
+
+    $lookup = $Worker.DohName.Lookup
+    if ($lookup -and $lookup.Pending) {
+        Stop-DohNameLookup -Lookup $lookup.Pending
+    }
+    $Worker.DohName.Lookup = $null
+}
+
+function Get-WorkerUpdateState {
+    # The update notice a new worker starts from: the last worker's, or none yet. A request that
+    # was under way when that worker ended is never sent again: one attempt per app start.
+    param([object] $Previous)
+
+    $update = if ($Previous -and $Previous.PSObject.Properties['Update']) { $Previous.Update } else { $null }
+    if (-not $update) {
+        return [pscustomobject]@{ Status = 'Pending'; Result = $null; Version = $null; Url = $null; Detail = $null; Time = $null }
+    }
+    if ($update.Status -eq 'Running') {
+        return [pscustomobject]@{ Status = 'Done'; Result = 'Failed'; Version = $null; Url = $null; Detail = 'The monitor restarted during the check.'; Time = [DateTimeOffset]::Now }
+    }
+    $update
+}
+
+function Update-WorkerUpdateCheck {
+    # The update notice, at every cycle: sends the one request once the connection is first online
+    # and the settings allow it, and takes its answer once it has come - asking the latest
+    # release's page once instead when the API refused. Returns $true when the notice changed. A
+    # request that can't even be sent counts as the one attempt.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Changes the worker''s in-memory state; the request reads and changes nothing.')]
+    param([hashtable] $Worker)
+
+    $done = {
+        param($notice)
+        $Worker.UpdateCheck = $null
+        $Worker.Update = [pscustomobject]@{ Status = 'Done'; Result = $notice.Result; Version = $notice.Version; Url = $notice.Url; Detail = $notice.Detail; Time = [DateTimeOffset]::Now }
+        $text = switch ($notice.Result) {
+            'Newer' { "version $($notice.Version) is available" }
+            'Current' { 'this is the latest release' }
+            'NoRelease' { 'no release is published yet' }
+            default { "no answer ($($notice.Detail))" }
+        }
+        Write-WorkerLog -Worker $Worker -Level $(if ($notice.Result -eq 'Failed') { 'Warning' } else { 'Info' }) -Message "Update check: $text"
+        $true
+    }
+    try {
+        if ($Worker.UpdateCheck) {
+            $notice = Receive-UpdateCheck -Check $Worker.UpdateCheck -Current $Worker.AppVersion
+            if (-not $notice) {
+                return $false
+            }
+            if ($notice.Result -ne 'Refused') {
+                return & $done $notice
+            }
+            # Received, so released. The API's limit is per public address, shared with every other
+            # client behind it. The page's answer is never 'Refused': it is asked once.
+            $Worker.UpdateCheck = $null
+            Write-WorkerLog -Worker $Worker -Level Info -Message "Update check: the API refused ($($notice.Detail)); asking the latest release's page"
+            $Worker.UpdateCheck = Start-UpdateCheck -Page -Refusal $notice.Detail -Confirm:$false
+            return $false
+        }
+        $settings = $Worker.Settings
+        if ($Worker.Update.Status -ne 'Pending' -or -not $Worker.CheckForUpdates -or $Worker.State -ne 'Online' -or -not $settings -or -not $settings.CheckForUpdates) {
+            return $false
+        }
+        $Worker.UpdateCheck = Start-UpdateCheck -Confirm:$false
+        $Worker.Update = [pscustomobject]@{ Status = 'Running'; Result = $null; Version = $null; Url = $null; Detail = $null; Time = [DateTimeOffset]::Now }
+        $true
+    }
+    catch {
+        if ($Worker.UpdateCheck) {
+            Stop-UpdateCheck -Check $Worker.UpdateCheck -Confirm:$false
+        }
+        & $done ([pscustomobject]@{ Result = 'Failed'; Version = $null; Url = $null; Detail = $_.Exception.Message })
     }
 }
 
@@ -880,16 +1164,29 @@ function ConvertTo-WorkerSettingTable {
 
 function Get-WorkerSetting {
     # The settings a pass works with: the saved ones, with the network mode on trial in place of
-    # the saved one - the pass keeps the modem as the user just chose until the trial ends.
+    # the saved one - the pass keeps the modem as the user just chose until the trial ends -, and
+    # the DoH template's server as the DNS servers when the settings name none.
     param([hashtable] $Worker)
 
-    $trial = $Worker.NetworkModeTrial
-    if (-not $trial -or -not $Worker.Settings) {
-        return $Worker.Settings
+    $saved = $Worker.Settings
+    if (-not $saved) {
+        return $saved
     }
-    $settings = $Worker.Settings | Select-Object -Property *
-    foreach ($name in $script:NetworkModeSettings) {
-        $settings.$name = $trial.Selection.$name
+    $trial = $Worker.NetworkModeTrial
+    # Encrypted DNS without servers of its own: the DoH template's server, as looked up.
+    $doh = Resolve-DohServer -Settings $saved -Resolved $Worker.DohName.Addresses
+    $named = @($saved.DnsServers).Count -eq 0 -and @($doh.Servers).Count -gt 0
+    if (-not $trial -and -not $named) {
+        return $saved
+    }
+    $settings = $saved | Select-Object -Property *
+    if ($trial) {
+        foreach ($name in $script:NetworkModeSettings) {
+            $settings.$name = $trial.Selection.$name
+        }
+    }
+    if ($named) {
+        $settings.DnsServers = [string[]]$doh.Servers
     }
     $settings
 }
@@ -909,6 +1206,7 @@ function Save-WorkerNetworkMode {
     $read = Import-AppSetting -Path $Worker.Paths.Settings
     $Worker.Settings = $read.Settings
     $Worker.SettingsProblems = [string[]]@($read.Problems)
+    $Worker.SettingsIssues = [object[]]@($read.Issues)
 }
 
 function Open-WorkerNetworkModeWindow {
@@ -1273,6 +1571,60 @@ function Uninstall-WorkerDriver {
     $outcome
 }
 
+function Update-WorkerStartAtLogon {
+    # Reads whether the app starts at sign-in: the simulated device's task in development mode,
+    # the installer's otherwise. A read that fails says nothing is known.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Changes the worker''s in-memory state; reads only.')]
+    param([hashtable] $Worker)
+
+    $Worker.StartAtLogonRead = $true
+    $Worker.StartAtLogon = if ($Worker.Simulation) {
+        Get-SimulatedLogonTask -Worker $Worker
+    }
+    else {
+        try {
+            Get-AppLogonTask
+        }
+        catch {
+            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "The start at sign-in can't be read: $($_.Exception.Message)"
+            $null
+        }
+    }
+}
+
+function Get-SimulatedLogonTask {
+    # The simulated device's logon task; none for a device that plays no installed app.
+    param([hashtable] $Worker)
+
+    if ($Worker.Simulation.PSObject.Properties['LogonTask']) { $Worker.Simulation.LogonTask } else { $null }
+}
+
+function Set-WorkerStartAtLogon {
+    # The user's SetStartAtLogon: the installer's logon task turned on or off - never created:
+    # 'NoTask' when the app is not installed. Returns 'Enabled', 'Disabled' or 'NoTask'.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'The user''s command; Set-AppLogonTask, which it calls, supports ShouldProcess.')]
+    param([hashtable] $Worker, [bool] $Enabled)
+
+    try {
+        $current = if ($Worker.Simulation) { Get-SimulatedLogonTask -Worker $Worker } else { Get-AppLogonTask }
+        if ($null -eq $current) {
+            return 'NoTask'
+        }
+        if ($Worker.Simulation) {
+            $Worker.Simulation.LogonTask = $Enabled
+        }
+        else {
+            Set-AppLogonTask -Enabled $Enabled -Confirm:$false
+        }
+        if ($Enabled) { 'Enabled' } else { 'Disabled' }
+    }
+    finally {
+        Update-WorkerStartAtLogon -Worker $Worker
+    }
+}
+
 function Invoke-WorkerCommand {
     # Carries out one of the user's commands; returns its outcome for the snapshot. Never logs or
     # returns a secret.
@@ -1283,12 +1635,12 @@ function Invoke-WorkerCommand {
     $detail = $null
     $attemptsLeft = $null
     $channelOpen = $Worker.Channel -and $Worker.Channel.State -eq 'Open'
-    $writes = $Command.Kind -in @('DisableSimPin', 'UnlockFcc', 'EnableAdapter') + $script:DriverCommandKinds
+    $writes = $Command.Kind -in @('DisableSimPin', 'UnlockFcc', 'EnableAdapter', 'SetStartAtLogon') + $script:DriverCommandKinds
     try {
         if ($writes -and $Worker.ObserveOnly) {
             $result = 'Refused'
         }
-        elseif ($Command.Kind -in $script:DriverCommandKinds -and -not $Worker.Elevated) {
+        elseif ($Command.Kind -in @('SetStartAtLogon') + $script:DriverCommandKinds -and -not $Worker.Elevated) {
             $result = 'NotElevated'
         }
         elseif ($Command.Kind -in 'SaveSimPin', 'DisableSimPin', 'UnlockFcc' -and -not $channelOpen) {
@@ -1366,6 +1718,9 @@ function Invoke-WorkerCommand {
                 'CheckDriverPackage' {
                     $result = Test-WorkerDriverPackage -Worker $Worker -Path $parameter['Path']
                 }
+                'SetStartAtLogon' {
+                    $result = Set-WorkerStartAtLogon -Worker $Worker -Enabled ([bool]$parameter['Enabled'])
+                }
                 'InstallDriver' {
                     $outcome = Install-WorkerDriver -Worker $Worker -AcceptUnknown:([bool]$parameter['AcceptUnknown'])
                     $result = $outcome.Result
@@ -1394,7 +1749,7 @@ function Invoke-WorkerCommand {
         AttemptsLeft = $attemptsLeft
         Time         = [DateTimeOffset]::Now
     }
-    $level = if ($result -in 'Done', 'Disabled', 'AlreadyOff', 'Restarted', 'NotLocked', 'Verified', 'Signed', 'RestartNeeded', 'NoDevice') { 'Info' } else { 'Warning' }
+    $level = if ($result -in 'Done', 'Disabled', 'Enabled', 'AlreadyOff', 'Restarted', 'NotLocked', 'Verified', 'Signed', 'RestartNeeded', 'NoDevice') { 'Info' } else { 'Warning' }
     Write-WorkerLog -Worker $Worker -Level $level -Message "Command $($Command.Kind): $result$(if ($detail) { " - $detail" })"
     $outcome
 }
@@ -1454,10 +1809,14 @@ function Invoke-ModemWorkerCycle {
         }
     }
 
+    if (-not $Worker.StartAtLogonRead) {
+        Update-WorkerStartAtLogon -Worker $Worker
+    }
     if ($null -eq $Worker.Settings) {
         $read = Import-AppSetting -Path $Worker.Paths.Settings
         $Worker.Settings = $read.Settings
         $Worker.SettingsProblems = [string[]]@($read.Problems)
+        $Worker.SettingsIssues = [object[]]@($read.Issues)
         foreach ($problem in $read.Problems) {
             Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Settings: $problem"
         }
@@ -1490,6 +1849,7 @@ function Invoke-ModemWorkerCycle {
             $read = Import-AppSetting -Path $Worker.Paths.Settings
             $Worker.Settings = $read.Settings
             $Worker.SettingsProblems = [string[]]@($read.Problems)
+            $Worker.SettingsIssues = [object[]]@($read.Issues)
         }
         $Worker.ApnPasswordStored = Test-Path -LiteralPath $Worker.Paths.ApnSecret -PathType Leaf
         $Worker.PinStored = [bool](Get-SimPin -Path $Worker.Paths.SimPin)
@@ -1521,6 +1881,12 @@ function Invoke-ModemWorkerCycle {
             $Worker.PassForced = $true
             Write-WorkerLog -Worker $Worker -Level 'Info' -Message 'The modem''s network adapter is found'
         }
+    }
+
+    # A DoH server named by its template: looked up at the start, then every so often.
+    if (Update-WorkerDohName -Worker $Worker) {
+        $Worker.PassForced = $true
+        $published = $true
     }
 
     # A connect pass.
@@ -1559,11 +1925,23 @@ function Invoke-ModemWorkerCycle {
             Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Network mode: not as the settings ask ($($modeDecision.Problem)); nothing written"
         }
         $Worker.NetworkModeLogged = $modeProblem
-        # The probes follow the address the adapter carries; one set anew is proven anew.
+        # Encryption left as it is because Windows wouldn't read: said once per cause.
         $facts = $Worker.Facts
+        $dnsUnread = if ($facts -and $facts.PSObject.Properties['DnsUnread']) { $facts.DnsUnread } else { $null }
+        if ($dnsUnread -and $dnsUnread -ne $Worker.DnsUnreadLogged) {
+            $what = if ($dnsUnread -eq 'Templates') { "Windows' list of DoH templates" } else { "the adapter's DNS settings" }
+            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Encrypted DNS: $what can't be read; left as it is until they can"
+        }
+        $Worker.DnsUnreadLogged = $dnsUnread
+        # The probes follow the address the adapter carries; one set anew is proven anew.
         $configured = @($pass.Steps | Where-Object { $_.Action -eq 'ConfigureAdapter' -and $_.Result -eq 'Done' }).Count -gt 0
         $address = if ($facts -and $facts.AdapterConfigured -eq $true -and $facts.ContextAddress) { [string]$facts.ContextAddress } else { $null }
         Set-WorkerProbeAddress -Worker $Worker -Address $address -Again:$configured
+        if ($configured -and $Worker.DohName.Failure) {
+            # The adapter just got its address: a lookup of the DoH server's name that failed
+            # without it is tried again at once.
+            $Worker.DohName.Next = $null
+        }
         if (@($pass.Steps | Where-Object Result -EQ 'PinRejected').Count -gt 0) {
             $Worker.PinRejected = $true
         }
@@ -1584,6 +1962,11 @@ function Invoke-ModemWorkerCycle {
     if ($Worker.NetworkModeTrial -and (Invoke-WorkerNetworkModeTrial -Worker $Worker)) {
         $published = $true
         & $lost
+    }
+
+    # The update notice: one request per app start, once the connection is first online.
+    if (Update-WorkerUpdateCheck -Worker $Worker) {
+        $published = $true
     }
 
     # The data path (H7), from the adapter's address.
@@ -1630,13 +2013,22 @@ function Invoke-ModemWorkerCycle {
         & $publish
     }
     $Worker.WaitMs = (& $due).WaitMs
+    if ($Worker.UpdateCheck -or $Worker.DohName.Lookup) {
+        # An answer under way is looked for at least this often.
+        $Worker.WaitMs = [Math]::Min($Worker.WaitMs, $script:UpdatePollMs)
+    }
+    if ($null -ne $Worker.DohName.Next -and $Worker.DohName.Name -and -not $Worker.DohName.Lookup) {
+        # The next lookup of the DoH server's name. While one is under way its Next has gone by:
+        # the answer is looked for as often as above, never in a loop that doesn't wait.
+        $Worker.WaitMs = [int][Math]::Max(0, [Math]::Min([long]$Worker.WaitMs, $Worker.DohName.Next - (& $Worker.Clock)))
+    }
 }
 
 function Close-ModemWorker {
     <#
     .SYNOPSIS
-        Ends a worker: closes its AT port, and deletes the copy of a driver package it kept. The
-        connection stays as it is.
+        Ends a worker: closes its AT port, deletes the copy of a driver package it kept, and
+        drops an update check and a lookup under way. The connection stays as it is.
     .EXAMPLE
         Close-ModemWorker -Worker $worker
     #>
@@ -1648,6 +2040,11 @@ function Close-ModemWorker {
 
     Close-WorkerChannel -Worker $Worker
     Clear-WorkerDriverPackage -Worker $Worker
+    if ($Worker.UpdateCheck) {
+        Stop-UpdateCheck -Check $Worker.UpdateCheck -Confirm:$false
+        $Worker.UpdateCheck = $null
+    }
+    Stop-WorkerDohLookup -Worker $Worker
 }
 
 function Invoke-ModemWorker {
@@ -1680,7 +2077,9 @@ function Invoke-ModemWorker {
 
         [int] $Generation = 1,
 
-        [object] $Previous
+        [object] $Previous,
+
+        [switch] $CheckForUpdates
     )
 
     # Every error stops the cycle: the functions it calls see this preference. Reads that may fail

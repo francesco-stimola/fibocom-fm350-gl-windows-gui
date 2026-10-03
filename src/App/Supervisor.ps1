@@ -77,8 +77,10 @@ function Start-WorkerRunspace {
     .SYNOPSIS
         Starts a worker (Invoke-ModemWorker) in a runspace of its own, and returns at once.
     .DESCRIPTION
-        The runspace imports the core module itself, off the UI thread. -Previous is the last
-        snapshot of the worker this one replaces: the new one starts from its state and attaches.
+        The runspace imports the core module itself, off the UI thread, with the module path the
+        app started with: opening a runspace adds the user's module folder to it, for the whole
+        process, and it is taken out again at once. -Previous is the last snapshot of the worker
+        this one replaces: the new one starts from its state and attaches.
         -Worker carries Invoke-ModemWorker's other parameters (Simulation, DataFolder,
         ObserveOnly).
 
@@ -115,12 +117,16 @@ function Start-WorkerRunspace {
     $powershell = $null
     try {
         $runspace.Open()
+        # Opening it put the user's module folder back in the process's module path: out again,
+        # before anything loads a module (invariant 10).
+        $env:PSModulePath = $script:ModulePath
         $powershell = [powershell]::Create($runspace)
         [void]$powershell.AddScript({
-                param($Module, $Parameters)
+                param($Module, $Parameters, $ModulePath)
+                $env:PSModulePath = $ModulePath
                 Import-Module -Name $Module -ErrorAction Stop
                 Invoke-ModemWorker @Parameters
-            }).AddArgument($script:CoreModulePath).AddArgument($parameters)
+            }).AddArgument($script:CoreModulePath).AddArgument($parameters).AddArgument($script:ModulePath)
         $handle = $powershell.BeginInvoke()
     }
     catch {
@@ -241,10 +247,12 @@ function Enter-AppInstance {
         A named mutex keeps a second instance away from the modem's AT port (invariant 1). When
         another instance holds it, this one signals that instance's "show" event - it brings its
         window to the front - and returns Owned $false: the caller exits. The mutex is
-        machine-wide; the event is per Windows session.
+        machine-wide; the events are per Windows session. The instance that owns it also waits on
+        an "exit" event, which the installer signals before it replaces the app's files: the app
+        exits as at the tray menu's Exit.
 
-        Returns Owned, Mutex and ShowEvent; Exit-AppInstance releases them, on the thread that
-        entered.
+        Returns Owned, Mutex, ShowEvent and ExitEvent; Exit-AppInstance releases them, on the
+        thread that entered.
     .EXAMPLE
         $instance = Enter-AppInstance -Name 'fibocom-fm350-gl-windows-gui'
         if (-not $instance.Owned) { return }
@@ -288,10 +296,11 @@ function Enter-AppInstance {
             # show its window, and this one exits all the same.
             Write-Verbose 'The running instance has administrator rights: its window is not brought up.'
         }
-        return [pscustomobject]@{ Owned = $false; Mutex = $null; ShowEvent = $null }
+        return [pscustomobject]@{ Owned = $false; Mutex = $null; ShowEvent = $null; ExitEvent = $null }
     }
     $showEvent = [System.Threading.EventWaitHandle]::new($false, [System.Threading.EventResetMode]::AutoReset, $showName)
-    [pscustomobject]@{ Owned = $true; Mutex = $mutex; ShowEvent = $showEvent }
+    $exitEvent = [System.Threading.EventWaitHandle]::new($false, [System.Threading.EventResetMode]::AutoReset, "Local\$Name-exit")
+    [pscustomobject]@{ Owned = $true; Mutex = $mutex; ShowEvent = $showEvent; ExitEvent = $exitEvent }
 }
 
 function Exit-AppInstance {
@@ -307,8 +316,10 @@ function Exit-AppInstance {
         [object] $Instance
     )
 
-    if ($Instance.ShowEvent) {
-        $Instance.ShowEvent.Dispose()
+    foreach ($handle in $Instance.ShowEvent, $Instance.ExitEvent) {
+        if ($handle) {
+            $handle.Dispose()
+        }
     }
     if ($Instance.Mutex) {
         try {

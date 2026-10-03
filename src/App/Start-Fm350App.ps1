@@ -4,8 +4,11 @@
     Starts the FM350-GL tray app.
 .DESCRIPTION
     Keeps the Fibocom FM350-GL online from the system tray: a second launch brings the running
-    app's window to the front. Configuring the modem's network adapter needs administrator rights;
-    the app installer (ROADMAP M7) runs this script elevated at logon.
+    app's window to the front. Configuring the modem's network adapter needs administrator rights:
+    once installed, the logon task runs this script elevated, through Start-Fm350.ps1.
+
+    Modules load only from this PowerShell's folder and Windows' own: the user's module folder is
+    theirs to write, and this script may run elevated (invariant 10).
 
     -Simulated runs against a simulated modem (-Scenario): no device, no administrator rights,
     nothing changed on the system. -ObserveOnly reads and never writes. -Hidden starts in the
@@ -26,6 +29,9 @@ param(
     [switch] $Hidden
 )
 
+# Before any command could load a module; .NET calls only until then. The app keeps it so as its
+# worker runspaces are opened (Start-WorkerRunspace).
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules') + [IO.Path]::PathSeparator + [IO.Path]::Combine([Environment]::GetFolderPath('System'), 'WindowsPowerShell\v1.0\Modules')
 $ErrorActionPreference = 'Stop'
 $code = 0
 try {

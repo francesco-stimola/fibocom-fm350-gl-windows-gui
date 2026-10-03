@@ -18,6 +18,20 @@ class SimulatedAdapter {
     [object[]] $Addresses = @([pscustomobject]@{ Address = '169.254.10.20'; PrefixLength = 16; Origin = 'WellKnown'; State = 'Preferred' })
     [string[]] $Gateways = @()
     [string[]] $DnsServers = @()
+    # Encrypted DNS: whether this Windows has the per-interface API, the servers carrying a DoH
+    # property, and the templates it knows - Cloudflare's and Quad9's, from Windows' own list.
+    [bool] $DohSupported = $true
+    [object[]] $DohServers = @()
+    # The names a DoH template may name, and the addresses a lookup finds for them: through
+    # Windows, and through the operator's DNS.
+    [hashtable] $Names = @{ 'dns.example.org' = [string[]]@('203.0.113.53') }
+    [hashtable] $OperatorNames = @{ 'dns.example.org' = [string[]]@('203.0.113.53') }
+    [hashtable] $KnownDoh = @{
+        '1.1.1.1'         = 'https://cloudflare-dns.com/dns-query'
+        '1.0.0.1'         = 'https://cloudflare-dns.com/dns-query'
+        '9.9.9.9'         = 'https://dns.quad9.net/dns-query'
+        '149.112.112.112' = 'https://dns.quad9.net/dns-query'
+    }
     # How many probes find an address just set still 'Tentative': Windows checks that no other
     # host has it before it can be used.
     [int] $DadChecks = 0
@@ -27,6 +41,7 @@ class SimulatedAdapter {
     [object] Read() {
         return [pscustomobject]@{
             InterfaceIndex  = $this.InterfaceIndex
+            InterfaceGuid   = [guid]::Empty
             Name            = $this.Name
             Status          = $this.Status
             Dhcp            = $this.Dhcp
@@ -35,6 +50,9 @@ class SimulatedAdapter {
             Addresses       = [object[]]@($this.Addresses)
             Gateways        = [string[]]@($this.Gateways)
             DnsServers      = [string[]]@($this.DnsServers)
+            # The simulated adapter's DNS servers are all static ones; a DoH property is read with
+            # its server, as Windows reads it by the server's position.
+            Doh             = [pscustomobject]@{ Supported = $this.DohSupported; Read = $true; NameServers = [string[]]@($this.DnsServers); Servers = [object[]]@($this.DohServers | Where-Object { $_.Address -in $this.DnsServers }) }
         }
     }
 
@@ -54,6 +72,23 @@ class SimulatedAdapter {
                 'RemoveGateway' { $this.Gateways = @($this.Gateways | Where-Object { $_ -ne $step.NextHop }) }
                 'SetGateway' { $this.Gateways = @($this.Gateways) + $step.NextHop }
                 'SetDns' { $this.DnsServers = $step.Servers }
+                'ClearDns' { $this.DnsServers = @() }
+                'SetDoh' {
+                    # One family's servers, each encrypted with its template; the other family's
+                    # stay as they are.
+                    $ipv6 = $step.Family -eq 'IPv6'
+                    $others = @($this.DnsServers | Where-Object { [bool]($_ -match ':') -ne $ipv6 })
+                    $this.DnsServers = if ($ipv6) { @($others) + @($step.Servers) } else { @($step.Servers) + @($others) }
+                    $kept = @($this.DohServers | Where-Object { [bool]($_.Address -match ':') -ne $ipv6 })
+                    $set = for ($i = 0; $i -lt $step.Servers.Count; $i++) {
+                        [pscustomobject]@{ Address = $step.Servers[$i]; Template = $step.Templates[$i]; Flags = [uint64]2 }
+                    }
+                    $this.DohServers = @($kept) + @($set)
+                }
+                'ClearDoh' {
+                    $ipv6 = $step.Family -eq 'IPv6'
+                    $this.DohServers = @($this.DohServers | Where-Object { [bool]($_.Address -match ':') -ne $ipv6 })
+                }
                 'SetMetric' {
                     $this.InterfaceMetric = $step.Metric
                     $this.AutomaticMetric = $false
@@ -89,6 +124,23 @@ class SimulatedAdapter {
         return 'Preferred'
     }
 
+    # Looks a name up as Receive-DohNameLookup reports it: Addresses, or Failure. Through Windows
+    # ($source empty), the names in Names; through the operator's DNS, asked from the modem's
+    # address $source - which the adapter must carry -, those in OperatorNames.
+    [object] Lookup([string] $name, [string] $source) {
+        $table = $this.Names
+        if ($source) {
+            if (-not @($this.Addresses | Where-Object Address -EQ $source)) {
+                return [pscustomobject]@{ Addresses = [string[]]@(); Failure = 'The requested address is not valid in its context.' }
+            }
+            $table = $this.OperatorNames
+        }
+        if ($table.ContainsKey($name)) {
+            return [pscustomobject]@{ Addresses = [string[]]@($table[$name]); Failure = $null }
+        }
+        return [pscustomobject]@{ Addresses = [string[]]@(); Failure = 'No such host is known.' }
+    }
+
     [void] Enable() {
         $this.Status = 'Up'
     }
@@ -107,6 +159,9 @@ class SimulatedDevice {
     [int] $LostRounds = 0
     # Probe rounds that pass before a path that is down shows it: proven once, then down.
     [int] $PassedRounds = 0
+    # The installer's logon task, as Get-AppLogonTask reads it: none in development mode - the
+    # app is not installed -; $false or $true to play an installed one.
+    [object] $LogonTask = $null
     hidden [long] $LostAt = 0
 
     # The modem as PnP would report it, shaped as Resolve-ModemPresence's result. A modem that

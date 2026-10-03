@@ -24,6 +24,15 @@ function Test-FailedIPv4Address {
     $Address.PSObject.Properties['State'] -and $Address.State -in 'Duplicate', 'Invalid'
 }
 
+function Test-DohEnabled {
+    # Whether a server's DoH property encrypts it as the app sets it: a template of its own, no
+    # fallback to unencrypted DNS (docs/AT-COMMANDS.md section 11.1).
+    param([object] $Server)
+
+    $flags = [uint64]$Server.Flags
+    ($flags -band [uint64]2) -ne 0 -and ($flags -band [uint64]4) -eq 0
+}
+
 function Resolve-AdapterConfiguration {
     <#
     .SYNOPSIS
@@ -34,8 +43,10 @@ function Resolve-AdapterConfiguration {
         context; -Adapter the adapter as read: InterfaceIndex, Dhcp ('Enabled' or 'Disabled'),
         InterfaceMetric, AutomaticMetric, Addresses (IPv4, each with Address, PrefixLength,
         Origin: 'Manual', 'Dhcp', 'WellKnown'..., and State: 'Preferred', 'Tentative',
-        'Duplicate'...), Gateways (next hops of the adapter's IPv4 default routes) and
-        DnsServers; -Settings the app's settings (DnsServers, InterfaceMetric).
+        'Duplicate'...), Gateways (next hops of the adapter's IPv4 default routes), DnsServers
+        and Doh (Get-InterfaceDoh's: Supported, and the Servers carrying a DoH property); -Settings
+        the app's settings (DnsServers, DnsOverHttps, DohTemplate, InterfaceMetric); -DohKnown the
+        DoH templates Windows knows, by server address (Get-DohKnownServer).
 
         - An address the modem handed out by DHCP is kept as it is, with its gateway and DNS.
         - Otherwise the adapter gets the context's IPv4 address and mask, a default route
@@ -49,13 +60,31 @@ function Resolve-AdapterConfiguration {
         - The DNS override, when set, replaces whichever DNS servers the adapter would have.
           Servers are compared per family, IPv4 then IPv6, and a family only when servers of it
           are wanted: the IPv6 servers Windows lists on its own never ask for a change.
+        - Encrypted DNS (DnsOverHttps): each server of the override with the template the
+          settings give, or else the one Windows knows for it, set on this interface alone and
+          compared with what it carries. Without the override, the DoH template's server
+          (Resolve-DohServer): its address; for a name the worker has not looked up yet - it then
+          puts the addresses in the override -, the servers the adapter already encrypts with
+          that template, else no DNS server at all until it has (the adapter's are taken off).
+          Without any server, without the per-interface API, or with a server that has no
+          template, nothing is planned at all - no query in the clear for want of encryption.
+          A family the servers leave out keeps no static server of its own: they would answer
+          in the clear. Turned off, the DoH properties come off the servers first. Servers are
+          compared with the static ones the per-interface read gives (Doh.NameServers). When
+          Windows refused part of that read (Doh.Read $false), or its list of templates
+          couldn't be read (-DohKnown $null) for a server that needs it, encryption is left as
+          it is at this pass and nothing is blocked - turned off, the servers are still set;
+          Unread says which.
         - The interface metric is the settings' one, never automatic.
 
-        Returns Configured ($true when nothing needs to change), Actions - in order, each with
+        Returns Unread ('Settings', 'Templates' or $null), Configured ($true when nothing needs to
+        change), Actions - in order, each with
         Action ('DisableDhcp', 'RemoveAddress', 'SetAddress', 'RemoveGateway', 'SetGateway',
-        'SetDns', 'SetMetric') and its values; a gateway of 0.0.0.0 is an on-link route - and
-        Problem: 'NoAddress' when the modem reports no IPv4 address for the context (no action
-        is planned then).
+        'SetDns', 'ClearDns', 'SetDoh', 'ClearDoh', 'SetMetric') and its values; a gateway of
+        0.0.0.0 is an on-link route - and Problem, when no action is planned at all: 'NoAddress'
+        (the modem reports no IPv4 address for the context), 'DohNeedsServers',
+        'DohServerUnresolved' (the DoH template's server is a name not looked up yet, on an
+        adapter the modem's DHCP configured), 'DohUnavailable' or 'DohTemplateMissing'.
     .EXAMPLE
         Resolve-AdapterConfiguration -Context $context -Adapter $adapter -Settings $settings
     #>
@@ -69,16 +98,23 @@ function Resolve-AdapterConfiguration {
         [object] $Adapter,
 
         [Parameter(Mandatory)]
-        [object] $Settings
+        [object] $Settings,
+
+        [hashtable] $DohKnown
     )
 
     $actions = [System.Collections.Generic.List[object]]::new()
+    # What Windows wouldn't read, when DNS is left as it is for that reason: 'Settings' (the
+    # adapter's) or 'Templates' (its list of DoH templates).
+    $unreadWhat = $null
     $plan = {
         param($problem)
         [pscustomobject]@{
             Configured = -not $problem -and $actions.Count -eq 0
-            Actions    = if ($problem) { [object[]]@() } else { [object[]]$actions.ToArray() }
+            # Always an array: an if statement would unroll an empty one to $null, one action to itself.
+            Actions    = [object[]]@(if (-not $problem) { $actions })
             Problem    = $problem
+            Unread     = $unreadWhat
         }
     }
     $addresses = @($Adapter.Addresses | Where-Object { Test-UsableIPv4Address -Address $_.Address })
@@ -88,7 +124,8 @@ function Resolve-AdapterConfiguration {
     $wanted = if ($null -ne $Context) { $Context.IPv4Address }
 
     $dnsWanted = $null
-    if ($dhcp.Count -gt 0 -and $manual.Count -eq 0) {
+    $kept = $dhcp.Count -gt 0 -and $manual.Count -eq 0
+    if ($kept) {
         # The modem's DHCP configured the adapter: keep it.
     }
     else {
@@ -121,19 +158,124 @@ function Resolve-AdapterConfiguration {
     if ($override.Count -gt 0) {
         $dnsWanted = $override
     }
-    if ($null -ne $dnsWanted -and $dnsWanted.Count -gt 0) {
-        # Compared per family, and a family only when servers of it are wanted: Windows reads
-        # the IPv4 servers before the IPv6 ones, and lists IPv6 servers nobody set
-        # (fec0:0:0:ffff::1 to 3, or ones from router advertisements) - a list compared whole
-        # would never match.
-        $wanted4 = @($dnsWanted | Where-Object { $_ -notmatch ':' })
-        $wanted6 = @($dnsWanted | Where-Object { $_ -match ':' })
-        $have4 = @($Adapter.DnsServers | Where-Object { $_ -and $_ -notmatch ':' })
-        $have6 = @($Adapter.DnsServers | Where-Object { $_ -match ':' })
-        $differs4 = $wanted4.Count -gt 0 -and ($have4 -join ',') -ne ($wanted4 -join ',')
-        $differs6 = $wanted6.Count -gt 0 -and ($have6 -join ',') -ne ($wanted6 -join ',')
-        if ($differs4 -or $differs6) {
-            $actions.Add([pscustomobject]@{ Action = 'SetDns'; Servers = [string[]]($wanted4 + $wanted6) })
+    $inFamily = { param($address, $family) [bool]($address -match ':') -eq ($family -eq 'IPv6') }
+    $doh = $Settings.PSObject.Properties['DnsOverHttps'] -and $Settings.DnsOverHttps -eq $true
+    $encryption = if ($Adapter.PSObject.Properties['Doh']) { $Adapter.Doh } else { $null }
+    $encrypted = @(if ($encryption) { $encryption.Servers | Where-Object { $_ } })
+    # A read Windows refused in part says nothing for sure about encryption - never "none": it
+    # is left as it is at this pass, and nothing is blocked for it.
+    $unread = [bool]($encryption -and $encryption.PSObject.Properties['Read'] -and $encryption.Read -eq $false)
+    if ($unread) {
+        $unreadWhat = 'Settings'
+    }
+    # The adapter's static servers, as the per-interface read gives them: never the IPv6 ones
+    # Windows lists on its own, nor DHCP's. Without that read (Windows 10, or refused), the
+    # servers it lists.
+    $static = @(if ($encryption -and $encryption.Supported -and -not $unread -and $encryption.PSObject.Properties['NameServers']) { $encryption.NameServers | Where-Object { $_ } } else { $Adapter.DnsServers | Where-Object { $_ } })
+    if ($doh) {
+        # Every server of the override, encrypted with its template - or nothing at all.
+        $given = if ($Settings.PSObject.Properties['DohTemplate']) { [string]$Settings.DohTemplate } else { '' }
+        $pending = $false
+        if ($override.Count -eq 0) {
+            # The template's server: its address, when it names one.
+            $named = Resolve-DohServer -Settings $Settings
+            $override = @($named.Servers)
+            if ($named.Name) {
+                # A name not looked up yet: the servers the adapter encrypts with this template are
+                # the ones it was last looked up to - Windows keeps them across restarts.
+                $override = @($encrypted | Where-Object { $_.Address -notmatch ':' -and $_.Template -eq $given -and (Test-DohEnabled -Server $_) } | ForEach-Object Address)
+                $pending = $override.Count -eq 0
+            }
+            if ($override.Count -eq 0 -and -not $pending) {
+                return & $plan 'DohNeedsServers'
+            }
+        }
+        if (-not $encryption -or -not $encryption.Supported) {
+            return & $plan 'DohUnavailable'
+        }
+        if ($pending -and $kept) {
+            # An adapter the modem's DHCP configured keeps the DHCP servers: it waits, unchanged.
+            return & $plan 'DohServerUnresolved'
+        }
+        $templates = @{}
+        foreach ($server in $override) {
+            $template = if ($given) { $given } elseif ($DohKnown -and $DohKnown[$server]) { $DohKnown[$server] } elseif ($null -eq $DohKnown) {
+                # Windows' list couldn't be read: the template the adapter already encrypts this
+                # server with, if any.
+                $encrypted | Where-Object { $_.Address -eq $server -and $_.Template -and (Test-DohEnabled -Server $_) } | ForEach-Object Template | Select-Object -First 1
+            }
+            if (-not $template) {
+                if ($null -eq $DohKnown) {
+                    # Unknown, not missing: encryption is left as it is at this pass.
+                    $unread = $true
+                    if (-not $unreadWhat) {
+                        $unreadWhat = 'Templates'
+                    }
+                    break
+                }
+                return & $plan 'DohTemplateMissing'
+            }
+            $templates[$server] = $template
+        }
+        # No server at all until the name is looked up - never the operator's, in the clear.
+        $clear = $pending -and @($static | Where-Object { $_ -notmatch ':' }).Count -gt 0
+        $sets = [System.Collections.Generic.List[object]]::new()
+        foreach ($family in @(if (-not $unread) { 'IPv4', 'IPv6' })) {
+            $wanted = @($override | Where-Object { & $inFamily $_ $family })
+            $have = @($static | Where-Object { & $inFamily $_ $family })
+            $carried = @($encrypted | Where-Object { & $inFamily $_.Address $family })
+            if ($wanted.Count -eq 0) {
+                # A family with no server of the override keeps none at all: its servers would
+                # answer in the clear. They all go, encrypted or not - never first stripped of
+                # their encryption, which a failed reset would leave in the clear -, and the
+                # wanted ones come back, encrypted, right after.
+                if ($have.Count -gt 0) {
+                    $clear = $true
+                }
+                continue
+            }
+            $missing = @($wanted | Where-Object {
+                    $server = $_
+                    -not ($carried | Where-Object { $_.Address -eq $server -and $_.Template -eq $templates[$server] -and (Test-DohEnabled -Server $_) })
+                })
+            $sets.Add([pscustomobject]@{
+                    Differs = ($have -join ',') -ne ($wanted -join ',') -or $carried.Count -ne $wanted.Count -or $missing.Count -gt 0
+                    Action  = [pscustomobject]@{ Action = 'SetDoh'; Family = $family; Servers = [string[]]$wanted; Templates = [string[]]@($wanted | ForEach-Object { $templates[$_] }) }
+                })
+        }
+        if ($clear -and -not $unread) {
+            # Both families' servers go; the wanted ones come back, encrypted, right after.
+            $actions.Add([pscustomobject]@{ Action = 'ClearDns' })
+        }
+        foreach ($set in $sets) {
+            if ($set.Differs -or $clear) {
+                $actions.Add($set.Action)
+            }
+        }
+    }
+    else {
+        # Turned off: the DoH properties come off the servers that carry them, before anything
+        # else changes the servers - when the read says which. The servers are set either way:
+        # an adapter left with no DNS server would be online with no name resolving.
+        foreach ($family in @(if (-not $unread) { 'IPv4', 'IPv6' })) {
+            if (@($encrypted | Where-Object { & $inFamily $_.Address $family }).Count -gt 0) {
+                $actions.Add([pscustomobject]@{ Action = 'ClearDoh'; Family = $family; Servers = [string[]]@($static | Where-Object { & $inFamily $_ $family }) })
+            }
+        }
+        if ($null -ne $dnsWanted -and $dnsWanted.Count -gt 0) {
+            # Compared per family, and a family only when servers of it are wanted: Windows reads
+            # the IPv4 servers before the IPv6 ones, and lists IPv6 servers nobody set
+            # (fec0:0:0:ffff::1 to 3, or ones from router advertisements) - a list compared whole
+            # would never match.
+            $wanted4 = @($dnsWanted | Where-Object { $_ -notmatch ':' })
+            $wanted6 = @($dnsWanted | Where-Object { $_ -match ':' })
+            $have4 = @($static | Where-Object { $_ -notmatch ':' })
+            $have6 = @($static | Where-Object { $_ -match ':' })
+            $differs4 = $wanted4.Count -gt 0 -and ($have4 -join ',') -ne ($wanted4 -join ',')
+            $differs6 = $wanted6.Count -gt 0 -and ($have6 -join ',') -ne ($wanted6 -join ',')
+            if ($differs4 -or $differs6) {
+                $actions.Add([pscustomobject]@{ Action = 'SetDns'; Servers = [string[]]($wanted4 + $wanted6) })
+            }
         }
     }
 
@@ -166,9 +308,10 @@ function Resolve-AdapterClearing {
 
     $manual = @($Adapter.Addresses | Where-Object { $_.Origin -ne 'Dhcp' -and (Test-UsableIPv4Address -Address $_.Address) })
     # An adapter the modem's DHCP configured, as Resolve-AdapterConfiguration keeps it, carries
-    # nothing of the app's: its routes are DHCP's.
-    $actions = if ($manual.Count -eq 0) { @() } else {
-        @(
+    # nothing of the app's: its routes are DHCP's. No action is an empty array, never $null: a
+    # plan is walked with @($plan.Actions).
+    $actions = @(
+        if ($manual.Count -gt 0) {
             # Routes first: a route stands on an address.
             foreach ($gateway in @($Adapter.Gateways | Where-Object { $_ })) {
                 [pscustomobject]@{ Action = 'RemoveGateway'; NextHop = $gateway }
@@ -176,8 +319,8 @@ function Resolve-AdapterClearing {
             foreach ($address in $manual) {
                 [pscustomobject]@{ Action = 'RemoveAddress'; Address = $address.Address }
             }
-        )
-    }
+        }
+    )
     [pscustomobject]@{ Configured = $false; Actions = [object[]]$actions; Problem = $null }
 }
 
@@ -188,11 +331,11 @@ function Get-ModemAdapterState {
     .DESCRIPTION
         The adapter is found by its PnP instance ID - the modem's RNDIS function, from
         Resolve-ModemUsbDevice - never by name or index. Reads only; needs no administrator
-        rights. Returns what Resolve-AdapterConfiguration takes: InterfaceIndex, Name, Status,
-        Dhcp, InterfaceMetric, AutomaticMetric, Addresses (IPv4: Address, PrefixLength, Origin,
-        State),
-        Gateways (next hops of its IPv4 default routes, 0.0.0.0 for an on-link one) and
-        DnsServers (IPv4, then IPv6). Returns nothing when no adapter has that instance ID.
+        rights. Returns what Resolve-AdapterConfiguration takes: InterfaceIndex, InterfaceGuid,
+        Name, Status, Dhcp, InterfaceMetric, AutomaticMetric, Addresses (IPv4: Address,
+        PrefixLength, Origin, State), Gateways (next hops of its IPv4 default routes, 0.0.0.0 for
+        an on-link one), DnsServers (IPv4, then IPv6) and Doh (Get-InterfaceDoh's). Returns
+        nothing when no adapter has that instance ID.
     .EXAMPLE
         Get-ModemAdapterState -InstanceId $modem.Network.InstanceId
     #>
@@ -213,8 +356,10 @@ function Get-ModemAdapterState {
     $routes = @(Get-NetRoute -InterfaceIndex $index -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue)
     $dns = @(Get-DnsClientServerAddress -InterfaceIndex $index -ErrorAction SilentlyContinue)
 
+    $guid = [guid]$adapter.InterfaceGuid
     [pscustomobject]@{
         InterfaceIndex  = $index
+        InterfaceGuid   = $guid
         Name            = [string]$adapter.Name
         Status          = [string]$adapter.Status
         Dhcp            = if ($interface) { [string]$interface.Dhcp } else { $null }
@@ -228,6 +373,7 @@ function Get-ModemAdapterState {
             @($dns | Where-Object AddressFamily -EQ 2 | ForEach-Object { $_.ServerAddresses })
             @($dns | Where-Object AddressFamily -EQ 23 | ForEach-Object { $_.ServerAddresses })
         )
+        Doh             = Get-InterfaceDoh -InterfaceGuid $guid
     }
 }
 
@@ -236,10 +382,12 @@ function Set-ModemAdapterConfiguration {
     .SYNOPSIS
         Applies a Resolve-AdapterConfiguration plan to the modem's network adapter.
     .DESCRIPTION
-        Every change is scoped to the adapter with -InterfaceIndex, and written to the active
-        store where Windows has one - addresses, routes, DHCP, metric - so it vanishes at the next
-        reboot instead of lingering. DNS servers have no active store: they are set on the
-        adapter, and rewritten from the context at every connect. Needs administrator rights.
+        Every change is scoped to the adapter with -InterfaceIndex - -InterfaceGuid for its
+        encrypted DNS -, and written to the active store where Windows has one - addresses,
+        routes, metric - so it vanishes at the next reboot instead of lingering. DHCP's setting
+        lives in the active store alone and persists across reboots (docs/AT-COMMANDS.md section
+        11.1). DNS servers and their encryption have no active store: they are set on the adapter,
+        kept across reboots, and compared at every connect. Needs administrator rights.
 
         Runs the actions in order and stops at the first that fails, since the later ones build
         on it (a gateway on an address). Returns one result per action run: Action, Done, and
@@ -253,6 +401,8 @@ function Set-ModemAdapterConfiguration {
     param(
         [Parameter(Mandatory)]
         [int] $InterfaceIndex,
+
+        [guid] $InterfaceGuid,
 
         [Parameter(Mandatory)]
         [object] $Plan
@@ -282,6 +432,15 @@ function Set-ModemAdapterConfiguration {
                 }
                 'SetDns' {
                     Set-DnsClientServerAddress -InterfaceIndex $InterfaceIndex -ServerAddresses $step.Servers -ErrorAction Stop
+                }
+                'ClearDns' {
+                    Set-DnsClientServerAddress -InterfaceIndex $InterfaceIndex -ResetServerAddresses -ErrorAction Stop
+                }
+                'SetDoh' {
+                    Set-InterfaceDoh -InterfaceGuid $InterfaceGuid -Family $step.Family -Servers $step.Servers -Templates $step.Templates -Confirm:$false
+                }
+                'ClearDoh' {
+                    Set-InterfaceDoh -InterfaceGuid $InterfaceGuid -Family $step.Family -Servers $step.Servers -Templates @() -Confirm:$false
                 }
                 'SetMetric' {
                     # Both families: IPv6 traffic must not prefer the modem either.

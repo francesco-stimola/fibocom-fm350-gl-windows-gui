@@ -92,6 +92,8 @@ Describe 'Resolve-AdapterConfiguration' {
         }
         $plan = Resolve-AdapterConfiguration -Context $script:context -Adapter $adapter -Settings $script:settings
         $plan.Actions.Action | Should -Be @('SetMetric')
+        # One action is still an array of one.
+        $plan.Actions -is [object[]] | Should -BeTrue
     }
 
     It 'applies the DNS override over DHCP and over the operator''s servers' {
@@ -185,7 +187,8 @@ Describe 'Resolve-AdapterConfiguration' {
         $plan = Resolve-AdapterConfiguration -Context $context -Adapter (Get-TestAdapter) -Settings $script:settings
         $plan.Problem | Should -Be 'NoAddress'
         $plan.Configured | Should -BeFalse
-        $plan.Actions | Should -BeNullOrEmpty
+        $plan.Actions -is [object[]] | Should -BeTrue
+        $plan.Actions.Count | Should -Be 0
     }
 
     It 'says NoAddress without a context' {
@@ -235,7 +238,9 @@ Describe 'Resolve-AdapterClearing' {
             )
             Gateways  = @('192.0.2.1')
         }
-        (Resolve-AdapterClearing -Adapter $adapter).Actions | Should -BeNullOrEmpty
+        $plan = Resolve-AdapterClearing -Adapter $adapter
+        # An empty array: @($null) would be one action, with no name.
+        @($plan.Actions).Count | Should -Be 0
     }
 
     It 'gives Resolve-AdapterConfiguration a fresh adapter to configure once applied' {
@@ -251,8 +256,11 @@ Describe 'Get-ModemAdapterState' {
     BeforeEach {
         $script:instance = 'USB\VID_0E8D&PID_7127&MI_00\8&00000000&0&0000'
         Mock -ModuleName FibocomFm350 Get-NetAdapter {
-            [pscustomobject]@{ Name = 'Wi-Fi'; ifIndex = 7; Status = 'Up'; PnPDeviceID = 'PCI\VEN_8086&DEV_0000\0' }
-            [pscustomobject]@{ Name = 'Ethernet 3'; ifIndex = 12; Status = 'Up'; PnPDeviceID = $script:instance }
+            [pscustomobject]@{ Name = 'Wi-Fi'; ifIndex = 7; Status = 'Up'; PnPDeviceID = 'PCI\VEN_8086&DEV_0000\0'; InterfaceGuid = '{11111111-2222-3333-4444-555555555555}' }
+            [pscustomobject]@{ Name = 'Ethernet 3'; ifIndex = 12; Status = 'Up'; PnPDeviceID = $script:instance; InterfaceGuid = '{8D1E3C2A-0B4F-4E6D-9A7C-1F2E3D4C5B6A}' }
+        }
+        Mock -ModuleName FibocomFm350 Get-InterfaceDoh {
+            [pscustomobject]@{ Supported = $true; Servers = [object[]]@([pscustomobject]@{ Address = '203.0.113.53'; Template = 'https://dns.example/dns-query'; Flags = [uint64]2 }) }
         }
         Mock -ModuleName FibocomFm350 Get-NetIPInterface { [pscustomobject]@{ Dhcp = 'Disabled'; InterfaceMetric = 500; AutomaticMetric = 'Disabled' } }
         Mock -ModuleName FibocomFm350 Get-NetIPAddress {
@@ -279,7 +287,11 @@ Describe 'Get-ModemAdapterState' {
         $state.Addresses[0].State | Should -Be 'Tentative'
         $state.Gateways | Should -Be @('198.51.100.1', '0.0.0.0')
         $state.DnsServers | Should -Be @('203.0.113.53', '203.0.113.54', '2001:db8::53')
+        $state.InterfaceGuid | Should -Be ([guid]'8D1E3C2A-0B4F-4E6D-9A7C-1F2E3D4C5B6A')
+        $state.Doh.Supported | Should -BeTrue
+        $state.Doh.Servers[0].Address | Should -Be '203.0.113.53'
         Should -Invoke -ModuleName FibocomFm350 Get-NetIPAddress -ParameterFilter { $InterfaceIndex -eq 12 }
+        Should -Invoke -ModuleName FibocomFm350 Get-InterfaceDoh -ParameterFilter { $InterfaceGuid -eq [guid]'8D1E3C2A-0B4F-4E6D-9A7C-1F2E3D4C5B6A' }
     }
 
     It 'gives nothing when no adapter has that instance ID' {
@@ -332,6 +344,13 @@ Describe 'Set-ModemAdapterConfiguration' {
         $results[1].Done | Should -BeFalse
         $results[1].Error | Should -Match 'denied'
         Should -Invoke -ModuleName FibocomFm350 New-NetRoute -Times 0 -Exactly
+    }
+
+    It 'runs a clearing plan with nothing to clear, as recovery step R1 does on an adapter DHCP configured' {
+        $adapter = Get-TestAdapter -Change @{ Addresses = @([pscustomobject]@{ Address = '192.0.2.77'; PrefixLength = 24; Origin = 'Dhcp' }); Gateways = @('192.0.2.1') }
+        @(Set-ModemAdapterConfiguration -InterfaceIndex 12 -Plan (Resolve-AdapterClearing -Adapter $adapter) -Confirm:$false -ErrorAction Stop).Count | Should -Be 0
+        Should -Invoke -ModuleName FibocomFm350 Remove-NetRoute -Times 0 -Exactly
+        Should -Invoke -ModuleName FibocomFm350 Remove-NetIPAddress -Times 0 -Exactly
     }
 
     It 'changes nothing under -WhatIf' {

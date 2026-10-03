@@ -1,0 +1,41 @@
+name: Release
+
+# A tag v<major>.<minor>.<patch> publishes a release (docs/SETUP.md -> Releasing): the same lint,
+# tests and package as CI first, then the tag checked against the modules' version, the zip built,
+# and a GitHub Release published with the CHANGELOG.md section of that version as its notes.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: ci
+    runs-on: windows-latest
+    permissions:
+      # Creating the release and uploading its zip: this job only.
+      contents: write
+    steps:
+      # Pinned to a commit: a tag can be moved (docs/AT-COMMANDS.md section 11.3).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Fails when the tag doesn't name the modules' version, or the CHANGELOG has no section
+      # for it.
+      - name: Build the package
+        shell: pwsh
+        run: ./tools/New-ReleasePackage.ps1 -Tag $env:GITHUB_REF_NAME -OutputFolder dist
+
+      # gh comes with GitHub's runners; the job's own token, nothing stored.
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          gh release create $tag "dist/fibocom-fm350-gl-windows-gui-$($tag.Substring(1)).zip" --title $tag --notes-file dist/release-notes.md --verify-tag
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

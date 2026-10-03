@@ -11,36 +11,10 @@ $script:WindowControlNames = @(
     'SimStateText', 'SimRequestText', 'SimStoredText', 'SimNoteText', 'SimPinBox', 'StorePinButton', 'ForgetPinButton', 'DisablePinButton'
     'CurrentModeText', 'NetworkModeBox', 'BandsPanel', 'LteAllBox', 'LteBandsPanel', 'NrAllBox', 'NrBandsPanel', 'ModeNoteText', 'ApplyModeButton', 'ReloadModeButton'
     'ApnBox', 'PdpTypeBox', 'AuthenticationBox', 'ApnUserBox', 'ApnPasswordBox', 'ClearPasswordBox', 'ApnPasswordStoredText'
-    'DnsBox', 'MetricBox', 'SaveSettingsButton', 'ReloadSettingsButton', 'SettingsProblemText'
-    'Tabs', 'DriverTab', 'DriverStateText', 'DriverSourceText', 'OpenDriverPageButton', 'ChooseDriverButton', 'DriverPackageText'
+    'DnsBox', 'DohBox', 'DohTemplateBox', 'DohRefreshBox', 'DohStateText', 'MetricBox', 'UpdateCheckBox', 'StartupBox', 'StartupNoteText', 'SaveSettingsButton', 'ReloadSettingsButton', 'SettingsProblemText'
+    'Tabs', 'ConnectionTab', 'DriverTab', 'DriverStateText', 'DriverSourceText', 'OpenDriverPageButton', 'ChooseDriverButton', 'DriverPackageText'
     'InstallDriverButton', 'UninstallDriverButton', 'DriverNoteText'
 )
-
-# What the confirmations say: they guard the actions that change something outside the app.
-$script:UnlockConfirmation = @'
-Unlock the modem?
-
-This writes the modem's non-volatile memory and lifts a restriction that the laptop's maker set for its radio certification. It is done at your own responsibility, and it may not work on every module.
-
-The modem restarts afterwards.
-'@
-$script:DisablePinConfirmation = @'
-Remove the PIN from the SIM?
-
-This changes the SIM card, not the app: the SIM will no longer ask for its PIN, in this modem or in any phone. A wrong PIN uses up one of its attempts.
-'@
-$script:UnknownDriverConfirmation = @'
-Install a driver version the app doesn't know?
-
-Microsoft signed this package (WHQL) for the modem's AT port, so Windows accepts it; but it is not a version the app knows.
-
-Windows installs it for every device it fits.
-'@
-$script:UninstallDriverConfirmation = @'
-Uninstall the modem's AT-port driver?
-
-Windows removes it from the modem's serial ports and from its driver store. The data connection stays up, but the app can't talk to the modem, nor watch the connection, until the driver is installed again.
-'@
 
 # The main window and what it remembers; one per app. Event handlers reach it here.
 $script:MainWindow = $null
@@ -56,7 +30,8 @@ function New-MainWindow {
         -Choose asks for a driver package and returns its path, or nothing; a file dialog by
         default (a zip, or an INF in its folder). -Open shows a web page; by default Explorer
         hands it to the user's browser - the app runs elevated, and should never start a browser
-        itself. Closing the window hides it: the app stays in the tray.
+        itself. Closing the window hides it: the app stays in the tray. -AppUserModelId is the
+        window's identity on the taskbar (AppIdentity.ps1); the app's by default.
 
         Returns a hashtable: Window, Controls (by name), View (the last one shown) and what the
         handlers need.
@@ -75,10 +50,22 @@ function New-MainWindow {
 
         [scriptblock] $Choose,
 
-        [scriptblock] $Open
+        [scriptblock] $Open,
+
+        [string] $AppUserModelId = $script:AppUserModelId
     )
 
-    $window = [System.Windows.Markup.XamlReader]::Parse((Get-Content -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath 'MainWindow.xaml') -Raw))
+    $xaml = Get-Content -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath 'MainWindow.xaml') -Raw
+    $window = [System.Windows.Markup.XamlReader]::Parse((ConvertTo-LocalizedXaml -Xaml $xaml))
+    # The app's icon, in the title bar and on the taskbar - as the app's, not its PowerShell's.
+    $window.Icon = New-AppIconImage
+    try {
+        Set-AppWindowIdentity -Window $window -Id $AppUserModelId
+    }
+    catch {
+        # The window works without: the taskbar then shows the PowerShell that hosts it.
+        Write-Verbose "The window's taskbar identity can't be set: $($_.Exception.Message)"
+    }
     $controls = @{}
     foreach ($name in $script:WindowControlNames) {
         $control = $window.FindName($name)
@@ -96,8 +83,8 @@ function New-MainWindow {
     if (-not $Choose) {
         $Choose = {
             $dialog = [Microsoft.Win32.OpenFileDialog]::new()
-            $dialog.Title = 'Choose the downloaded driver package'
-            $dialog.Filter = 'Driver package (*.zip, *.inf)|*.zip;*.inf'
+            $dialog.Title = Get-AppText 'Driver.ChooseTitle'
+            $dialog.Filter = "$(Get-AppText 'Driver.FileKind') (*.zip, *.inf)|*.zip;*.inf"
             if ($dialog.ShowDialog($script:MainWindow.Window)) {
                 $dialog.FileName
             }
@@ -140,6 +127,16 @@ function New-MainWindow {
                 $closing.Cancel = $true
                 $source.Hide()
             }
+            else {
+                # A window's properties are taken off before it closes, or Windows keeps them. A
+                # handler that throws would end the app.
+                try {
+                    Set-AppWindowIdentity -Window $source -Remove
+                }
+                catch {
+                    Write-Verbose "The window's taskbar identity can't be removed: $($_.Exception.Message)"
+                }
+            }
         })
     $controls.CheckNowButton.Add_Click({ & $script:MainWindow.Send 'ConnectNow' @{} })
     $controls.BlockerButton.Add_Click({ Invoke-BlockerAction })
@@ -156,9 +153,9 @@ function New-MainWindow {
             $box = $script:MainWindow.Controls.SimPinBox
             $script:MainWindow.SimHint = $null
             if ($box.SecurePassword.Length -eq 0) {
-                $script:MainWindow.SimHint = 'Type the SIM''s PIN first: removing it needs the PIN.'
+                $script:MainWindow.SimHint = Get-AppText 'Window.PinFirst'
             }
-            elseif (& $script:MainWindow.Ask 'Remove the PIN from the SIM' $script:DisablePinConfirmation) {
+            elseif (& $script:MainWindow.Ask (Get-AppText 'Confirm.DisablePinTitle') (Get-AppText 'Confirm.DisablePin')) {
                 & $script:MainWindow.Send 'DisableSimPin' @{ Pin = $box.SecurePassword }
                 $box.Clear()
             }
@@ -191,7 +188,7 @@ function New-MainWindow {
         })
     $controls.InstallDriverButton.Add_Click({ Invoke-WindowDriverInstall })
     $controls.UninstallDriverButton.Add_Click({
-            if (& $script:MainWindow.Ask 'Uninstall the driver' $script:UninstallDriverConfirmation) {
+            if (& $script:MainWindow.Ask (Get-AppText 'Confirm.UninstallDriverTitle') (Get-AppText 'Confirm.UninstallDriver')) {
                 & $script:MainWindow.Send 'UninstallDriver' @{}
             }
         })
@@ -236,7 +233,7 @@ function Invoke-BlockerAction {
             & $script:MainWindow.Send 'EnableAdapter' @{}
         }
         'Unlock' {
-            if (& $script:MainWindow.Ask 'Unlock the modem' $script:UnlockConfirmation) {
+            if (& $script:MainWindow.Ask (Get-AppText 'Confirm.UnlockTitle') (Get-AppText 'Confirm.Unlock')) {
                 & $script:MainWindow.Send 'UnlockFcc' @{}
             }
         }
@@ -246,6 +243,9 @@ function Invoke-BlockerAction {
         }
         'Driver' {
             $controls.Tabs.SelectedItem = $controls.DriverTab
+        }
+        'Settings' {
+            $controls.Tabs.SelectedItem = $controls.ConnectionTab
         }
     }
 }
@@ -260,7 +260,7 @@ function Invoke-WindowDriverInstall {
     if (-not $driver.ConfirmInstall) {
         & $script:MainWindow.Send 'InstallDriver' @{}
     }
-    elseif (& $script:MainWindow.Ask 'Install an unknown driver version' $script:UnknownDriverConfirmation) {
+    elseif (& $script:MainWindow.Ask (Get-AppText 'Confirm.UnknownDriverTitle') (Get-AppText 'Confirm.UnknownDriver')) {
         & $script:MainWindow.Send 'InstallDriver' @{ AcceptUnknown = $true }
     }
 }
@@ -302,7 +302,7 @@ function Send-WindowNetworkMode {
     $script:MainWindow.ModeHint = $null
     foreach ($rat in @(@('Lte', 'NrOnly', 'LTE'), @('Nr', 'LteOnly', 'NR'))) {
         if ($mode -and $mode -ne $rat[1] -and -not $controls["$($rat[0])AllBox"].IsChecked -and $bands[$rat[0]].Count -eq 0) {
-            $script:MainWindow.ModeHint = "Choose at least one $($rat[2]) band, or every band."
+            $script:MainWindow.ModeHint = Get-AppText 'Network.ChooseBand' $rat[2]
         }
     }
     if (-not $script:MainWindow.ModeHint) {
@@ -380,20 +380,47 @@ function Get-WindowSetting {
     $controls = $script:MainWindow.Controls
     [ordered]@{
         Apn               = $controls.ApnBox.Text.Trim()
-        PdpType           = [string]$controls.PdpTypeBox.SelectedItem.Content
-        ApnAuthentication = [string]$controls.AuthenticationBox.SelectedItem.Content
+        PdpType           = [string]$controls.PdpTypeBox.SelectedItem.Tag
+        ApnAuthentication = [string]$controls.AuthenticationBox.SelectedItem.Tag
         ApnUser           = $controls.ApnUserBox.Text
         DnsServers        = [string[]]@($controls.DnsBox.Text -split '[,;\s]+' | Where-Object { $_ })
+        DnsOverHttps      = [bool]$controls.DohBox.IsChecked
+        DohTemplate       = $controls.DohTemplateBox.Text.Trim()
+        DohRefreshMinutes = $controls.DohRefreshBox.Text.Trim()
         InterfaceMetric   = $controls.MetricBox.Text.Trim()
+        CheckForUpdates   = [bool]$controls.UpdateCheckBox.IsChecked
     }
+}
+
+function Test-WindowDohSetting {
+    # What the worker would refuse to set, said before the save: encrypted DNS where Windows
+    # can't set it, or a server with no template, known or given. Returns the problem, or $null.
+    param([object] $Settings, [object] $Dns)
+
+    if (-not $Settings.DnsOverHttps -or -not $Dns) {
+        return $null
+    }
+    if (-not $Dns.CanEnable) {
+        return Get-AppText 'Dns.NotAvailableHere'
+    }
+    if ($Settings.DohTemplate -or @($Dns.Known).Count -eq 0) {
+        return $null
+    }
+    $unknown = @($Settings.DnsServers | Where-Object { $_ -notin $Dns.Known })
+    if ($unknown.Count -gt 0) {
+        return Get-AppText 'Dns.NoTemplate' ($unknown -join ', ')
+    }
+    $null
 }
 
 function Save-WindowSetting {
     # The connection tab's Save: checked here, so a typo is shown at once, then sent.
     $controls = $script:MainWindow.Controls
     $checked = ConvertTo-AppSetting -InputObject (Get-WindowSetting)
-    if ($checked.Problems.Count -gt 0) {
-        $controls.SettingsProblemText.Text = $checked.Problems -join ' '
+    $dns = if ($script:MainWindow.View) { $script:MainWindow.View.Dns } else { $null }
+    $problems = @($checked.Issues | ForEach-Object { ConvertTo-SettingIssueText -Issue $_ }) + @(Test-WindowDohSetting -Settings $checked.Settings -Dns $dns | Where-Object { $_ })
+    if ($problems.Count -gt 0) {
+        $controls.SettingsProblemText.Text = $problems -join ' '
         return
     }
     $controls.SettingsProblemText.Text = ''
@@ -405,6 +432,12 @@ function Save-WindowSetting {
         $parameter['ApnPassword'] = $controls.ApnPasswordBox.SecurePassword
     }
     & $script:MainWindow.Send 'SaveSettings' $parameter
+    # The start at sign-in is the logon task's, not the settings file's: changed apart, when it
+    # was.
+    $startup = if ($script:MainWindow.View) { $script:MainWindow.View.Startup } else { $null }
+    if ($startup -and $startup.CanChange -and [bool]$controls.StartupBox.IsChecked -ne [bool]$startup.Checked) {
+        & $script:MainWindow.Send 'SetStartAtLogon' @{ Enabled = [bool]$controls.StartupBox.IsChecked }
+    }
     $controls.ApnPasswordBox.Clear()
     $controls.ClearPasswordBox.IsChecked = $false
     # Filled again from the snapshot once the worker has saved them.
@@ -412,11 +445,12 @@ function Save-WindowSetting {
 }
 
 function Select-ComboBoxItem {
-    # Selects the item whose text is $Text.
+    # Selects the item whose value - its Tag, never the text it shows in the app's language - is
+    # $Text.
     param([object] $ComboBox, [string] $Text)
 
     foreach ($item in $ComboBox.Items) {
-        if ([string]$item.Content -eq $Text) {
+        if ([string]$item.Tag -eq $Text) {
             $ComboBox.SelectedItem = $item
         }
     }
@@ -467,7 +501,7 @@ function Update-MainWindow {
 
     $controls.ResultText.Text = [string]$View.Result
     $controls.FooterText.Text = $View.Footer
-    $controls.SignalText.Text = if ($View.Signal.Count -gt 0) { $View.Signal -join [Environment]::NewLine } else { 'Nothing measured.' }
+    $controls.SignalText.Text = if ($View.Signal.Count -gt 0) { $View.Signal -join [Environment]::NewLine } else { Get-AppText 'Window.NothingMeasured' }
     $controls.CellsGrid.ItemsSource = $View.Cells
     $controls.CarriersGrid.ItemsSource = $View.Carriers
 
@@ -493,18 +527,24 @@ function Update-MainWindow {
         $controls.DriverPackageText.Text = [string]$driver.PackageText
         $controls.DriverPackageText.Visibility = & $show $driver.PackageText
         $controls.InstallDriverButton.IsEnabled = $driver.CanInstall
-        $controls.InstallDriverButton.Content = if ($driver.ConfirmInstall) { 'Install...' } else { 'Install' }
+        $controls.InstallDriverButton.Content = Get-AppText $(if ($driver.ConfirmInstall) { 'Driver.InstallConfirm' } else { 'Driver.Install' })
         $controls.UninstallDriverButton.IsEnabled = $driver.CanUninstall
         $controls.DriverNoteText.Text = [string]$driver.Note
         $controls.DriverNoteText.Visibility = & $show $driver.Note
     }
 
-    $controls.ApnPasswordStoredText.Text = if ($View.ApnPasswordStored) { 'A password is stored.' } else { 'No password is stored.' }
+    $controls.ApnPasswordStoredText.Text = Get-AppText $(if ($View.ApnPasswordStored) { 'Window.PasswordStored' } else { 'Window.NoPassword' })
+    if ($View.Dns) {
+        $controls.DohStateText.Text = [string]$View.Dns.Text
+        $controls.DohStateText.Visibility = & $show $View.Dns.Text
+        # Where Windows can't set it, it can only be turned off.
+        $controls.DohBox.IsEnabled = $View.Dns.CanEnable -or [bool]$controls.DohBox.IsChecked
+    }
     # The forms are filled again after a save the worker carried out.
     $newest = $View.LastResult
     if ($newest -and $newest.Id -ne $script:MainWindow.LastResultId) {
         $script:MainWindow.LastResultId = $newest.Id
-        if ($newest.Kind -eq 'SaveSettings') {
+        if ($newest.Kind -in 'SaveSettings', 'SetStartAtLogon') {
             $script:MainWindow.FormSettings = $null
         }
         if ($newest.Kind -eq 'SetNetworkMode') {
@@ -514,6 +554,11 @@ function Update-MainWindow {
     if ($View.NetworkMode) {
         Show-WindowNetworkMode -View $View
     }
+    if ($View.Startup) {
+        $controls.StartupBox.IsEnabled = [bool]$View.Startup.CanChange
+        $controls.StartupNoteText.Text = [string]$View.Startup.Note
+        $controls.StartupNoteText.Visibility = if ($View.Startup.Note) { 'Visible' } else { 'Collapsed' }
+    }
     if ($View.Settings -and $null -eq $script:MainWindow.FormSettings) {
         $settings = $View.Settings
         $controls.ApnBox.Text = $settings.Apn
@@ -521,7 +566,12 @@ function Update-MainWindow {
         Select-ComboBoxItem -ComboBox $controls.AuthenticationBox -Text $settings.ApnAuthentication
         $controls.ApnUserBox.Text = $settings.ApnUser
         $controls.DnsBox.Text = @($settings.DnsServers) -join ', '
+        $controls.DohBox.IsChecked = [bool]$settings.DnsOverHttps
+        $controls.DohTemplateBox.Text = [string]$settings.DohTemplate
+        $controls.DohRefreshBox.Text = [string]$settings.DohRefreshMinutes
         $controls.MetricBox.Text = [string]$settings.InterfaceMetric
+        $controls.UpdateCheckBox.IsChecked = [bool]$settings.CheckForUpdates
+        $controls.StartupBox.IsChecked = [bool]($View.Startup -and $View.Startup.Checked)
         $controls.SettingsProblemText.Text = ''
         $script:MainWindow.FormSettings = $settings
     }

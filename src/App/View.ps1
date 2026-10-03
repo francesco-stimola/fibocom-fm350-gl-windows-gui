@@ -2,150 +2,12 @@
 # text and every icon state is decided here and proven by tests. Design: docs/ARCHITECTURE.md ->
 # Tray icon. Texts and icon states: the maintainer's decision (ROADMAP M3).
 
-# Why the connection is where it is, in the user's words: one sentence per reason.
-$script:ReasonTexts = @{
-    NoDevice              = 'No modem found on USB.'
-    NoDriver              = 'The modem''s AT port has no driver: the app can''t talk to the modem until it is installed.'
-    DeviceProblem         = 'Windows reports a problem with the modem''s AT port.'
-    PortInUse             = 'Another program is using the modem''s AT port.'
-    PortFailed            = 'The modem''s AT port can''t be opened.'
-    SimUnknown            = 'Reading the SIM.'
-    NoPin                 = 'The SIM is waiting for its PIN.'
-    PinForOtherSim        = 'The stored PIN belongs to another SIM: enter this SIM''s PIN.'
-    SimNotIdentified      = 'The SIM can''t be identified, so the stored PIN is not sent to it.'
-    PinUnconfirmed        = 'The last PIN entry got no answer, and the app never tries twice: enter the PIN again.'
-    LastAttempt           = 'Only one PIN attempt is left, and the app won''t use it: unlock the SIM in a phone.'
-    PukRequired           = 'The SIM is blocked and needs its PUK: unblock it in a phone. The app never enters a PUK.'
-    NoSim                 = 'No SIM in the modem.'
-    SimFailure            = 'The SIM is not working.'
-    SimOther              = 'The SIM is waiting for a code the app doesn''t handle.'
-    SimBusy               = 'The SIM is busy; waiting for it.'
-    FccLocked             = 'The modem is locked by its laptop''s maker (FCC lock): its radio stays off.'
-    NotRegistered         = 'Not registered on a network.'
-    NotSearching          = 'Not registered, and not searching for a network.'
-    Searching             = 'Searching for a network.'
-    Denied                = 'The network refused the registration.'
-    Unknown               = 'Not registered; the reason is not known.'
-    EmergencyOnly         = 'Emergency calls only.'
-    ContextUnknown        = 'Reading the data connection.'
-    ApnPasswordUnreadable = 'The stored APN password can''t be read: enter it again.'
-    ApnNeeded             = 'The network gave no internet access to an empty APN: enter your operator''s APN.'
-    NoAddress             = 'The data connection has no IPv4 address.'
-    AdapterDisabled       = 'The modem''s network adapter is disabled.'
-    NoAdapter             = 'The modem''s network adapter is missing.'
-    NotElevated           = 'The network adapter can only be configured with administrator rights: start the app as administrator.'
-    DataPathFailed        = 'The connection is up, but no traffic gets through.'
-}
+# Every text the tray and the window show is the app's, in its language (Texts.ps1, Get-AppText):
+# Reason.<reason>, Action.<step>, Mode.<mode>, Result.<command>.<result>, Tone.<tone>,
+# Check.<check>, Step.<step>... The codes come from the snapshot.
 
-# What the next step does, while the connection is on its way.
-$script:ActionTexts = @{
-    OpenPort          = 'Opening the modem''s AT port.'
-    Initialize        = 'Waiting for the modem to answer.'
-    EnterPin          = 'Entering the stored PIN.'
-    RadioOn           = 'Turning the radio on.'
-    AutoRegister      = 'Selecting the network automatically.'
-    DefineContext     = 'Setting up the data connection.'
-    ActivateContext   = 'Setting up the data connection.'
-    DeactivateContext = 'Setting up the data connection.'
-    ConfigureAdapter  = 'Configuring the network adapter.'
-    ApplyNetworkMode  = 'Setting the network mode.'
-}
-
-# The network modes, as the window and the tray menu name them (ROADMAP M5).
-$script:NetworkModeTexts = [ordered]@{
-    Automatic = '4G + 5G'
-    LteOnly   = '4G only'
-    NrOnly    = '5G only (SA)'
-}
-$script:NotManagedText = 'As the modem has it'
-
-# Why the modem's network mode is not as the settings ask, when nothing is written.
-$script:NetworkModeProblemTexts = @{
-    NotKept         = 'The modem doesn''t keep the network mode as written; the app doesn''t write it again.'
-    NoSupportedBand = 'The modem supports none of the bands chosen for one of its RATs.'
-    ModeUnsupported = 'The modem doesn''t support this network mode.'
-}
-
-# The outcome of the user's commands: Kind/Result, or Result alone for any kind.
-$script:ResultTexts = @{
-    'ConnectNow/Done'          = 'Checking the connection now.'
-    'SaveSettings/Done'        = 'Settings saved.'
-    'SaveSimPin/Done'          = 'PIN stored: the app enters it once when the SIM asks for it.'
-    'SaveSimPin/SimNotIdentified' = 'The SIM can''t be identified: the PIN was not stored.'
-    'ForgetSimPin/Done'        = 'The stored PIN is deleted.'
-    'DisableSimPin/Disabled'   = 'The SIM no longer asks for its PIN.'
-    'DisableSimPin/AlreadyOff' = 'The SIM''s PIN request was already off.'
-    'DisableSimPin/PinRejected' = 'Wrong PIN: the SIM still asks for it.'
-    'DisableSimPin/LastAttempt' = 'Only one PIN attempt is left: nothing was sent.'
-    'DisableSimPin/SimNotReady' = 'The SIM is not ready: nothing was sent.'
-    'DisableSimPin/Failed'     = 'The SIM''s PIN request could not be changed.'
-    'UnlockFcc/Restarted'      = 'Unlock sent: the modem is restarting.'
-    'UnlockFcc/NotLocked'      = 'The modem is not locked: nothing was written.'
-    'UnlockFcc/Unknown'        = 'The lock can''t be read: nothing was written.'
-    'UnlockFcc/Failed'         = 'The unlock stopped before the restart.'
-    'UnlockFcc/PortLost'       = 'The modem left USB during the unlock.'
-    'EnableAdapter/Done'       = 'Network adapter enabled.'
-    'SetNetworkMode/Applied'   = 'Network mode sent: the modem is registering again. It is kept once the modem finds a network with it.'
-    'SetNetworkMode/Unchanged' = 'The modem already has this network mode: it is kept.'
-    'SetNetworkMode/Done'      = 'The app no longer manages the network mode: the modem keeps the one it has.'
-    'SetNetworkMode/ModeUnsupported' = 'The modem doesn''t support this network mode: nothing was written.'
-    'SetNetworkMode/NoSupportedBand' = 'The modem supports none of the bands chosen for one of its RATs: nothing was written.'
-    'SetNetworkMode/Unknown'   = 'The modem''s network mode can''t be read: nothing was written.'
-    'CheckDriverPackage/Verified'  = 'Driver package checked: a version the app knows.'
-    'CheckDriverPackage/Signed'    = 'Driver package checked: signed by Microsoft, a version the app doesn''t know.'
-    'CheckDriverPackage/Refused'   = 'The driver package can''t be installed: the Driver tab says why.'
-    'CheckDriverPackage/NoPackage' = 'No driver package was chosen.'
-    'CheckDriverPackage/Failed'    = 'The driver package can''t be read.'
-    'InstallDriver/Done'           = 'Driver installed: the app opens the modem''s AT port as soon as Windows starts it.'
-    'InstallDriver/RestartNeeded'  = 'Driver installed: Windows needs a restart to finish.'
-    'InstallDriver/NoDevice'       = 'Driver added to Windows, but no device took it: it is used when the modem is plugged in, unless Windows ranks another driver higher.'
-    'InstallDriver/Unconfirmed'    = 'Not installed: a version the app doesn''t know needs your confirmation.'
-    'InstallDriver/NoPackage'      = 'Choose a driver package first.'
-    'InstallDriver/DriverWorking'  = 'The AT port already has a working driver: nothing was installed.'
-    'InstallDriver/TimedOut'       = 'Windows didn''t finish installing the driver in time: it was stopped.'
-    'InstallDriver/Failed'         = 'Windows didn''t install the driver.'
-    'UninstallDriver/Done'         = 'Driver uninstalled: the app can''t talk to the modem until it is installed again.'
-    'UninstallDriver/RestartNeeded' = 'Driver uninstalled: Windows needs a restart to finish.'
-    'UninstallDriver/NoDriver'     = 'The AT port has no driver the app can uninstall.'
-    'UninstallDriver/TrialOn'      = 'Not uninstalled: a network mode is on trial, and only the AT port can write it back.'
-    'UninstallDriver/TimedOut'     = 'Windows didn''t finish uninstalling the driver in time: it was stopped.'
-    'UninstallDriver/Failed'       = 'Windows didn''t uninstall the driver.'
-    'NotElevated'              = 'That needs administrator rights.'
-    'Refused'                  = 'Not available while the app only observes.'
-    'NoModem'                  = 'The modem is not connected.'
-    'PortLost'                 = 'The modem left USB during the command.'
-    'Failed'                   = 'It didn''t work.'
-}
-
-# The headline for each tone.
-$script:ToneTitles = @{
-    Online     = 'Online'
-    Working    = 'Connecting'
-    Recovering = 'Recovering'
-    Attention  = 'Action needed'
-    Offline    = 'No modem'
-    Stopped    = 'Not monitoring'
-}
-
-# Recovery (ARCHITECTURE -> Health checks and the recovery ladder): what fails, in the user's
-# words, and what each step does.
-$script:CheckTexts = @{
-    H1 = 'The modem is not on USB.'
-    H2 = 'The modem doesn''t answer.'
-    H3 = 'The SIM is not ready.'
-    H4 = 'Not registered on a network.'
-    H5 = 'The data connection is down.'
-    H6 = 'The network adapter is not configured.'
-    H7 = 'No traffic gets through.'
-}
-$script:StepTexts = @{
-    R1 = 'Configuring the network adapter again.'
-    R2 = 'Restarting the data connection.'
-    R3 = 'Registering on the network again.'
-    R4 = 'Turning the radio off and on.'
-    R5 = 'Restarting the modem.'
-    R6 = 'Restarting the modem''s USB device.'
-}
+# The network modes the window and the tray menu offer, in their order (ROADMAP M5).
+$script:NetworkModeNames = @('Automatic', 'LteOnly', 'NrOnly')
 
 function Get-SnapshotRecovery {
     # The snapshot's recovery state, or $null.
@@ -165,7 +27,7 @@ function Get-NetworkModeText {
     # '4G + 5G', ... for a mode's name; the RAT value for a mode the app doesn't offer.
     param([string] $Name, [object] $Rat)
 
-    if ($Name -and $script:NetworkModeTexts.Contains($Name)) { $script:NetworkModeTexts[$Name] } else { "mode $Rat" }
+    if ($Name -and $Name -in $script:NetworkModeNames) { Get-AppText "Mode.$Name" } else { Get-AppText 'Mode.Other' "$Rat" }
 }
 
 function Test-NoNetworkForMode {
@@ -222,13 +84,13 @@ function Get-RecoveryText {
     if (-not $recovery) {
         return $null
     }
-    $check = if ($recovery.Check -and $script:CheckTexts.ContainsKey($recovery.Check)) { $script:CheckTexts[$recovery.Check] } else { 'The connection is down.' }
-    $step = if ($recovery.Step -and $script:StepTexts.ContainsKey($recovery.Step)) { $script:StepTexts[$recovery.Step] } else { $null }
+    $check = if ($recovery.Check -and (Test-AppText "Check.$($recovery.Check)")) { Get-AppText "Check.$($recovery.Check)" } else { Get-AppText 'Check.Other' }
+    $step = if ($recovery.Step -and (Test-AppText "Step.$($recovery.Step)")) { $recovery.Step } else { $null }
     switch ($recovery.Status) {
-        { $_ -in 'Recovering', 'Settling' } { if ($step) { $step } }
-        'Waiting' { "$check The recovery steps didn't help: they start again at $(Format-ClockTime -Time $recovery.NextTime)." }
-        'SlowCadence' { "$check Recovery failed $($recovery.Cycles) times: the app tries again at $(Format-ClockTime -Time $recovery.NextTime)." }
-        'Withheld' { if ($step) { "$check The app only observes, so it doesn't take the recovery step: $($step.Substring(0, 1).ToLowerInvariant())$($step.Substring(1))" } }
+        { $_ -in 'Recovering', 'Settling' } { if ($step) { Get-AppText "Step.$step" } }
+        'Waiting' { Get-AppText 'Recovery.Waiting' $check (Format-ClockTime -Time $recovery.NextTime) }
+        'SlowCadence' { Get-AppText 'Recovery.Slow' $check $recovery.Cycles (Format-ClockTime -Time $recovery.NextTime) }
+        'Withheld' { if ($step) { Get-AppText 'Recovery.Withheld' $check (Get-AppText "StepInline.$step") } }
     }
 }
 
@@ -237,33 +99,33 @@ function Get-ReasonText {
     param([object] $Snapshot)
 
     if ($Snapshot.State -eq 'Online') {
-        return 'Connected.'
+        return Get-AppText 'Reason.Connected'
     }
     if (Test-NoNetworkForMode -Snapshot $Snapshot) {
         $mode = (Get-SnapshotNetworkMode -Snapshot $Snapshot).Current
-        $bands = if ($Snapshot.Settings -and @($Snapshot.Settings.LteBands).Count -gt 0) { ' on the LTE bands chosen' } else { '' }
-        return "No network found with $(Get-NetworkModeText -Name $mode.Mode -Rat $mode.Rat)$bands. No reset finds one: choose a wider network mode."
+        $key = if ($Snapshot.Settings -and @($Snapshot.Settings.LteBands).Count -gt 0) { 'Reason.NoNetworkForModeBands' } else { 'Reason.NoNetworkForMode' }
+        return Get-AppText $key (Get-NetworkModeText -Name $mode.Mode -Rat $mode.Rat)
     }
     $recovering = Get-RecoveryText -Snapshot $Snapshot
     if ($recovering) {
         return $recovering
     }
     $reason = $Snapshot.Reason
-    if ($reason -and $script:ReasonTexts.ContainsKey($reason)) {
-        return $script:ReasonTexts[$reason]
+    if ($reason -and (Test-AppText "Reason.$reason")) {
+        return Get-AppText "Reason.$reason"
     }
     if ($reason) {
-        # A registration state the table doesn't name (roaming SMS only, ...).
-        return "Not registered ($reason)."
+        # A registration state the texts don't name (roaming SMS only, ...).
+        return Get-AppText 'Reason.Other' $reason
     }
-    $step = if ($Snapshot.Action -and $script:ActionTexts.ContainsKey($Snapshot.Action)) { $script:ActionTexts[$Snapshot.Action] } else { $null }
+    $step = if ($Snapshot.Action -and (Test-AppText "Action.$($Snapshot.Action)")) { $Snapshot.Action } else { $null }
     if ($step -and $Snapshot.ObserveOnly) {
-        return "The app only observes, so it doesn't take the next step: $($step.Substring(0, 1).ToLowerInvariant())$($step.Substring(1))"
+        return Get-AppText 'Reason.Withheld' (Get-AppText "ActionInline.$step")
     }
     if ($step) {
-        return $step
+        return Get-AppText "Action.$step"
     }
-    'Working on the connection.'
+    Get-AppText 'Reason.Working'
 }
 
 function Test-StepWithheld {
@@ -280,15 +142,15 @@ function Get-AppTitle {
 
     $recovery = Get-SnapshotRecovery -Snapshot $Snapshot
     if ($Tone -eq 'Attention' -and $recovery -and $recovery.Status -eq 'SlowCadence') {
-        return 'Connection lost'
+        return Get-AppText 'Title.ConnectionLost'
     }
     if ($Tone -eq 'Attention' -and (Test-NoNetworkForMode -Snapshot $Snapshot)) {
-        return 'No network'
+        return Get-AppText 'Title.NoNetwork'
     }
     if ($Tone -eq 'Working' -and ((Test-StepWithheld -Snapshot $Snapshot) -or ($recovery -and $recovery.Status -eq 'Withheld'))) {
-        return 'Not connected'
+        return Get-AppText 'Title.NotConnected'
     }
-    $script:ToneTitles[$Tone]
+    Get-AppText "Tone.$Tone"
 }
 
 function Format-Measurement {
@@ -371,7 +233,7 @@ function ConvertTo-TrayText {
 
     $tone = Resolve-AppTone -Snapshot $Snapshot -Worker $Worker
     $parts = [System.Collections.Generic.List[string]]::new()
-    $parts.Add("FM350-GL: $(Get-AppTitle -Snapshot $Snapshot -Tone $tone)")
+    $parts.Add((Get-AppText 'Tray.Tooltip' (Get-AppTitle -Snapshot $Snapshot -Tone $tone)))
     if ($tone -eq 'Online' -and $Snapshot.Radio) {
         $radio = $Snapshot.Radio
         foreach ($part in @($radio.Technology, (Format-Operator -Operator $radio.Operator))) {
@@ -390,15 +252,16 @@ function ConvertTo-TrayText {
 
 function Resolve-AppBlocker {
     # What the user can do about what blocks the connection, if anything: Kind - 'Apn',
-    # 'ApnPassword', 'Pin', 'EnableAdapter', 'Unlock', 'Driver' (the Driver tab) or $null for a
-    # message alone - Message, ActionText, and Enabled ($false when the app can't do it now).
+    # 'ApnPassword', 'Pin', 'EnableAdapter', 'Unlock', 'Driver' (the Driver tab), 'Settings' (the
+    # Connection tab) or $null for a message alone - Message, ActionText, and Enabled ($false
+    # when the app can't do it now).
     param([object] $Snapshot)
 
     if (Test-NoNetworkForMode -Snapshot $Snapshot) {
         return [pscustomobject]@{
             Kind       = 'NetworkMode'
             Message    = Get-ReasonText -Snapshot $Snapshot
-            ActionText = "Use $($script:NetworkModeTexts['Automatic']), every band"
+            ActionText = Get-AppText 'Blocker.UseAutomatic' (Get-AppText 'Mode.Automatic')
             Enabled    = -not $Snapshot.ObserveOnly
         }
     }
@@ -406,32 +269,33 @@ function Resolve-AppBlocker {
         return $null
     }
     $kind, $action = switch ($Snapshot.Reason) {
-        'ApnNeeded' { 'Apn', 'Save APN' }
-        'ApnPasswordUnreadable' { 'ApnPassword', 'Save password' }
-        { $_ -in 'NoPin', 'PinForOtherSim', 'PinUnconfirmed' } { 'Pin', 'Store PIN' }
-        'AdapterDisabled' { 'EnableAdapter', 'Enable adapter' }
-        'FccLocked' { 'Unlock', 'Unlock...' }
-        'NoDriver' { 'Driver', 'Install the driver...' }
+        'ApnNeeded' { 'Apn', 'Blocker.SaveApn' }
+        'ApnPasswordUnreadable' { 'ApnPassword', 'Blocker.SavePassword' }
+        { $_ -in 'NoPin', 'PinForOtherSim', 'PinUnconfirmed' } { 'Pin', 'Blocker.StorePin' }
+        'AdapterDisabled' { 'EnableAdapter', 'Blocker.EnableAdapter' }
+        'FccLocked' { 'Unlock', 'Blocker.Unlock' }
+        'NoDriver' { 'Driver', 'Blocker.InstallDriver' }
+        { $_ -like 'Doh*' } { 'Settings', 'Blocker.OpenSettings' }
         default { $null, $null }
     }
     $enabled = $true
-    $note = $null
+    $sentences = [System.Collections.Generic.List[string]]::new()
+    $sentences.Add((Get-ReasonText -Snapshot $Snapshot))
     if ($Snapshot.ObserveOnly -and $kind -in 'EnableAdapter', 'Unlock') {
         $enabled = $false
-        $note = ' The app only observes: it changes nothing.'
+        $sentences.Add((Get-AppText 'Blocker.ObserveOnly'))
     }
     elseif ($kind -eq 'EnableAdapter' -and -not $Snapshot.Elevated) {
         $enabled = $false
-        $note = ' Enabling it needs administrator rights.'
+        $sentences.Add((Get-AppText 'Blocker.NeedsAdmin'))
     }
     elseif ($kind -eq 'Unlock') {
-        $note = ' Unlocking writes the modem''s non-volatile memory: the app asks before it does.'
+        $sentences.Add((Get-AppText 'Blocker.UnlockNote'))
     }
-    $message = (Get-ReasonText -Snapshot $Snapshot) + $note
     if ($kind -eq 'Pin' -and $null -ne $Snapshot.Sim.AttemptsLeft) {
-        $message += " Attempts left: $($Snapshot.Sim.AttemptsLeft)."
+        $sentences.Add((Get-AppText 'Blocker.AttemptsLeft' $Snapshot.Sim.AttemptsLeft))
     }
-    [pscustomobject]@{ Kind = $kind; Message = $message; ActionText = $action; Enabled = $enabled }
+    [pscustomobject]@{ Kind = $kind; Message = $sentences -join ' '; ActionText = $(if ($action) { Get-AppText $action }); Enabled = $enabled }
 }
 
 function Get-SimView {
@@ -439,21 +303,15 @@ function Get-SimView {
     param([object] $Snapshot)
 
     $sim = $Snapshot.Sim
-    $states = @{
-        Ready = 'Ready'; PinRequired = 'Waiting for its PIN'; PukRequired = 'Blocked: needs its PUK'; Absent = 'No SIM'
-        Busy = 'Busy'; Failure = 'Not working'; Other = 'Waiting for another code'
-    }
-    $state = if ($sim.State -and $states.ContainsKey($sim.State)) { $states[$sim.State] } else { 'Not known' }
-    if ($null -ne $sim.AttemptsLeft) {
-        $state += " - PIN attempts left: $($sim.AttemptsLeft)"
-    }
-    $request = if ($sim.PinRequestOn -eq $true) { 'on' } elseif ($sim.PinRequestOn -eq $false) { 'off' } else { 'not known' }
+    $known = 'Ready', 'PinRequired', 'PukRequired', 'Absent', 'Busy', 'Failure', 'Other'
+    $state = Get-AppText $(if ($sim.State -in $known) { "Sim.$($sim.State)" } else { 'Sim.Unknown' })
+    $request = if ($sim.PinRequestOn -eq $true) { 'Sim.RequestOn' } elseif ($sim.PinRequestOn -eq $false) { 'Sim.RequestOff' } else { 'Sim.RequestUnknown' }
     $connected = [bool]$Snapshot.PortName
     [pscustomobject]@{
-        StateText     = "SIM: $state"
-        RequestText   = "PIN request at power-on: $request"
-        StoredText    = if ($sim.PinStored) { 'A PIN is stored for this SIM.' } else { 'No PIN is stored.' }
-        Note          = if ($sim.PinRejected) { 'The stored PIN was rejected and deleted: the app never tries it again.' } else { $null }
+        StateText     = if ($null -ne $sim.AttemptsLeft) { Get-AppText 'Sim.StateAttempts' $state $sim.AttemptsLeft } else { Get-AppText 'Sim.State' $state }
+        RequestText   = Get-AppText $request
+        StoredText    = Get-AppText $(if ($sim.PinStored) { 'Sim.Stored' } else { 'Sim.NotStored' })
+        Note          = if ($sim.PinRejected) { Get-AppText 'Sim.Rejected' } else { $null }
         CanStorePin   = $connected
         CanForgetPin  = [bool]$sim.PinStored
         CanDisablePin = $connected -and -not $Snapshot.ObserveOnly -and $sim.State -eq 'Ready' -and $sim.PinRequestOn -eq $true
@@ -468,18 +326,17 @@ function Get-ResultText {
     if (-not $last) {
         return $null
     }
-    $key = "$($last.Kind)/$($last.Result)"
-    $text = if ($script:ResultTexts.ContainsKey($key)) {
-        $script:ResultTexts[$key]
+    $text = if (Test-AppText "Result.$($last.Kind).$($last.Result)") {
+        Get-AppText "Result.$($last.Kind).$($last.Result)"
     }
-    elseif ($script:ResultTexts.ContainsKey($last.Result)) {
-        $script:ResultTexts[$last.Result]
+    elseif (Test-AppText "Result.$($last.Result)") {
+        Get-AppText "Result.$($last.Result)"
     }
     else {
-        "$($last.Kind): $($last.Result)."
+        Get-AppText 'Result.Other' $last.Kind $last.Result
     }
     if ($last.Kind -eq 'DisableSimPin' -and $null -ne $last.AttemptsLeft) {
-        $text += " Attempts left: $($last.AttemptsLeft)."
+        $text += ' ' + (Get-AppText 'Result.AttemptsLeft' $last.AttemptsLeft)
     }
     if ($last.Result -eq 'Failed' -and $last.Detail) {
         $text += " $($last.Detail)"
@@ -496,13 +353,13 @@ function Format-BandList {
     $known = @($Supported | Where-Object { $null -ne $_ })
     $left = @($known | Where-Object { $_ -notin $bands })
     if ($known.Count -gt 0 -and $left.Count -eq 0) {
-        return 'every band'
+        return Get-AppText 'Bands.Every'
     }
     if ($known.Count -gt 0 -and $left.Count -le 3 -and $bands.Count -gt $left.Count) {
-        return "every band but $(@($left | ForEach-Object { "$Prefix$_" }) -join ', ')"
+        return Get-AppText 'Bands.EveryBut' (@($left | ForEach-Object { "$Prefix$_" }) -join ', ')
     }
     if ($bands.Count -eq 0) {
-        return 'none'
+        return Get-AppText 'Bands.None'
     }
     @($bands | ForEach-Object { "$Prefix$_" }) -join ', '
 }
@@ -539,44 +396,41 @@ function Get-NetworkModeView {
 
     $currentText = if ($current) {
         $parts = [System.Collections.Generic.List[string]]::new()
-        $parts.Add("The modem now: $(Get-NetworkModeText -Name $current.Mode -Rat $current.Rat).")
+        $parts.Add((Get-AppText 'Network.Current' (Get-NetworkModeText -Name $current.Mode -Rat $current.Rat)))
         if (@($current.LteCodes).Count -gt 0 -or $current.AllBands) {
-            $parts.Add("LTE: $(if ($current.AllBands) { 'every band' } else { Format-BandList -Band $current.Lte -Supported $lte -Prefix 'B' }).")
+            $parts.Add((Get-AppText 'Network.Lte' $(if ($current.AllBands) { Get-AppText 'Bands.Every' } else { Format-BandList -Band $current.Lte -Supported $lte -Prefix 'B' })))
         }
         if (@($current.NrCodes).Count -gt 0 -or ($current.AllBands -and $current.Mode -ne 'LteOnly')) {
-            $parts.Add("NR: $(if ($current.AllBands) { 'every band' } else { Format-BandList -Band $current.Nr -Supported $nr -Prefix 'n' }).")
+            $parts.Add((Get-AppText 'Network.Nr' $(if ($current.AllBands) { Get-AppText 'Bands.Every' } else { Format-BandList -Band $current.Nr -Supported $nr -Prefix 'n' })))
         }
         $parts -join ' '
     }
     else {
-        'The modem''s network mode is not read yet.'
+        Get-AppText 'Network.NotRead'
     }
 
-    $offered = if ($support) { @($support.Modes) } else { @($script:NetworkModeTexts.Keys) }
-    $modes = @([pscustomobject]@{ Name = ''; Text = $script:NotManagedText }) + @(foreach ($name in $script:NetworkModeTexts.Keys) {
-            if ($name -in $offered) { [pscustomobject]@{ Name = $name; Text = $script:NetworkModeTexts[$name] } }
+    $offered = if ($support) { @($support.Modes) } else { $script:NetworkModeNames }
+    $modes = @([pscustomobject]@{ Name = ''; Text = Get-AppText 'Mode.NotManaged' }) + @(foreach ($name in $script:NetworkModeNames) {
+            if ($name -in $offered) { [pscustomobject]@{ Name = $name; Text = Get-AppText "Mode.$name" } }
         })
 
     $notes = [System.Collections.Generic.List[string]]::new()
     $trial = if ($mode) { $mode.Trial } else { $null }
     if ($trial) {
-        $notes.Add("Trying $(Get-NetworkModeText -Name $trial.Selection.NetworkMode): if the modem finds no network with it by $(Format-ClockTime -Time $trial.Until), it goes back to what it had.")
+        $notes.Add((Get-AppText 'Network.Trial' (Get-NetworkModeText -Name $trial.Selection.NetworkMode) (Format-ClockTime -Time $trial.Until)))
     }
     $notice = if ($mode) { $mode.Notice } else { $null }
     if ($notice -and -not $trial) {
         $text = Get-NetworkModeText -Name $notice.Mode
-        $notes.Add($(switch ($notice.Kind) {
-                    'Reverted' { "At $(Format-ClockTime -Time $notice.Time) the modem had found no network with ${text}: it went back to what it had." }
-                    default { "At $(Format-ClockTime -Time $notice.Time) the modem registered with ${text}: it is kept." }
-                }))
+        $notes.Add((Get-AppText $(if ($notice.Kind -eq 'Reverted') { 'Network.Reverted' } else { 'Network.Kept' }) (Format-ClockTime -Time $notice.Time) $text))
     }
-    if ($decision -and $decision.Problem -and $script:NetworkModeProblemTexts.ContainsKey($decision.Problem)) {
-        $notes.Add($script:NetworkModeProblemTexts[$decision.Problem])
+    if ($decision -and $decision.Problem -and (Test-AppText "ModeProblem.$($decision.Problem)")) {
+        $notes.Add((Get-AppText "ModeProblem.$($decision.Problem)"))
     }
     if ($decision -and $decision.Missing) {
         $left = @(@($decision.Missing.Lte | ForEach-Object { "B$_" }) + @($decision.Missing.Nr | ForEach-Object { "n$_" }))
         if ($left.Count -gt 0) {
-            $notes.Add("The modem leaves out $($left -join ', '), though asked: it uses the other bands chosen.")
+            $notes.Add((Get-AppText 'Network.Missing' ($left -join ', ')))
         }
     }
 
@@ -626,7 +480,7 @@ function Get-TrayModeMenu {
     $current = if ($mode -and $mode.Current) { $mode.Current.Mode } else { $null }
     $usable = $view.CanApply -and $Worker -eq 'Running'
     [pscustomobject]@{
-        Text  = if ($mode -and $mode.Current) { "Network mode: $(Get-NetworkModeText -Name $current -Rat $mode.Current.Rat)" } else { 'Network mode' }
+        Text  = if ($mode -and $mode.Current) { Get-AppText 'Tray.NetworkModeNow' (Get-NetworkModeText -Name $current -Rat $mode.Current.Rat) } else { Get-AppText 'Tray.NetworkMode' }
         Items = [object[]]@(foreach ($choice in $view.Modes | Where-Object Name) {
                 [pscustomobject]@{
                     Name    = $choice.Name
@@ -638,14 +492,124 @@ function Get-TrayModeMenu {
     }
 }
 
-# Why a driver package is refused (Resolve-DriverPackage's problems), in the user's words.
-$script:DriverProblemTexts = @{
-    NoInf        = 'it holds no driver (no INF file)'
-    NotForModem  = 'none of its drivers is meant for this modem''s AT port'
-    NoCatalog    = 'its driver has no signature catalog'
-    NotWhql      = 'its catalog is not signed by Microsoft (WHQL)'
-    NotInCatalog = 'its INF file is not the one its catalog vouches for: it was changed, or is damaged'
-    NotTrusted   = 'its signature can''t be verified'
+function Get-TrayUpdateItem {
+    <#
+    .SYNOPSIS
+        The tray menu's update notice, from the snapshot.
+    .DESCRIPTION
+        A pure function. Returns Visible - a newer release was found, and the settings still ask
+        for the notice -, Text and Url, the release's page.
+    .EXAMPLE
+        Get-TrayUpdateItem -Snapshot $snapshot
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [AllowNull()]
+        [object] $Snapshot
+    )
+
+    $update = if ($Snapshot -and $Snapshot.PSObject.Properties['Update']) { $Snapshot.Update } else { $null }
+    $wanted = -not ($Snapshot -and $Snapshot.Settings -and $Snapshot.Settings.PSObject.Properties['CheckForUpdates'] -and -not $Snapshot.Settings.CheckForUpdates)
+    if ($wanted -and $update -and $update.Result -eq 'Newer' -and $update.Url) {
+        return [pscustomobject]@{ Visible = $true; Text = Get-AppText 'Tray.Update' $update.Version; Url = $update.Url }
+    }
+    [pscustomobject]@{ Visible = $false; Text = $null; Url = $null }
+}
+
+function Get-DnsView {
+    # The connection tab's encrypted DNS: Text, what the adapter has now; CanEnable, $false on a
+    # Windows without the per-interface API; Known, the servers Windows has a template for.
+    param([object] $Snapshot)
+
+    $dns = if ($Snapshot -and $Snapshot.PSObject.Properties['Dns']) { $Snapshot.Dns } else { $null }
+    $supported = if ($dns) { $dns.Supported } else { $null }
+    $encrypted = @(if ($dns) { $dns.Encrypted | Where-Object { $_ } })
+    $name = if ($dns -and $dns.PSObject.Properties['Name']) { $dns.Name } else { $null }
+    # A DoH server named by its template: when it was looked up, and when it will be again.
+    # Why a lookup failed is the log's to say, in English.
+    $lookup = if ($name -and $name.Failure) {
+        Get-AppText 'Dns.LookupFailed' $name.Host
+    }
+    elseif ($name -and @($name.Addresses).Count -gt 0) {
+        $key = if ($name.PSObject.Properties['Via'] -and $name.Via -eq 'Operator') { 'Dns.LookedUpOperator' } else { 'Dns.LookedUp' }
+        if ($name.Next) {
+            Get-AppText "${key}Next" $name.Host (Format-ClockTime -Time $name.LookedUp) (Format-ClockTime -Time $name.Next)
+        }
+        else {
+            Get-AppText $key $name.Host (Format-ClockTime -Time $name.LookedUp)
+        }
+    }
+    elseif ($name) {
+        Get-AppText 'Dns.LookingUp' $name.Host
+    }
+    $text = if ($supported -eq $false) {
+        Get-AppText 'Dns.Unavailable'
+    }
+    elseif ($encrypted.Count -gt 0) {
+        @((Get-AppText 'Dns.On' ($encrypted -join ', ')), $lookup | Where-Object { $_ }) -join ' '
+    }
+    elseif ($name) {
+        @((Get-AppText 'Dns.Waiting'), $lookup | Where-Object { $_ }) -join ' '
+    }
+    elseif ($null -ne $supported) {
+        Get-AppText 'Dns.Off'
+    }
+    else {
+        $null
+    }
+    [pscustomobject]@{
+        Text      = $text
+        CanEnable = $supported -ne $false
+        Known     = [string[]]@(if ($dns) { $dns.Known | Where-Object { $_ } })
+    }
+}
+
+function Get-StartupView {
+    # The connection tab's start at sign-in: Checked (the installer's logon task is on), CanChange,
+    # and Note - why it can't be changed.
+    param([object] $Snapshot, [string] $Worker)
+
+    $state = if ($Snapshot -and $Snapshot.PSObject.Properties['StartAtLogon']) { $Snapshot.StartAtLogon } else { $null }
+    $note = if (-not $Snapshot) {
+        $null
+    }
+    elseif ($null -eq $state) {
+        Get-AppText 'Startup.NotInstalled'
+    }
+    elseif ($Snapshot.ObserveOnly) {
+        Get-AppText 'Startup.ObserveOnly'
+    }
+    elseif (-not $Snapshot.Elevated) {
+        Get-AppText 'Startup.NeedsAdmin'
+    }
+    [pscustomobject]@{
+        Checked   = $state -eq $true
+        CanChange = [bool]($Snapshot -and $null -ne $state -and -not $Snapshot.ObserveOnly -and $Snapshot.Elevated -and $Worker -eq 'Running')
+        Note      = $note
+    }
+}
+
+function Get-SnapshotSettingIssue {
+    # The settings file's issues the snapshot carries (ConvertTo-AppSetting's Issues).
+    param([object] $Snapshot)
+
+    if ($Snapshot -and $Snapshot.PSObject.Properties['SettingsIssues']) { @($Snapshot.SettingsIssues | Where-Object { $_ }) }
+}
+
+function ConvertTo-SettingIssueText {
+    # One issue of the settings - Setting, Rule, Values (ConvertTo-AppSetting's) - in the app's
+    # language; in English, the problem the log says (but an unreadable file's reason).
+    param([object] $Issue)
+
+    $values = [object[]]@($Issue.Values)
+    switch ($Issue.Rule) {
+        'Unknown' { return Get-AppText 'Setting.Unknown' $Issue.Setting }
+        'Unreadable' { return Get-AppText 'Setting.Unreadable' }
+        'DohNeedsServers' { return Get-AppText 'Setting.DohNeedsServers' }
+        'TemplateAddress' { return Get-AppText 'Setting.TemplateAddress' $values[0] }
+    }
+    Get-AppText 'Setting.Rejected' $Issue.Setting (Get-AppText "Rule.$($Issue.Rule)" -Arguments $values)
 }
 
 function Get-DriverView {
@@ -680,37 +644,39 @@ function Get-DriverView {
     $device = if ($driver) { $driver.Device } else { $null }
     $stateText = switch ($device) {
         'Present' {
-            $what = @($driver.Provider, $driver.Version | Where-Object { $_ }) -join ' '
-            "The modem's AT port has its driver$(if ($what) { ": $what" })$(if ($driver.Inf) { " ($($driver.Inf))" })."
+            $what = @($driver.Provider, $driver.Version, $(if ($driver.Inf) { "($($driver.Inf))" }) | Where-Object { $_ }) -join ' '
+            if ($what) { Get-AppText 'Driver.PresentWhat' $what } else { Get-AppText 'Driver.Present' }
         }
-        'NoDriver' { 'The modem''s AT port has no driver: the app can''t talk to the modem.' }
-        'Problem' { 'Windows reports a problem with the modem''s AT port: installing its driver again may mend it.' }
-        'Absent' { 'No modem on USB. A driver installed now is used as soon as the modem is plugged in.' }
-        default { 'The modem''s AT port is not looked at yet.' }
+        'NoDriver' { Get-AppText 'Driver.NoDriver' }
+        'Problem' { Get-AppText 'Driver.Problem' }
+        'Absent' { Get-AppText 'Driver.Absent' }
+        default { Get-AppText 'Driver.NotLooked' }
     }
 
     $copy = @($Known | Where-Object { $_.Copy }) | Select-Object -First 1
-    $sourceText = 'The app doesn''t come with the modem''s driver: it has no license to redistribute it. Download a copy, then choose it here: the app checks that Microsoft signed it (WHQL) for this modem, and never runs a program from it.'
-    if ($copy) {
-        $sourceText = "The app doesn't come with the modem's driver: it has no license to redistribute it. A copy of MediaTek's driver, $($copy.Name) $($copy.Version), is published by a third party, $($copy.Copy.Publisher), as $($copy.Copy.File). Download it, then choose it here: the app checks that Microsoft signed it (WHQL) for this modem, and never runs a program from it."
+    $sourceText = if ($copy) {
+        Get-AppText 'Driver.SourceCopy' "$($copy.Name) $($copy.Version)" $copy.Copy.Publisher $copy.Copy.File
+    }
+    else {
+        Get-AppText 'Driver.Source'
     }
 
     $package = if ($driver) { $driver.Package } else { $null }
     $verdict = if ($package) { $package.Verdict } else { $null }
     $operation = if ($driver) { $driver.Operation } else { $null }
     $packageText = switch ($operation) {
-        'CheckDriverPackage' { 'Checking the driver package...' }
-        'InstallDriver' { 'Installing the driver: Windows may take a minute.' }
-        'UninstallDriver' { 'Uninstalling the driver...' }
+        'CheckDriverPackage' { Get-AppText 'Driver.Checking' }
+        'InstallDriver' { Get-AppText 'Driver.Installing' }
+        'UninstallDriver' { Get-AppText 'Driver.Uninstalling' }
         default {
             if ($verdict) {
                 $what = if ($verdict.Known) { "$($verdict.Known.Name) $($verdict.Known.Version)" } else { @($verdict.Provider, $verdict.Version | Where-Object { $_ }) -join ' ' }
                 switch ($verdict.Verdict) {
-                    'Verified' { "$($package.Name): $what, a version the app knows, signed by Microsoft (WHQL) for this modem." }
-                    'Signed' { "$($package.Name): $what, signed by Microsoft (WHQL) for this modem, but not a version the app knows: it asks before installing it." }
+                    'Verified' { Get-AppText 'Driver.Verified' $package.Name $what }
+                    'Signed' { Get-AppText 'Driver.Signed' $package.Name $what }
                     default {
-                        $why = @($verdict.Problems | ForEach-Object { if ($script:DriverProblemTexts.ContainsKey($_)) { $script:DriverProblemTexts[$_] } else { $_ } })
-                        "$($package.Name) can't be installed: $($why -join '; ')."
+                        $why = @($verdict.Problems | ForEach-Object { if (Test-AppText "DriverProblem.$_") { Get-AppText "DriverProblem.$_" } else { $_ } })
+                        Get-AppText 'Driver.Refused' $package.Name ($why -join '; ')
                     }
                 }
             }
@@ -724,18 +690,18 @@ function Get-DriverView {
     $usable = [bool]($Snapshot -and $Worker -eq 'Running' -and -not $operation)
     if ($Snapshot -and $Snapshot.ObserveOnly) {
         $usable = $false
-        $note = 'The app only observes: it changes nothing.'
+        $note = Get-AppText 'Driver.ObserveOnly'
     }
     elseif ($Snapshot -and -not $Snapshot.Elevated) {
         $usable = $false
-        $note = 'Installing or uninstalling a driver needs administrator rights: start the app as administrator.'
+        $note = Get-AppText 'Driver.NeedsAdmin'
     }
     $installable = $verdict -and $verdict.Verdict -in 'Verified', 'Signed'
     # A mode on trial is written back through the AT port: the driver stays until it ends.
     $mode = Get-SnapshotNetworkMode -Snapshot $Snapshot
     $trial = [bool]($mode -and $mode.Trial)
     if ($usable -and $trial -and $device -eq 'Present') {
-        $note = 'A network mode is on trial: the driver can be uninstalled once the trial ends.'
+        $note = Get-AppText 'Driver.Trial'
     }
     [pscustomobject]@{
         StateText      = $stateText
@@ -759,8 +725,8 @@ function ConvertTo-WindowView {
         'NotResponding'). Returns Tone, Title, Detail, Note, Technology, Operator, Signal (lines),
         Cells and Carriers (rows of text), Blocker (Resolve-AppBlocker's), Sim (the SIM tab),
         NetworkMode (the network tab, Get-NetworkModeView's), Driver (the Driver tab,
-        Get-DriverView's), Settings and ApnPasswordStored
-        (the connection tab), Result (the newest command's
+        Get-DriverView's), Settings, ApnPasswordStored, Dns and Startup (the connection tab: its
+        encrypted DNS, the start at sign-in), Result (the newest command's
         outcome, as a sentence) and LastResult (its Id, Kind and Result), and Footer.
     .EXAMPLE
         ConvertTo-WindowView -Snapshot $snapshot -Worker Running
@@ -777,22 +743,22 @@ function ConvertTo-WindowView {
 
     $tone = Resolve-AppTone -Snapshot $Snapshot -Worker $Worker
     $detail = switch ($Worker) {
-        'Restarting' { 'The monitor stopped and is restarting. The connection is not touched.' }
-        'NotResponding' { 'The monitor is not responding. The connection is not touched.' }
-        default { if ($Snapshot -and $Snapshot.State) { Get-ReasonText -Snapshot $Snapshot } else { 'Starting.' } }
+        'Restarting' { Get-AppText 'Window.Restarting' }
+        'NotResponding' { Get-AppText 'Window.NotResponding' }
+        default { if ($Snapshot -and $Snapshot.State) { Get-ReasonText -Snapshot $Snapshot } else { Get-AppText 'Window.Starting' } }
     }
     $notes = [System.Collections.Generic.List[string]]::new()
     if ($Snapshot) {
-        if ($Snapshot.Simulated) { $notes.Add("Development mode: a simulated modem (scenario $($Snapshot.Scenario)).") }
-        if ($Snapshot.ObserveOnly) { $notes.Add('The app only observes: it changes nothing on the modem or the system.') }
-        if ($Snapshot.SettingsPending) { $notes.Add('The data connection is up with other settings: the new ones apply at the next connection.') }
-        if (@($Snapshot.SettingsProblems).Count -gt 0) { $notes.Add("Settings file: $(@($Snapshot.SettingsProblems) -join ' ')") }
-        if ($Snapshot.Modems -gt 1) { $notes.Add("$($Snapshot.Modems) modems found: the app uses the one on $($Snapshot.PortName).") }
+        if ($Snapshot.Simulated) { $notes.Add((Get-AppText 'Window.Simulated' $Snapshot.Scenario)) }
+        if ($Snapshot.ObserveOnly) { $notes.Add((Get-AppText 'Window.ObserveOnly')) }
+        if ($Snapshot.SettingsPending) { $notes.Add((Get-AppText 'Window.SettingsPending')) }
+        $issues = @(Get-SnapshotSettingIssue -Snapshot $Snapshot)
+        if ($issues.Count -gt 0) { $notes.Add((Get-AppText 'Window.SettingsFile' (@($issues | ForEach-Object { ConvertTo-SettingIssueText -Issue $_ }) -join ' '))) }
+        if ($Snapshot.Modems -gt 1) { $notes.Add((Get-AppText 'Window.Modems' $Snapshot.Modems $Snapshot.PortName)) }
         # The step that brought the connection back, until health has held long enough.
         $recovery = Get-SnapshotRecovery -Snapshot $Snapshot
-        if ($recovery -and $recovery.Status -eq 'Healthy' -and $recovery.Step -and $recovery.StepTime -and $script:StepTexts.ContainsKey($recovery.Step)) {
-            $step = $script:StepTexts[$recovery.Step]
-            $notes.Add("Recovered at $(Format-ClockTime -Time $recovery.StepTime): $($step.Substring(0, 1).ToLowerInvariant())$($step.Substring(1))")
+        if ($recovery -and $recovery.Status -eq 'Healthy' -and $recovery.Step -and $recovery.StepTime -and (Test-AppText "StepInline.$($recovery.Step)")) {
+            $notes.Add((Get-AppText 'Window.Recovered' (Format-ClockTime -Time $recovery.StepTime) (Get-AppText "StepInline.$($recovery.Step)")))
         }
     }
 
@@ -810,7 +776,7 @@ function ConvertTo-WindowView {
         }
         $cells = @(foreach ($cell in @($radio.Cells)) {
                 [pscustomobject]@{
-                    Role      = if ($cell.Serving) { 'Serving' } else { 'Neighbour' }
+                    Role      = Get-AppText $(if ($cell.Serving) { 'Cell.Serving' } else { 'Cell.Neighbour' })
                     Rat       = $cell.Technology
                     Band      = $cell.Band
                     Channel   = $cell.Arfcn
@@ -829,7 +795,7 @@ function ConvertTo-WindowView {
                 $bandwidth = @(& $pick $carrier.DlBandwidthMHz $carrier.UlBandwidthMHz | ForEach-Object { $_.ToString('0.#', [cultureinfo]::InvariantCulture) }) -join '/'
                 [pscustomobject]@{
                     Carrier    = $carrier.Carrier
-                    State      = if ($carrier.Primary) { 'Primary' } elseif ($carrier.Active) { 'Active' } else { 'Inactive' }
+                    State      = Get-AppText $(if ($carrier.Primary) { 'Carrier.Primary' } elseif ($carrier.Active) { 'Carrier.Active' } else { 'Carrier.Inactive' })
                     Band       = $carrier.Band
                     Channel    = $carrier.Arfcn
                     Pci        = $carrier.Pci
@@ -842,13 +808,14 @@ function ConvertTo-WindowView {
 
     $footer = [System.Collections.Generic.List[string]]::new()
     if ($Snapshot) {
-        $footer.Add($(if ($Snapshot.PortName) { "AT port $($Snapshot.PortName)" } else { 'AT port closed' }))
-        $footer.Add("updated $($Snapshot.Time.ToString('HH:mm:ss', [cultureinfo]::InvariantCulture))")
+        $footer.Add($(if ($Snapshot.PortName) { Get-AppText 'Footer.Port' $Snapshot.PortName } else { Get-AppText 'Footer.PortClosed' }))
+        $footer.Add((Get-AppText 'Footer.Updated' $Snapshot.Time.ToString('HH:mm:ss', [cultureinfo]::InvariantCulture)))
         if ($Snapshot.PSObject.Properties['DataPath'] -and $Snapshot.DataPath -and $Snapshot.DataPath.Time) {
-            $word = switch ($Snapshot.DataPath.Result) { 'Passed' { 'checked' } 'Failed' { 'failed' } default { 'not checked yet' } }
-            $footer.Add("data path $word at $($Snapshot.DataPath.Time.ToString('HH:mm:ss', [cultureinfo]::InvariantCulture))")
+            $key = switch ($Snapshot.DataPath.Result) { 'Passed' { 'Footer.PathChecked' } 'Failed' { 'Footer.PathFailed' } default { 'Footer.PathPending' } }
+            $footer.Add((Get-AppText $key $Snapshot.DataPath.Time.ToString('HH:mm:ss', [cultureinfo]::InvariantCulture)))
         }
-        if (-not $Snapshot.Elevated) { $footer.Add('no administrator rights') }
+        if (-not $Snapshot.Elevated) { $footer.Add((Get-AppText 'Footer.NotElevated')) }
+        if ($Snapshot.PSObject.Properties['AppVersion'] -and $Snapshot.AppVersion) { $footer.Add((Get-AppText 'Footer.Version' $Snapshot.AppVersion)) }
     }
 
     [pscustomobject]@{
@@ -856,7 +823,7 @@ function ConvertTo-WindowView {
         Title             = Get-AppTitle -Snapshot $Snapshot -Tone $tone
         Detail            = $detail
         Note              = if ($notes.Count) { $notes -join ' ' } else { $null }
-        Technology        = if ($radio -and $radio.NrAvailable) { "$($radio.Technology), 5G available" } elseif ($radio) { $radio.Technology } else { $null }
+        Technology        = if ($radio -and $radio.NrAvailable) { Get-AppText 'Window.NrAvailable' $radio.Technology } elseif ($radio) { $radio.Technology } else { $null }
         Operator          = if ($radio) { Format-Operator -Operator $radio.Operator } else { $null }
         Bars              = if ($radio) { $radio.Bars } else { $null }
         Signal            = [string[]]$signal.ToArray()
@@ -868,6 +835,8 @@ function ConvertTo-WindowView {
         Driver            = Get-DriverView -Snapshot $Snapshot -Worker $Worker -Known @(Get-KnownDriverPackage)
         Settings          = if ($Snapshot) { $Snapshot.Settings } else { $null }
         ApnPasswordStored = $Snapshot -and $Snapshot.ApnPasswordStored
+        Dns               = Get-DnsView -Snapshot $Snapshot
+        Startup           = Get-StartupView -Snapshot $Snapshot -Worker $Worker
         Result            = if ($Snapshot) { Get-ResultText -Snapshot $Snapshot } else { $null }
         LastResult        = if ($Snapshot) { @($Snapshot.Results) | Select-Object -Last 1 -Property Id, Kind, Result } else { $null }
         Footer            = $footer -join ' - '
