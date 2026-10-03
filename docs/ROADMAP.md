@@ -18,7 +18,7 @@ written `(planned)`.
 | [M2 — Connection](#m2) | ✅ complete |
 | [M3 — Tray app](#m3) | ✅ complete |
 | [M4 — Health & recovery](#m4) | ✅ complete |
-| [M5 — Modes & bands](#m5) | 📋 planned |
+| [M5 — Modes & bands](#m5) | ✅ complete |
 | [M6 — Driver installation](#m6) | 📋 planned |
 | [M7 — Packaging & first release](#m7) — tag `v1.0.0` (planned) | 📋 planned |
 | [M8 — eSIM](#m8) — tag `v1.1.0` (planned) | 📋 planned |
@@ -98,10 +98,13 @@ Optional, not scheduled (decided 2026-10-01): the FCC unlock on a module that is
 <a id="m5"></a>
 ## M5 — Modes & bands
 
-- [ ] Read current mode and bands from the modem; supported values from `AT+GTACT=?`.
-- [ ] UI: mode selector (at least 4G + 5G / 4G only) and per-RAT band checkboxes.
-- [ ] Apply inside a maintenance window, writing every managed RAT's band list (the modem keeps one list per RAT); persist in settings; re-apply on every connect.
-- [ ] On the device: `AT-COMMANDS.md` §7 questions 7 (do NR codes restrict NSA?) and 10 (`+GTCAINFO` on SA; LTE-A and NSA answered in M2), and why n77 drops out of the band list (§5).
+- [x] Read current mode and bands from the modem at every pass (`AT+GTACT?`); supported values from `AT+GTACT=?`, once per channel. Pure parsers on device fixtures; band codes kept as read (invariant 9).
+- [x] UI: mode selector — *4G + 5G*, *4G only*, *5G only (SA)*, or *As the modem has it* (decided 2026-10-03) — and per-RAT band checkboxes, in a *Network* tab; the quick mode switch in the tray menu.
+- [x] Apply inside a maintenance window, writing every managed RAT's band list (the modem keeps one list per RAT); persist in settings; re-apply on every connect — written only when the modem's differs from the settings, a band the modem drops by itself (n77) no reason to write again, a write that didn't hold never repeated. The user's choice is tried: saved once the modem registers with it, written back as it was when it finds no network; a narrowed mode that loses the network takes no recovery step and says so (decided 2026-10-03).
+- [x] On the simulated modem: a network mode kept as the device keeps it, one list per RAT, n77 dropped with n78, a write that registers it again; new scenarios — the modem in LTE-only mode, in NR-only mode without 5G SA, a network with 5G SA.
+- [x] On the device: `AT-COMMANDS.md` §7 question 7 — NR codes restrict NSA too (§5); question 10 — no 5G SA network for our SIM, the modem camping on another operator's SA cell (§4.1); n77 drops out when n78 is listed too, and stays alone (§5); every write ends the data context. The app's own pass and trials on the real modem: re-applied, kept, undone after 3 min.
+
+Optional, not scheduled: `+GTCAINFO` on 5G SA (question 10), where a SIM's operator offers it; the LTE neighbour lines with a six-digit channel seen once (`AT-COMMANDS.md` §4.1).
 
 <a id="m6"></a>
 ## M6 — Driver installation

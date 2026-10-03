@@ -46,7 +46,8 @@ Planned, in roadmap order:
 - **Recovery** — health checks from "is the device there?" down to "do packets actually flow?",
   and a ladder of recovery steps that starts from the gentlest one the symptom allows and
   escalates only while the link stays down.
-- **Modes and bands** — 4G + 5G or 4G only, and per-band locking for LTE and NR.
+- **Modes and bands** — 4G + 5G, 4G only or 5G only (SA), and per-band locking for LTE and NR.
+  A new mode is tried first: if the modem finds no network with it, it goes back to what it had.
 - **Drivers** — detects when the modem's AT ports have no driver and installs the driver package
   you provide, after checking its Microsoft signature and that it matches your modem.
 - **eSIM** (after 1.0) — on modules with an embedded SIM: list, switch, rename, download and delete

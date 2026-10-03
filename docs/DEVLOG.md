@@ -4,6 +4,104 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-03 — M5: the review pass
+
+One lite review of M5's changes found nine defects in the product, all fixed; each fix has a test
+that fails without it (mutation-checked):
+- **A second choice during a trial ended it without a network**: the same choice applied again
+  was saved at once, and *As the modem has it* left the modem in the untried mode — unmanaged, so
+  the ladder then reset it for nothing. A choice the modem has already joins the trial, and
+  leaving it unmanaged writes the setting before back first.
+- **A write the modem refused blocked the data context for good**: retried at every pass ahead of
+  the context's steps, while the ladder climbed. A refused write is remembered as one not kept,
+  until the port is opened anew; and the step no longer hides what the connection waits for, so
+  health and recovery go by the real reason.
+- **A revert the modem didn't take still ended the trial**: it now ends only once the modem
+  answers `OK`, tried again a pass later and once the modem is back.
+- **A trial due while the modem was off USB made the worker spin**: its time no longer wakes the
+  worker while the port is closed, nor before a failed attempt is due again.
+- **Applying the mode the modem had always wrote**: n77 left out beside n78 counted as a
+  difference, so *4G + 5G* registered the modem again for nothing.
+- **A write that got no answer started no trial**: it may have landed; it is tried as one that did.
+- **A write the modem didn't keep was saved** once it registered with its old mode: a trial is
+  confirmed only with the mode in force.
+- **A trial was published only at the end of the cycle**: a cycle failing after the command left
+  the next worker without it or its window. Both are published at once.
+- **One failed read of the mode escalated a narrowed mode**: an unknown setting counts as narrowed
+  while the settings narrow it.
+
+## 2026-10-03 — M5 on the device: NR codes restrict NSA; n77 goes with n78
+
+Two sessions on the real modem, the data context up (the modem a backup, metric 500), then
+everything put back as found — `AT+GTACT=20,6,3,0`, context 1 deleted, the adapter as it was:
+- **NR band codes restrict the NR leg of EN-DC too** (`AT-COMMANDS.md` §7 question 7). With the
+  LTE list held on B3, the anchor that carried the NR leg: n78 allowed, the NR leg on n78 in 12
+  reads out of 12 and `+CSCON?` connected on LTE and NR; n79 only, no NR leg in 12, connected on
+  LTE alone. No measurable traffic flowed in these runs: the NR leg came with the activation of
+  the data context, as in M2, and the modem stayed connected throughout. With every NR band the
+  leg came back.
+- **n77 drops out when n78 is listed too**, whether written by code `0`, code by code or as
+  `5077,5078`, in NR-only mode as well and without a registration; written alone, it stays. n78
+  lies within n77; why the firmware keeps the narrower band is not documented.
+- **No 5G SA for our SIM** (question 10 stays open): in NR-only mode the modem found nothing to
+  register on in 90 s, nor in 3 min as an app trial, and listed as serving an NR cell of another
+  operator that offers 5G SA there. The window showed "5G SA" for it: fixed — no technology while
+  the operator read says the modem is not registered.
+- **Every write ends the data context**; the modem registers again 1–2 s after the `OK`, and a
+  registration read right after the write can still report the registration it ends — the
+  reason a choice is confirmed only from a read 10 s later or more.
+- **The app's code on the real modem**: from NR-only, the pass wrote the managed 4G + 5G and was
+  online and healthy 11 s later; *4G only* tried and kept in 11 s; *5G only* tried and written
+  back exactly 3 min later, online 11 s after that; *4G + 5G* tried and kept. No recovery step,
+  every gap inside a maintenance window.
+- Seen once, recorded as open: LTE neighbour lines with the NR-style "not known" TAC and a
+  six-digit channel ending in `12`; their band is not decoded.
+
+## 2026-10-03 — Decided: the modes, a mode without a network, the default, no confirmation
+
+Four decisions of M5, taken by the maintainer as proposed:
+- **Modes**: *4G + 5G* (`20,6,3`), *4G only* (`2,3,3`) and *5G only (SA)* (`14,6,6`). Rejected:
+  the minimum of two (no way to try 5G SA from the app), and NR + LTE without UMTS or other
+  preferences (3G is off here; mode `17` unverified).
+- **A mode that finds no network**: the user's choice is tried and written back as it was without
+  a registration by the end of its maintenance window; later, a narrowed mode that loses the
+  network takes no recovery step for H4 and is shown red, *No network*, with *Use 4G + 5G, every
+  band*. Rejected: an automatic fallback to 4G + 5G (the app writing persistent state on its own,
+  a gap at every start), no trial (a remote user could cut themselves off), and the plain ladder
+  (resets every hour that mend nothing).
+- **Not managed by default**: the app writes no mode until the user chooses one. Rejected:
+  managing *4G + 5G* with every band from the first connect (a persistent write without a choice,
+  over a configuration made elsewhere), and managing mode and bands separately.
+- **No confirmation** before a mode is written; the window says the modem keeps it. Rejected: a
+  confirmation for the tray only, or for every change.
+
+## 2026-10-03 — M5: modes and bands
+
+The network mode and its bands (`AT+GTACT`), in the window, the tray and the connect pass
+(ARCHITECTURE → *Modes and bands*):
+- **Written only when the modem's differs from the settings.** The modem keeps the setting across
+  resets and power cycles, and every write registers it again and ends the data context: the pass
+  reads it at every connect and writes nothing over a setting that does what the settings ask. A
+  band list counts as kept when the modem uses no band the settings leave out — not when it
+  lists every band asked: the modem drops n77 by itself, and an exact comparison would register
+  it again at every pass. The price, accepted: a list an outside tool narrowed is not widened
+  again by the pass; *Apply* writes the very lists.
+- **Every managed RAT's list is written**, the bands chosen or every band supported, so nothing of
+  an earlier setting survives; UMTS lists are never written. The same command over the same
+  setting is never written twice: a modem that doesn't keep it would otherwise be registered
+  again at every pass.
+- **The user's choice is tried**, in a maintenance window: saved once a registration with it in
+  force is read 10 s after the write or later; without one by the window's end, the setting read before the first
+  change on trial is written back code by code, and the settings never held the failed choice.
+  The pass keeps the choice on trial meanwhile, and a worker that replaces another carries it on.
+  Saving the connection settings never changes the network mode.
+- **A narrowed mode that loses the network is shown, not escalated**: H4 gets no step while the
+  modem is in NR-only mode or on chosen LTE bands, as the settings ask.
+- **The simulated modem keeps a network mode** as the device does — one list per RAT, n77 dropped
+  with n78, the setting kept across a reset — and registers again after a write in a network with
+  given bands, with or without 5G SA; three new scenarios. Thirteen mutations of the new logic
+  each make a test fail.
+
 ## 2026-10-03 — M4 complete: 24 hours on the real modem
 
 The tray app ran 24 h on the real modem, elevated, the modem a backup (metric 500), sampled every

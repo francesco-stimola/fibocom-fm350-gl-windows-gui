@@ -64,8 +64,9 @@ user reopens it and monitoring resumes.
   the stored PIN and APN password only as "stored or not" — and no identifier: no ICCID, and
   cells without MCC, MNC, TAC or cell identity. Their version grows across worker restarts.
 - **Commands** (`Send-ModemCommand`): check now (a connect pass, which never breaks a connection
-  that works), save settings and the APN password, store or forget the SIM PIN, remove the PIN
-  from the SIM, lift the FCC lock, enable the adapter. Secrets travel as `SecureString`s and stay
+  that works), save settings and the APN password, set the network mode (tried, *Modes and*
+  *bands*), store or forget the SIM PIN, remove the PIN from the SIM, lift the FCC lock, enable
+  the adapter. Secrets travel as `SecureString`s and stay
   in the process. Each command's outcome comes back in the next snapshots (the last ten).
 - **Cadence** (`Resolve-WorkerSchedule`, pure; decided 2026-10-01): a connect pass every 30 s
   online, every 10 s while the connection is on its way, every 30 s while it waits for the user
@@ -103,7 +104,8 @@ user reopens it and monitoring resumes.
   modem and adapter (`New-SimulatedDevice`, scenarios in `Data/Simulation.psd1`: online, connect,
   an APN needed, a PIN required, an FCC lock and its unlock, a disabled adapter, no modem, no
   driver; and M4's faults — a path that settles, a data path down, a network that drops ICMP, a
-  registration lost, a modem that doesn't answer, a network that refuses it for good) — no
+  registration lost, a modem that doesn't answer, a network that refuses it for good; and M5's
+  modem in LTE-only mode, in NR-only mode where there is no 5G SA, and a network with 5G SA) — no
   device, no administrator rights,
   nothing changed on the system. The recovery steps act on the simulated modem as on a real one,
   every time they run. Its settings,
@@ -414,7 +416,8 @@ step out (`Resolve-RecoveryAction`), proven by a matrix:
 - **Skipped steps.** Without administrator rights the steps that need them (R1, R6) are skipped;
   so is the reset (R5) when the SIM's PIN request is on and no PIN is stored — after a reset the
   SIM would wait for a PIN the app doesn't have, an outage turned into one only the user can end.
-  A check left with no step is shown, not escalated.
+  A network mode the user narrowed leaves H4 without a step (*Modes and bands*). A check left
+  with no step is shown, not escalated.
 - **A step with nothing to act on is not counted**: when the port went with the modem between
   the reading and the step, the next cycle decides again on what the next look finds.
 - **Observe only.** The step is named in the window and the log, never taken.
@@ -436,22 +439,69 @@ An intentional operation that disrupts the link opens a **maintenance window**
 window ends, or until the modem is healthy again after the operation broke the link — a healthy
 reading taken before it did doesn't close it; then a failing check gets its grace time from the
 window's end. A window lasts 3 min; the FCC unlock, which restarts the modem as a reset does,
-opens one of 5 min (decided 2026-10-02). M5's mode and band changes and M8's profile and slot
-switches will open one too.
+opens one of 5 min (decided 2026-10-02). A network mode written — by the pass, by the user's
+choice, by its undoing — opens one of 3 min (*Modes and bands*); M8's profile and slot switches
+will open one too.
 
 ## Modes and bands (M5)
 
-Everything goes through `AT+GTACT` (spec: [`AT-COMMANDS.md` §5](AT-COMMANDS.md#5-gtact--mode-and-bands)).
-- **Mode**: at least *4G + 5G* and *4G only*; the full list follows from `AT+GTACT=?` on the
-  device.
-- **Band lock**: per-RAT band lists; empty means "all bands". The modem keeps one list per RAT
-  and a write changes only the RATs it names, so applying always writes **every** managed RAT's
-  list: nothing from an earlier setting survives by accident.
-- Applying: open a maintenance window → set → wait for re-registration → close the window.
-- The chosen mode and bands are saved in the settings and **re-applied on every connect**, so the
-  app never depends on what the modem remembers across a reset.
+Everything goes through `AT+GTACT` (spec: [`AT-COMMANDS.md` §5](AT-COMMANDS.md#5-gtact--mode-and-bands));
+the decisions are pure functions (`Resolve-NetworkMode`, `Resolve-NetworkModeTrial`).
+- **Modes** (decided 2026-10-03): *4G + 5G* (`20,6,3`: NR preferred, then LTE — UMTS too, as the
+  modem's automatic mode), *4G only* (`2,3,3`) and *5G only (SA)* (`14,6,6`), of those
+  `AT+GTACT=?` lists. 5G NSA needs an LTE anchor: *5G only* registers only where the SIM's
+  operator offers 5G SA.
+- **Not managed by default** (decided 2026-10-03): the app writes no mode until the user chooses
+  one; *As the modem has it* stops managing it again. A managed mode comes with its band lists:
+  per RAT the mode uses, the bands chosen, or every band the modem supports.
+- **Read at every pass** once the SIM is ready (`AT+GTACT?`, cheap), what the modem supports once
+  per channel (`AT+GTACT=?`); the window shows both.
+- **Written only when the modem's differs from the settings.** The modem keeps its setting across
+  resets and power cycles, and every write registers it again and ends the data context
+  (`AT-COMMANDS.md` §5), so a mode that works is never written again for nothing. The mode is
+  compared on its RAT and the preferences that count for it; a band list counts as kept when the
+  modem uses no band the settings leave out. A band asked that the modem leaves out is no reason
+  to write: the FM350 drops n77 by itself whenever n78 is listed, and writing it back would
+  register the modem again at every pass. The price: a list an outside tool narrowed is not
+  widened again by the pass; the window shows the modem's lists, and *Apply* writes them all.
+- **Every managed RAT's list is written** — the bands chosen, or every band `AT+GTACT=?` lists —
+  so nothing from an earlier setting survives by accident: the modem keeps one list per RAT, and
+  a write changes only the RATs it names. UMTS lists are not managed: never written, kept as the
+  modem has them.
+- **A write that didn't hold is not repeated**: the same command over the setting as read before
+  it — taken and not kept, or refused — is not written again (`NotKept`, shown in the window),
+  until the port is opened anew: after a restart the modem may take it.
+- **In the pass**: once the SIM is ready and the radio on, ahead of the context's steps — on a
+  connection that is up too, whose state stays the one the facts support — and never over an
+  FCC lock; the reason the connection waits for, if any, stays what health and recovery go by. A
+  write the modem took, or that got no answer, opens a maintenance window: nothing escalates while
+  the modem registers again; the pass activates the context again.
+- **The user's choice is tried** (decided 2026-10-03). *Apply* in the window, or the tray's quick
+  switch, writes it at once, without asking — the window says that the modem keeps it, after the
+  app exits too — inside a maintenance window. It is saved in the settings once the modem has
+  registered with it in force, as read 10 s after the write or later: a reading sooner can still
+  be the registration the write ends (`AT-COMMANDS.md` §5), and a modem that didn't keep the
+  write stays registered with its old mode. A write that got no answer is tried as one that
+  landed. Without that registration by the window's end (3 min) the setting before the first
+  change on trial is written back, each code as read (invariant 9), and the settings stay as they
+  were — a choice made over a remote session through this modem never leaves the user cut off; the
+  trial ends only once the modem has taken it back, tried again a pass later, and once the modem is
+  back on USB. Meanwhile the pass keeps the modem as chosen; the trial and its window are published
+  at once, and a worker that replaces another carries them on. A choice the modem has already is
+  saved without a write — n77 left out beside n78 counts as had — unless a trial is on, which it
+  joins; *As the modem has it* during a trial writes the setting before back first.
+- **A narrowed mode that loses the network is shown, not escalated** (decided 2026-10-03): NR
+  alone, or LTE bands chosen, can keep the modem off a network a wider choice would find, and no
+  reset changes that. In force on the modem — or not known to be otherwise, a read that failed —
+  it leaves H4 without a recovery step: past H4's grace time the tray turns red, *No network*, and
+  the window offers *Use 4G + 5G, every band*.
+  The price: a laptop that leaves 5G SA coverage stays offline until the user acts.
 - The band-code codec (`src/FibocomFm350/Bands.ps1`, M0) keeps codes it doesn't recognize, so
   writing a list back never drops something the modem reported.
+- **Development mode**: the simulated modem keeps a mode and band lists as the device does — one
+  list per RAT, n77 dropped with n78, the setting kept across a reset — and registers again
+  after a write in a network with LTE on B1, B3, B7 and B20, NR on n78 under EN-DC, and 5G SA in
+  the *Standalone* scenario only.
 
 ## Network configuration (M2)
 
@@ -515,14 +565,20 @@ What it shows is decided by pure functions of the snapshot (`Resolve-TrayIcon`,
   and −85 dBm up, one to four; all empty when nothing is measured.
 - **5G is the NR leg in use**: an NR serving cell in `+GTCCINFO`. Idle on an LTE anchor the modem
   measures NR all the same (`AT-COMMANDS.md` §3): that is "LTE, 5G available" in the window and
-  4G in the tray.
+  4G in the tray. No technology at all while the operator read says the modem is not registered:
+  in NR-only mode without a 5G SA network of its own, the FM350 lists another operator's NR cell
+  as serving (`AT-COMMANDS.md` §4.1).
 - **Redrawn only when what it shows changes**, and the previous icon's handle is released with
   `DestroyIcon` once the new one is set. Without that, a GDI handle leaks at every refresh and the
   process dies after days; a test counts the process's GDI and USER objects over hundreds of
   redraws.
 - Tooltip, 127 characters at most: online, the technology, the operator, the RSRP; otherwise why
-  not, in a few words. Menu: *Open*, *Check now* (a connect pass now), *Exit*. The quick mode
-  switch comes with M5. A left click opens the window.
+  not, in a few words. Menu: *Open*, *Check now* (a connect pass now), *Network mode* — the modes
+  the modem supports, its own checked, a click tries another one, the bands as the settings have
+  them (M5) —, *Exit*. The menu is filled from the latest snapshot as it opens. A left click opens
+  the window.
+- **No network** (M5, decided 2026-10-03): red, while a network mode the user narrowed finds no
+  network past H4's grace time (*Modes and bands*).
 
 ## Main window (M3)
 
@@ -541,8 +597,11 @@ comes back in a later snapshot, so the window never waits on the modem or the sy
   the PIN from the SIM (it changes the SIM, in any phone too).
 - **Tabs**: *Signal* — LTE and NR quality, serving and neighbour cells, carrier aggregation
   (uplink values only for a carrier that carries uplink); *SIM* — its state and attempts left, the
-  stored PIN (store, forget), removing the PIN from the SIM; *Connection* — the settings, checked
-  as typed with the same validation the worker applies.
+  stored PIN (store, forget), removing the PIN from the SIM; *Network* (M5) — the modem's mode and
+  bands as read, the mode to keep (or *As the modem has it*), a checkbox per band the modem
+  supports with *every band* per RAT, *Apply*, and how the last choice went (on trial until when,
+  kept, undone, bands the modem leaves out); *Connection* — the settings, checked as typed with
+  the same validation the worker applies; saving them never changes the network mode.
 
 ## Drivers (M6)
 
@@ -675,7 +734,8 @@ values of the same shape in fixtures.
   task runs as the same user, so the path is the same elevated or not. `Apn` (empty: the
   subscription's own), `PdpType` (`IP` or `IPV4V6`), `ApnAuthentication` (`None`, `PAP`, `CHAP`)
   with `ApnUser`, `DnsServers` (the override; empty keeps the operator's), `InterfaceMetric` (500:
-  the modem as a backup). Read leniently — an invalid value falls back to its default and is
+  the modem as a backup), `NetworkMode` (empty: not managed; `Automatic`, `LteOnly`,
+  `NrOnly`) with `LteBands` and `NrBands` (empty: every band). Read leniently — an invalid value falls back to its default and is
   reported, an unknown one is ignored: a bad file never stops the app — and written strictly: an
   invalid value is refused. The file is replaced whole (a temporary file, then a move).
 - Secrets — the SIM PIN, an APN password — never go in the settings file: each is kept
@@ -704,7 +764,7 @@ src/
     AtText.ps1           framing and classifying the lines on the AT port (M1, pure)
     Timeouts.ps1         each command's documented worst case (M2, pure)
     Transport.ps1        the serial transport, and the shape every transport has (M1)
-    SimulatedModem.ps1   the simulated modem: fixtures + scripted faults; fixture import (M1)
+    SimulatedModem.ps1   the simulated modem: fixtures + scripted faults; fixture import (M1); its network mode (M5)
     AtChannel.ps1        the AT channel: commands, answers, unsolicited codes (M1)
     Measurements.ps1     measurement index -> dBm/dB (M1, pure)
     Parsers.ps1          identity, SIM, registration, operator, signal, temperature (M1, pure)
@@ -714,6 +774,7 @@ src/
     Settings.ps1         settings file, APN password (M2)
     Sim.ps1              SIM PIN: states, the decision, the encrypted store, removing it (M2)
     Fcc.ps1              FCC lock: reads, diagnosis, unlock (M2)
+    Modes.ps1            network mode and bands: reads, what to write (pure), a choice on trial (M5)
     Connection.ps1       state machine (pure), observation and connect pass (M2)
     Network.ps1          modem adapter: configuration plan (pure), read and apply (M2)
     Log.ps1              redaction (pure), rolling log (M2)
