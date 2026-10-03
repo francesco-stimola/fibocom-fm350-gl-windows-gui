@@ -20,7 +20,7 @@ written `(planned)`.
 | [M4 — Health & recovery](#m4) | ✅ complete |
 | [M5 — Modes & bands](#m5) | ✅ complete |
 | [M6 — Driver installation](#m6) | ✅ complete |
-| [M7 — Packaging & first release](#m7) — tag `v1.0.0` (planned) | 🔨 code-complete |
+| [M7 — Packaging & first release](#m7) — tag `v1.0.0` | ✅ complete |
 | [M8 — SMS, USSD & data usage](#m8) — tag `v1.1.0` (planned) | 📋 planned |
 | [M9 — eSIM](#m9) — tag `v1.2.0` (planned) | 📋 planned |
 
@@ -139,7 +139,7 @@ verifies it and installs it (design: ARCHITECTURE → *Drivers*).
 - [x] README install instructions: PowerShell 7, the app, and the guided driver step.
 - [x] `CHANGELOG.md`: the Unreleased section completed with M4–M7, the release's notes.
 - [x] On the device: a real installation with `install.cmd` from the zip as downloaded (one UAC prompt); the app started by the logon task after a restart, and by the Start-menu shortcut and the pinned window; the start at sign-in turned on and off from the *Connection* tab; encrypted DNS on the modem's adapter with the connection up, by address and by name, and taken off; the update notice against GitHub's real answers (`404`, and `403` with the address's quota used up); `install.cmd` again over the running app; the uninstallation, by `uninstall.cmd` and from Windows' installed apps; the system put back after each step (`AT-COMMANDS.md` §11).
-- [ ] Set `ModuleVersion` to `1.0.0` and tag `v1.0.0`.
+- [x] Set `ModuleVersion` to `1.0.0` and tag `v1.0.0`.
 
 <a id="m8"></a>
 ## M8 — SMS, USSD & data usage

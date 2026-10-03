@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-03
+
 ### Added
 - Project setup: documentation (architecture, AT command specification, roadmap, setup), lint and
   test tooling, CI on every push and pull request, logo.

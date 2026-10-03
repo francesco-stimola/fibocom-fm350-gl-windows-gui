@@ -1,6 +1,6 @@
 @{
     RootModule           = 'FibocomFm350.Installer.psm1'
-    ModuleVersion        = '0.1.0'
+    ModuleVersion        = '1.0.0'
     GUID                 = '7f0a3c52-5d1e-4b8a-9c36-2e4f8b1d6a90'
     Author               = 'Francesco Stimola'
     Copyright            = '(c) 2026 Francesco Stimola. Licensed under AGPL-3.0-or-later.'
