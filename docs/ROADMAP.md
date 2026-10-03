@@ -17,7 +17,7 @@ written `(planned)`.
 | [M1 — Modem protocol](#m1) | ✅ complete |
 | [M2 — Connection](#m2) | ✅ complete |
 | [M3 — Tray app](#m3) | ✅ complete |
-| [M4 — Health & recovery](#m4) | 📋 planned |
+| [M4 — Health & recovery](#m4) | ✅ complete |
 | [M5 — Modes & bands](#m5) | 📋 planned |
 | [M6 — Driver installation](#m6) | 📋 planned |
 | [M7 — Packaging & first release](#m7) — tag `v1.0.0` (planned) | 📋 planned |
@@ -87,12 +87,13 @@ Optional, not scheduled (decided 2026-10-01): the FCC unlock on a module that is
 <a id="m4"></a>
 ## M4 — Health & recovery
 
-- [ ] Health checks H1–H7, including a data-path probe bound to the modem's address.
-- [ ] Recovery decision as a pure function (symptoms + history → step), with a matrix of tests. No escalation for what no reset fixes: a SIM waiting for its PIN or PUK, a modem diagnosed as FCC-locked.
-- [ ] Recovery steps R1–R6 with settle times and backoff (**values: human decision**).
-- [ ] Maintenance windows.
-- [ ] On the device: `AT-COMMANDS.md` §7 question 8 for `+CFUN=1,1` (`+CFUN=15` and `+CFUN=4`/`1` are measured).
-- [ ] Soak run on the real device (duration: human decision), with handle and memory counts before/after.
+- [x] Health checks H1–H7, told from the state the connect pass reaches, and H7 a data-path probe bound to the modem's address: ICMP rounds that a path still settling — an address Windows is still checking, a lost round — never fail, nor a path that has never answered since the app started (a network that drops ICMP). Target and interval decided 2026-10-02.
+- [x] Recovery decision as a pure function (failing check + history → step), with a matrix of tests. No escalation for what no reset fixes: whatever the state machine calls blocked — a SIM waiting for its PIN or PUK, an FCC lock, an APN or its password to give, an adapter missing or disabled, no administrator rights — nor under a port another program holds.
+- [x] Recovery steps R1–R6 with grace and settle times, cycles, backoff and the slow cadence, counters reset after sustained health (values decided 2026-10-02); the state carried across worker restarts and sleep; "Recovering" in the tray and the window.
+- [x] Maintenance windows; the FCC unlock opens one.
+- [x] On the simulated modem: new fault scenarios — a path that settles, a data path down, a registration lost, a modem that doesn't answer, a network that refuses it for good — each driven through the ladder by the worker in the default test run.
+- [x] On the device: the data path right after the adapter is configured — M3's one reply in four was the address still `Tentative` for about 3.5 s; the worker's ladder R2 → R3 → R4 → R5 on the real modem, each step started by blocking the probes, and R6; `AT-COMMANDS.md` §7 question 8 for `+CFUN=1,1`.
+- [x] Soak run on the real device, 24 h (decided 2026-10-02), with handle and memory counts before/after: online throughout, one worker, no recovery step, no warning; handles, GDI and USER objects, threads and private memory flat once warmed up (DEVLOG 2026-10-03).
 
 <a id="m5"></a>
 ## M5 — Modes & bands

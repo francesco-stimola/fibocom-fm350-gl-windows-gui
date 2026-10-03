@@ -4,6 +4,137 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-03 — M4 complete: 24 hours on the real modem
+
+The tray app ran 24 h on the real modem, elevated, the modem a backup (metric 500), sampled every
+10 min from outside (145 samples): online in every sample, one worker throughout, no recovery
+step, no warning — 12 log lines in a day. *Exit* from its menu, then everything put back as found.
+- **Nothing leaks.** Over the last 12 h private memory went down 0.25 MB an hour and handles 1.6
+  an hour (least squares). The first hour warms up (private memory 169 → 200 MB); after that it
+  stays between 203 and 215 MB, a slow climb at night undone at once by a garbage collection
+  (−10.6 MB). GDI objects 32–34 from start to end, though the signal bars changed every few
+  seconds for hours and the icon was redrawn each time.
+- **The window costs once.** Opening the main window for the first time, from a Remote Desktop
+  session, added about 70 handles, 10 USER objects and some threads, which stayed: WPF builds the
+  window and closing it hides it. Later reconnections and openings added nothing; the threads
+  WPF uses while the window is shown went back once it was closed.
+
+## 2026-10-02 — M4: the review pass
+
+One lite review of M4's changes found six defects in the product, plus two minor ones; all are
+fixed but one, which was the maintainer's to decide (next entry). Each fix has a test that fails
+without it (mutation-checked):
+- **A check that started failing on the way inherited the grace time of the one before**: past
+  R3's settle time, one silent read (H2) restarted the USB device at once, skipping R4 and R5 and
+  the 3 minutes a silent port is given. Grace is now counted from when that check started failing.
+- **What couldn't be read was escalated**: a context whose activation couldn't be read
+  (`ContextUnknown`) was deactivated after a minute, the probe blind meanwhile — against the rule
+  that one failed read never breaks a connection. `ContextUnknown` and `SimUnknown` are watched,
+  never escalated.
+- **A step with nothing to act on was counted**: decided after the port had gone in the same
+  cycle, R2 ended `NoModem` and the next failure went on to R3. Such a step is now not counted.
+- **A step was published only at the end of the cycle**: a step that hung left the replacing
+  worker no trace of it, and it was taken again at once. It is published before it runs.
+- **R5 could leave a SIM waiting for a PIN the app doesn't have** — PIN request on, no PIN
+  stored: a reset turned an outage into one only the user could end. R5 is skipped then.
+- **A maintenance window closed at a healthy reading taken before the operation broke the link**
+  — harmless for the FCC unlock, wrong for M5's band changes. It closes once health comes back
+  after a failure in it.
+- **R1 would have removed a DHCP-given route** (no effect on the FM350, which serves no DHCP): an
+  adapter with no address of the app's is left alone.
+
+## 2026-10-02 — Decided: a path never answered is not a failure
+
+Raised by the M4 review: on a network that drops ICMP — a private or M2M APN, an operator that
+filters it — H7 would fail about 15 s after every connect and the ladder would run over a working
+link, up to a modem reset every hour. Taken by the maintainer, as proposed: **until a round has
+passed since the app started, failed rounds prove nothing** — logged once and shown, never
+escalated. The price, accepted: a path dead from the very first connect isn't mended by H7 until it
+has worked once. Rejected for now: a TCP connection to port 443 as a second way to pass a round,
+and a setting to turn the probe off.
+
+## 2026-10-02 — M4 on the device: the address settles in 3.5 s; the ladder on the real modem
+
+- **M3's one reply in four was the address settling, not the path.** Right after the adapter is
+  configured, Windows holds the address `Tentative` for 3.1 to 3.5 s (five times out of five), and
+  an echo request sent from it fails at once; the first reply comes the moment it turns
+  `Preferred`. The probe as built never sends from an address that isn't `Preferred` and waits
+  5 s, so it never mistakes this for a failure. Settled, a few replies are still lost now and then,
+  which a round of three requests and two failed rounds absorb.
+- **The worker's ladder, on the real modem.** An outbound firewall rule blocking the probes' echo
+  requests from the modem's address stood in for a dead path, and was lifted as soon as the worker
+  took its step; four times in a row, so that each failure came back before health had held:
+  R2 (online again in 1.5 s), R3 (2 s), R4 (11 s — it started 43 s after the failure, when R3's
+  settle time ended), R5 (87 s: the port silent at 22 s, off USB from 51 to 76 s, the context
+  defined again by the pass). Throughout the reset the recovery state stayed *settling*: no
+  escalation over the silent port or the missing device.
+- **R6 and `+CFUN=1,1`.** After `pnputil /restart-device` the port answered at once and only the
+  adapter, created anew, had to be configured again. About 73 s later the modem left USB by
+  itself and came back without its context — cause unknown, seen once, inside R6's settle time.
+  `+CFUN=1,1` leaves USB about 47 s after its `OK`, comes back about 30 s later on the same COM
+  numbers, and loses context 1, like `+CFUN=15`. Opening the AT port half a second after PnP lists
+  it again can fail with "the requested resource is in use"; the worker's next look opens it.
+- **A missing context definition is H5**: the state machine writes the definition before it looks
+  at the registration, so the state is the one before registration; the health check named it
+  H4 until the device showed a registered modem with no context 1.
+
+## 2026-10-02 — M4 code-complete: health and recovery, proven on the simulated modem
+
+The design of ARCHITECTURE → *Health checks and the recovery ladder* is built. The decisions taken
+while building it:
+- **The checks are the pass's own reads.** The connect pass already reads the device, the port,
+  the SIM, the registration, the context and the adapter in that order and stops at the first
+  that fails, so the state it reaches names the failing check (`Resolve-HealthCheck`): no second
+  set of reads to keep in step with the first. Only H7 sends something of its own.
+- **H7 is ICMP from the modem's address**, through the IP Helper API (`IcmpSendEcho2Ex`): .NET's
+  `Ping` can't choose its source address, and a probe that left through the usual route would test
+  Ethernet or Wi-Fi, not the modem, which is a backup. The address is checked first: a request
+  from an address Windows is still checking (`Tentative`) fails at once, which is no fault of the
+  path. One lost round is never a failure; two in a row are. A test sends a real echo request over
+  the loopback interface, so the interop is exercised on every run, CI included.
+- **Each step does the least and leaves the rest to the pass.** R2 only deactivates the context,
+  R3 only deregisters, R4 only turns the radio off; the pass that runs right after takes the steps
+  back up with everything it already knows — authentication, the adapter, the APN of the
+  settings. R1 removes the adapter's configuration so that the same planner sets it from scratch.
+- **The ladder climbs from the last step taken, across checks**: a context restarted, then the
+  registration lost, goes on to R4, not back to R3. A failure that comes back before health has
+  held 10 min carries on up the ladder too — the last step mended the symptom, not its cause.
+- **A step's settle time beats everything but health**: a reset takes the modem off USB, which
+  must not read as "no device" and stop the cycle.
+- **Recovery's history is in the snapshot**, so a worker that replaces one that crashed carries on
+  where it was; and the worker notices a sleep the way the UI does — a wait that ends far past its
+  deadline — and gives a failing check its grace time again.
+- **R6 is guarded**: the port closed first, the modem found again by PnP (H1 must pass), the
+  composite device checked by its hardware ID, `pnputil` run from the system folder, never found
+  through `PATH`, since the app runs elevated.
+- **An address Windows refused** (`Duplicate`) now counts as not configured, so the pass sets it
+  again; before, it would have looked configured while nothing could leave from it.
+- **The simulated modem keeps state.** Recovery commands change its answers every time they run
+  (standing transitions), only when they succeed — a radio an FCC lock keeps off stays off — and
+  device flags model what no answer shows: a data path down, a modem that answers nothing until
+  its USB device restarts. Five fault scenarios drive the worker through the ladder in the default
+  test run: a path that settles, a data path down (R2), a registration lost (R3, then R4), a modem
+  that doesn't answer (R6), a network that refuses it for good (cycles, backoff, slow cadence);
+  and the blocked scenarios run two simulated hours without a single step.
+- Four mutation checks — escalating a blocked check, probing from a tentative address, not starting
+  the rounds over after a step, restarting every cycle at the entry step — each make tests fail.
+
+## 2026-10-02 — Decided: recovery timings, the data-path probe, the recovering state, the soak
+
+Taken by the maintainer, as proposed:
+- **Timings**: a failing check is left to the connect pass 3 min (H2), 2 min (H3, H4), 1 min (H5,
+  H6), H7 at once after its own two failed rounds; a step settles 30 s (R1), 1 min (R2), 2 min (R3,
+  R4), 5 min (R5, R6); cycles 5 min apart, then 15 min, then once an hour — the slow cadence; 10
+  min of health start everything over; a maintenance window lasts 3 min, 5 min for the FCC unlock.
+  Rejected: faster values (more resets on a flaky network), slower ones (a dead link kept longer).
+- **Data-path probe**: ICMP to `1.1.1.1` and `8.8.8.8` in turn, a round every 60 s — up to 3
+  requests of 1 s, the next round 10 s after one that failed, the first 5 s after the address was
+  set; about 3 MB a month. Rejected: every 30 s (twice the traffic), every 5 min (a dead path kept
+  minutes), the operator's DNS servers (a DNS outage would restart a working link).
+- **Recovering in the tray**: amber, *Recovering*, with the step; red, *Connection lost*, once
+  the cycles have run out. Rejected: a colour of its own, and amber throughout.
+- **Soak run**: 24 h on the real modem, with handle, GDI/USER, memory and thread counts.
+
 ## 2026-10-01 — CI: the linter retries while it makes progress; failures become annotations
 
 The first push of M3 failed at the lint step on GitHub, while a fresh clone lints clean

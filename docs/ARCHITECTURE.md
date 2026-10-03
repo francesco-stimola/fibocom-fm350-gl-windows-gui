@@ -70,8 +70,11 @@ user reopens it and monitoring resumes.
 - **Cadence** (`Resolve-WorkerSchedule`, pure; decided 2026-10-01): a connect pass every 30 s
   online, every 10 s while the connection is on its way, every 30 s while it waits for the user
   (whose command runs one at once); the radio for display every 5 s once the SIM is ready; a look
-  for the modem by PnP every 5 s while no port is open. A registration or context code from the
-  modem brings the next pass forward — a hint, never the only source.
+  for the modem by PnP every 5 s while no port is open; a data-path round every 60 s while the
+  adapter carries the context's address (M4, *The data-path probe*). A registration or context
+  code from the modem brings the next pass forward — a hint, never the only source.
+- **Recovery is decided on every cycle** — a pure function, cheap — on the state the last pass or
+  probe left (*Health checks and the recovery ladder*), and its step taken in the same cycle.
 - **The port is found again at every look**: by PnP (`Resolve-ModemPresence`), never remembered —
   after a re-enumeration the modem can come back as a new device instance under other COM numbers
   (`AT-COMMANDS.md` §1). A lost port is closed at once; the next look finds the device again. While
@@ -99,7 +102,11 @@ user reopens it and monitoring resumes.
 - **Development mode** (`Start-Fm350App -Simulated -Scenario …`): the worker drives a simulated
   modem and adapter (`New-SimulatedDevice`, scenarios in `Data/Simulation.psd1`: online, connect,
   an APN needed, a PIN required, an FCC lock and its unlock, a disabled adapter, no modem, no
-  driver) — no device, no administrator rights, nothing changed on the system. Its settings,
+  driver; and M4's faults — a path that settles, a data path down, a network that drops ICMP, a
+  registration lost, a modem that doesn't answer, a network that refuses it for good) — no
+  device, no administrator rights,
+  nothing changed on the system. The recovery steps act on the simulated modem as on a real one,
+  every time they run. Its settings,
   secrets and log live in a folder of their own, and it runs beside the real app.
 - **Observe only** (`-ObserveOnly`): the worker reads and never writes — no step, no command that
   changes the modem or the system. The window says which step it withholds.
@@ -204,7 +211,7 @@ Everything the worker says to the modem goes through one **AT channel** per port
 ```
 
 - `Online` means: data context active with an address, the adapter configured with that address,
-  and the last data-path probe passed (the probe is M4's H7; until it runs, it counts as passed).
+  and the data-path probe not failing (H7: until its rounds prove the path, it counts as passed).
 - Each transition is decided by a **pure function** of (current state, observed facts) → next
   state + actions (`Resolve-ConnectionState`). The state is the furthest one the facts support;
   the action is the first missing step: open the port, initialize the channel, enter the SIM PIN,
@@ -315,47 +322,122 @@ that as a fault and climb the recovery ladder for nothing.
 
 ## Health checks and the recovery ladder (M4)
 
-**Health checks**, from cheapest to most expensive:
+**Health checks**, from cheapest to most expensive. The connect pass already reads what H1–H6
+need, in this order, and stops at the first that fails, so the state it reaches says which check
+fails (`Resolve-HealthCheck`, pure). Only H7 has a read of its own: the data-path probe.
 
-| # | Check | Fails when |
-|---|---|---|
-| H1 | Device present (PnP) | The modem is gone from USB. |
-| H2 | AT port answers | `AT` gets no `OK` in time. |
-| H3 | SIM ready | `+CPIN?` is not `READY`. |
-| H4 | Registered | Registration status is not home/roaming. |
-| H5 | Data context up | No active context, or no address. |
-| H6 | Adapter configured | The adapter's address differs from the context's. |
-| H7 | Data path | Probes bound to the modem's address get no answer. |
-
-**Recovery ladder** — the **symptom picks the entry step**, and the ladder escalates only while
-the checks keep failing after each step's settle time:
-
-| Step | Action | Entry symptom | Impact |
+| # | Check | Fails when | The pass's state |
 |---|---|---|---|
-| R1 | Re-apply adapter configuration | H6 | None on the radio. |
-| R2 | Deactivate + reactivate the data context | H5, H7 | Short data gap. |
-| R3 | Deregister + automatic re-registration | H4 | Registration gap. |
-| R4 | Radio off → on (`+CFUN`) | R3 failed | Radio gap. |
-| R5 | Modem reset (`+CFUN=15`) | R4 failed | Device re-enumerates on USB. |
-| R6 | Restart the USB device (`pnputil /restart-device`) | H2 with H1 passing | Device re-enumerates. |
+| H1 | Device present (PnP) | The modem is gone from USB, its AT port has no driver or a problem. | `NoDevice` |
+| H2 | AT port answers | The port can't be opened, or the modem doesn't answer on it. | `NoDevice` (`PortFailed`), `PortOpen` |
+| H3 | SIM ready | `+CPIN?` is not `READY`. | `Identified` |
+| H4 | Registered | Registration status is not home/roaming. | `SimReady` |
+| H5 | Data context up | No context defined, none active, or no address. | `Registered`; `SimReady` while the definition is missing (it is written while the modem registers) |
+| H6 | Adapter configured | The adapter's address differs from the context's. | `DataActive` |
+| H7 | Data path | Probes bound to the modem's address get no answer. | `DataActive` (`DataPathFailed`) |
 
-- **What no reset fixes is not escalated**: a SIM waiting for its PIN or PUK (*SIM PIN*), a modem
-  locked by its maker (*FCC lock*). The tray says what it is instead.
 - The checks **read** the state; they don't wait for unsolicited codes. The FM350 doesn't send
   every report it is asked for — no `+CSCON`, `+CGREG` or `+C5GREG` code was seen while the state
   changed (`AT-COMMANDS.md` §2) — so a code is a hint to read sooner, never the only source.
-- Settle times, backoff between cycles, and when counters reset after sustained health: **TBD**.
-  Measured on the device, as input: after `+CFUN=1` (R4) the modem was registered again within
-  about a second; after `+CFUN=15` (R5) it dropped off USB about 49 s after the `OK` and was back
-  about 28 s later.
-- After repeated full cycles the app keeps trying at a slow cadence (**TBD**) and shows the
-  failure in the tray instead of hammering the network.
-- The choice "symptoms + history → next step" is a **pure function**, proven by a matrix.
+- A failing check whose cause the state machine calls **blocked** is out of the app's reach — no
+  device or driver, a SIM waiting for its PIN or PUK, an FCC lock, an APN or an APN password to
+  give, an adapter missing or disabled by the user, no administrator rights — and so is a port
+  another program holds: recovery never acts under them. The tray says what it is instead.
+
+### The data-path probe (H7)
+- **ICMP echo requests sent from the modem's address** (`Test-ModemDataPath`, through the IP
+  Helper API: .NET's `Ping` can't choose the address it sends from). Windows sends a packet from
+  an address out of the interface that has it, so the probe tests the path through the modem even
+  while the modem is a backup and other adapters carry the traffic. Addresses are never logged.
+- **A round** is up to 3 requests, each waiting 1 s for its reply, to `1.1.1.1` and `8.8.8.8` in
+  turn; the first reply passes it. **H7 fails after 2 rounds failed in a row**
+  (`Resolve-DataPathHealth`, pure): one lost round is never a failure. Rounds count for one
+  address: a new address, the same one set again, or a recovery step starts them over.
+- **Only a path that has answered once can fail.** Until a round has passed since the app
+  started, failed rounds prove nothing — a private APN or an operator may drop ICMP while the
+  user's traffic flows — so they are logged once and shown, never escalated (decided
+  2026-10-02). The flag travels in the snapshot to a worker that replaces this one. The price:
+  a path dead from the very first connect is not mended by H7 until it has worked once.
+- **A path that settles is no failure.** An address just set is `Tentative` while Windows checks
+  that no other host has it — 3.1 to 3.5 s on the device — and a request sent from it fails at
+  once: that was M3's one reply in four right after the adapter was configured
+  (`AT-COMMANDS.md` §1). No round is sent from an address Windows has not made `Preferred`, and
+  the first round waits 5 s after the address was set or a recovery step was taken. An address Windows refused (`Duplicate`, `Invalid`) counts as
+  not configured: H6, and the pass sets it again.
+- **Cadence**: a round every 60 s, 10 s after one that failed or couldn't be sent; only while the
+  adapter carries the context's address. About 72 bytes a round, some 3 MB a month; a dead path is
+  noticed within about 15 to 76 s. The state follows the verdict at once, without waiting for the
+  next pass. Decided 2026-10-02.
+
+### The recovery ladder
+Each step does the least that can mend what fails, and leaves the rest to the connect pass the
+worker runs right after it (`Invoke-RecoveryStep`):
+
+| Step | Action | The pass then | Impact |
+|---|---|---|---|
+| R1 | Remove the adapter's addresses and default routes (`Resolve-AdapterClearing`) | Configures it from scratch | None on the radio. |
+| R2 | Deactivate the data context (`AT+CGACT=0,1`) | Activates it, configures the adapter | Short data gap. |
+| R3 | Deregister (`AT+COPS=2`) | Selects the operator automatically | Registration gap. |
+| R4 | Radio off (`AT+CFUN=4`) | Turns it on | Radio gap. |
+| R5 | Modem reset (`AT+CFUN=15`) | — the modem leaves USB and comes back | About a minute and a half off USB. |
+| R6 | Restart the USB device (`pnputil /restart-device`) | — the device re-enumerates | Device re-enumerates. |
+
+**The symptom picks the entry step, and the ladder climbs only while a check keeps failing after
+each step's settle time.** The decision is a pure function — failing check, history, clock in;
+step out (`Resolve-RecoveryAction`), proven by a matrix:
+- **Ladders.** Each check has the steps that can mend it, from the least disruptive: H6
+  R1–R5; H5 and H7 R2–R5; H4 R3–R5; H3 R5 alone — only a reset reads the SIM again; H2 R6 alone —
+  a silent port takes no AT command, and the modem is still on USB. H1 has none: nothing reaches a
+  device that is gone. The next step is the first of the failing check's ladder above the last one
+  taken, so a check that changes on the way — the registration lost after the context was
+  restarted — carries on upward; past the top of its ladder the cycle is over.
+- **Grace.** A failing check is first left to the connect pass, which takes the missing steps
+  itself: 3 min for H2 (the port has been seen silent for almost three minutes after it appeared,
+  `AT-COMMANDS.md` §2), 2 min for H3 and H4, 1 min for H5 and H6; H7 at once, its own 2 failed
+  rounds being its grace. Counted from when *that* check started failing: a port that falls
+  silent after a step taken for the registration gets its 3 min, not the registration's leftover.
+- **What couldn't be read is not escalated** (`SimUnknown`, `ContextUnknown`): one failed read
+  must never break a connection that may well work (*Connection state machine*); a modem that
+  stops answering altogether is H2.
+- **Settle.** A step taken is given its time, whatever fails meanwhile — a reset takes the modem
+  off USB: R1 30 s, R2 1 min, R3 and R4 2 min, R5 and R6 5 min. Measured on the device, with the
+  worker taking each step (`AT-COMMANDS.md` §3): online again about 1.5 s after R2, 2 s after R3,
+  11 s after R4, 87 s after R5 (off USB from about 51 s to 76 s); after R6 the port answered at
+  once and only the adapter had to be configured again — and once the modem left USB by itself
+  about 73 s later, inside R6's settle time.
+- **Cycles.** After a cycle that didn't mend it, the next one starts at the entry step 5 min
+  later, then 15 min later, then **once an hour: the slow cadence**, at which the tray shows the
+  failure instead of hammering the network.
+- **Starting over.** Health that holds 10 min starts the ladder and the cycle count over. A
+  failure that comes back before that carries on up the ladder: the last step mended the symptom,
+  not its cause.
+- **Skipped steps.** Without administrator rights the steps that need them (R1, R6) are skipped;
+  so is the reset (R5) when the SIM's PIN request is on and no PIN is stored — after a reset the
+  SIM would wait for a PIN the app doesn't have, an outage turned into one only the user can end.
+  A check left with no step is shown, not escalated.
+- **A step with nothing to act on is not counted**: when the port went with the modem between
+  the reading and the step, the next cycle decides again on what the next look finds.
+- **Observe only.** The step is named in the window and the log, never taken.
+- **Continuity.** The history travels in the snapshot, published before a step runs: a worker
+  that replaces another — one stuck in a step that never returned, too — carries on where it was,
+  and a restart never starts the ladder over nor repeats a step without its settle time.
+- **Sleep.** After the computer slept — a wait that ends far past its deadline — the data path is
+  proven again and a failing check gets its grace time again: what the pause broke is the pass's
+  to mend first.
+- **R6 safely.** The worker closes the AT port first (Windows postpones restarting a device whose
+  port is held), finds the modem again by PnP — H1 must pass — and restarts its composite USB
+  device, checked by its hardware ID, with `pnputil` from the system folder, never through `PATH`
+  (invariant 10).
+- Timings decided 2026-10-02.
 
 ### Maintenance windows
-An intentional operation that disrupts the link — applying a new mode or band set — opens a
-**maintenance window**: checks keep running for display, but **nothing escalates** until the
-modem is back online or the window times out (**TBD**).
+An intentional operation that disrupts the link opens a **maintenance window**
+(`Open-MaintenanceWindow`): checks keep running for display, but **nothing escalates** until the
+window ends, or until the modem is healthy again after the operation broke the link — a healthy
+reading taken before it did doesn't close it; then a failing check gets its grace time from the
+window's end. A window lasts 3 min; the FCC unlock, which restarts the modem as a reset does,
+opens one of 5 min (decided 2026-10-02). M5's mode and band changes and M8's profile and slot
+switches will open one too.
 
 ## Modes and bands (M5)
 
@@ -421,7 +503,14 @@ What it shows is decided by pure functions of the snapshot (`Resolve-TrayIcon`,
   16 pixels (100 % scaling) the bars alone.
 - **Tones**: green online; amber on its way; red when the user must act (a PIN, an APN, an FCC
   lock, a disabled adapter, no driver…); grey with no modem, or while the worker restarts or
-  doesn't answer (a restart touches no connection). M4 adds recovering.
+  doesn't answer (a restart touches no connection).
+- **Recovering** (M4, decided 2026-10-02): amber, headline *Recovering*, while a recovery step
+  settles or the next cycle is awaited — the text says the step (*Restarting the data
+  connection.*) or what fails and when the steps start again; a modem off USB during its reset is
+  recovering, not missing. Once the cycles have run out, at the slow cadence: red, *Connection
+  lost*, with the time of the next try. Back online, the window notes the step that brought it
+  back (*Recovered at 14:02: …*) until health has held. Observing only, the window names the step
+  it withholds.
 - **Bars** from the serving RSRP (the LTE anchor's; the NR cell's on 5G SA): from −115, −105, −95
   and −85 dBm up, one to four; all empty when nothing is measured.
 - **5G is the NR leg in use**: an NR serving cell in `+GTCCINFO`. Idle on an LTE anchor the modem
@@ -629,13 +718,15 @@ src/
     Network.ps1          modem adapter: configuration plan (pure), read and apply (M2)
     Log.ps1              redaction (pure), rolling log (M2)
     Devices.ps1          the modem's USB functions: classification (M6, pure), PnP reader (M2),
-                         which modem to open (M3, pure)
+                         which modem to open (M3, pure), its USB restart (M4)
     Radio.ps1            technology, bars, cells for display (M3, pure), and their reads
+    Health.ps1           which check fails, the data path's verdict (M4, pure); the probe
+    Recovery.ps1         the recovery decision (M4, pure), maintenance windows, the steps
     Simulation.ps1       development mode: the simulated device and adapter (M3)
     Worker.ps1           the worker: link, cadence (pure), snapshots (pure), commands, loop (M3)
     Data/                3GPP band tables, transcribed (EutraBands.psd1, NrBands.psd1); the
                          simulated modem's answers (Simulation.psd1)
-    …                    recovery, drivers (M4–M6)
+    …                    drivers (M6)
   App/                   tray app (M3): its own module, FibocomFm350.App
     View.ps1             what the tray and the window show, from a snapshot (pure)
     TrayIcon.ps1         the icon: drawn, swapped, every handle destroyed
