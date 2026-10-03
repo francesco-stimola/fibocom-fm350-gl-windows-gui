@@ -4,6 +4,20 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-03 — Decided: the IPv6 DNS servers a network gives are said
+
+The review's open decision, taken by the maintainer before the first release. With encrypted DNS
+on, IPv6 DNS servers the network gives — from router advertisements or DHCPv6 — are not static: a
+reset can't take them off, and Windows may query them in the clear. They are told apart from the
+static servers and from Windows' own `fec0:0:0:ffff::1`–`3`, compared in one written form, and
+**said**: in the window's DNS line, with their addresses, and once in the log, by number. Nothing
+is blocked or changed for them. Rejected: blocking the adapter's configuration — a network that
+gives IPv6 DNS servers usually gives an IPv6 address too, which Windows uses without the app, so
+the app would look disconnected while traffic, and its DNS in the clear, went on (the option
+first recommended, withdrawn for that); turning router-advertised DNS off on the interface — a
+persistent setting to own and put back, DHCPv6 left out, and nothing to try it on, since our modem
+and operator give none.
+
 ## 2026-10-03 — M7 on the device
 
 The release zip as a download leaves it — every file marked as from the internet —, installed and
@@ -62,8 +76,8 @@ uninstall string's quoting and the UI thread sound.
   list of installed apps that no longer uninstalls (found by the re-check). The entry stays only
   while `uninstall.cmd` and the package are whole.
 - **Router-advertised IPv6 DNS servers** would stay in the clear with encrypted DNS on, out of a
-  reset's reach. None was ever listed on our modem and operator, so what to do if one appears is
-  an open decision (ROADMAP).
+  reset's reach. None was ever listed on our modem and operator; what the app does about them was
+  the maintainer's to decide (the entry above).
 
 ## 2026-10-03 — Decided: listed in Windows' installed apps
 

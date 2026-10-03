@@ -131,7 +131,7 @@ verifies it and installs it (design: ARCHITECTURE → *Drivers*).
 - [x] The installer refuses a Windows the app can't run on — anything but 64-bit Windows on x64 (decided 2026-10-03): PowerShell 7.6 has no 32-bit build, Windows on Arm loads only Arm64 kernel drivers (`AT-COMMANDS.md` §11.2).
 - [x] Release workflow on `v*` tags (`release.yml`): CI's lint, tests and package, the tag checked against the three modules' version, the zip built, a GitHub Release published with the version's `CHANGELOG.md` section as notes; actions pinned to commits. CI builds the zip and the notes at every push, publishing nothing.
 - [x] Update notice: once per app start, when the connection first comes online, the latest GitHub release read — asynchronously, the app's name as user agent and nothing else, 10 s at most, one attempt; when the API refuses (rate limit), the latest release's page once instead, its redirect read —; if it is newer, the tray menu says so and links its page, built from its tag. Never installs anything; a setting turns it off; never in development mode.
-- [x] Encrypted DNS (DoH) on the modem's adapter (decided 2026-10-03): a setting turns DoH on for the servers of the DNS override, which it needs; an optional DoH template applies to every server of the override; a server with no template, known or given, is a settings problem. Applied per interface (`SetInterfaceDnsSettings`, `DNS_INTERFACE_SETTINGS3`, `DnsServerDohProperty`), each family's servers set with their encryption in one call, re-applied by the pass, removed when turned off; no fallback to plain DNS: what can't be set leaves the adapter unconfigured and waits for the user. The window shows whether it is on. No DoT. Windows 10 has no per-interface DoH (`AT-COMMANDS.md` §11.1, from Microsoft's documentation): the setting is greyed out where the API is missing, read rather than assumed.
+- [x] Encrypted DNS (DoH) on the modem's adapter (decided 2026-10-03): a setting turns DoH on for the servers of the DNS override, which it needs; an optional DoH template applies to every server of the override; a server with no template, known or given, is a settings problem. Applied per interface (`SetInterfaceDnsSettings`, `DNS_INTERFACE_SETTINGS3`, `DnsServerDohProperty`), each family's servers set with their encryption in one call, re-applied by the pass, removed when turned off; no fallback to plain DNS: what can't be set leaves the adapter unconfigured and waits for the user. The window shows whether it is on, and IPv6 DNS servers the network gives besides, which Windows may query in the clear (decided 2026-10-03: said, never acted on). No DoT. Windows 10 has no per-interface DoH (`AT-COMMANDS.md` §11.1, from Microsoft's documentation): the setting is greyed out where the API is missing, read rather than assumed.
 - [x] A DoH server named by its template (decided 2026-10-03): without the override, the template's host is the server — its address, or its name looked up at the start, every `DohRefreshMinutes` (60) and every 30 s while it fails; through Windows, and when Windows can't, the operator's DNS asked for that one name in the clear from the modem's address (the declared exception). Until the name has addresses, the servers already encrypted with that template, else no DNS server at all.
 - [x] The app's own icon (decided 2026-10-03): the logo's glyph (`assets/logo.html`, `?icon`), drawn in code at every size, for the window, the taskbar and the Start-menu shortcut; the tray keeps its icon of the signal. On the taskbar the window and the shortcut share one AppUserModelID: the app's icon, not its PowerShell's, and pinning the window pins the shortcut.
 - [x] Languages (decided 2026-10-03): English, Italian, German, French, Spanish, Portuguese, Dutch and Polish, from Windows' display language; everything the user reads, the installer and the launcher included; the log in English. One table per language, each proven complete against English.
@@ -177,15 +177,7 @@ data is left (design: ARCHITECTURE → *SMS, USSD and data usage*; facts: `AT-CO
 Decisions that change what happens next and are the maintainer's to take. Remove a line when it is
 decided, and record the decision in `DEVLOG.md`.
 
-- **IPv6 DNS servers a network advertises, while encrypted DNS is on.** The app takes static
-  servers off a family the override leaves out, but a server from router advertisements is not
-  static: a reset can't remove it, and Windows may query it in the clear. None was ever listed on
-  our modem and operator (`AT-COMMANDS.md` §11.1), so nothing is done about it today. Should one
-  appear: (1) refuse with a problem of its own, the adapter unconfigured, as for a missing
-  template — costs a blocked connection on such networks; (2) turn router-advertised DNS off on
-  the modem's interface while encrypted DNS is on — costs one more persistent setting to put back
-  when it is turned off; (3) say it in the window and the log only. Recommended: (1), cheapest and
-  in line with "no query in the clear", until a device shows the case.
+*None at the moment.*
 
 ---
 

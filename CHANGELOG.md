@@ -66,8 +66,9 @@ All notable changes to this project are documented here. The format follows
   the template Windows knows for each server or the one you give; never falling back to plain DNS.
   Or to the server your template names, even by a name — a resolver at home on a dynamic address:
   the app looks the name up at the start and every hour (a setting). Should Windows be unable to,
-  it asks the operator's DNS for that one name, in the clear: the only query that ever goes
-  unencrypted. The *Connection* tab shows whether it is on. Needs Windows 11.
+  it asks the operator's DNS for that one name, in the clear: the only query the app sends
+  unencrypted. The *Connection* tab shows whether it is on, and names any IPv6 DNS servers the
+  network gives besides, which Windows may use in the clear. Needs Windows 11.
 - Update notice: once per start, when the connection first comes online, the app asks GitHub for
   the latest release — through its release page when GitHub's API refuses, as it does once other
   clients sharing your address have used up its hourly limit —, and the tray menu says when a

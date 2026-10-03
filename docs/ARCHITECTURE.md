@@ -667,7 +667,11 @@ the decisions are pure functions (`Resolve-NetworkMode`, `Resolve-NetworkModeTri
     the ones Windows lists. Only a missing function means a Windows without it. Its list of known
     templates failing to read doesn't stop the pass either: a server with no template given keeps
     the one the adapter already encrypts it with; with none, encryption is left as it is until the
-    list reads. Either way the log says so once.
+    list reads. Either way the log says so once. **IPv6 servers the network gives** — from router
+    advertisements or DHCPv6: listed by Windows, neither static nor its own `fec0` ones — are out
+    of a reset's reach, and Windows may query them in the clear: the window's DNS line names them
+    and the log says how many, once (decided 2026-10-03). Nothing is blocked for them: a network
+    that gives IPv6 DNS servers usually gives IPv6 too, which works without the app.
   - **A server named by its template** (decided 2026-10-03): without the override, the template's
     host is the server — Windows binds encryption to an address, never to a name
     (`AT-COMMANDS.md` §11.1). A host that is an address is that server. A name is looked up by
