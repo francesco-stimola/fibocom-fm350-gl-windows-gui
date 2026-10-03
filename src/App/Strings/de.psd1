@@ -225,6 +225,7 @@
     'Dns.On'                   = 'Verschlüsseltes DNS ist aktiviert: {0}.'
     'Dns.Waiting'              = 'Verschlüsseltes DNS wartet auf die Adresse seines Servers: Bis dahin ist kein DNS-Server festgelegt.'
     'Dns.Off'                  = 'Verschlüsseltes DNS ist deaktiviert.'
+    'Dns.Advertised'           = 'Das Netz gibt auch IPv6-DNS-Server vor ({0}), die Windows unverschlüsselt verwenden kann.'
     'Dns.LookupFailed'         = '{0} kann nicht aufgelöst werden; die App versucht es weiter.'
     'Dns.LookingUp'            = '{0} wird aufgelöst...'
     'Dns.LookedUp'             = 'Der Server {0} wurde um {1} aufgelöst.'

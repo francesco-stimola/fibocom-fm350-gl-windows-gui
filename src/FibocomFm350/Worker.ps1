@@ -438,6 +438,8 @@ function New-ModemSnapshot {
             Supported = & $fact 'DohSupported'
             Encrypted = [string[]]@(& $fact 'DohServers')
             Known     = [string[]]@(& $fact 'DohKnown')
+            # IPv6 DNS servers the network gives, which Windows may query in the clear.
+            Advertised = [string[]]@(& $fact 'DnsAdvertised')
             Name      = if ($Worker.DohName -and $Worker.DohName.Name) {
                 $state = $Worker.DohName
                 [pscustomobject]@{
@@ -592,6 +594,8 @@ function New-ModemWorker {
         NetworkModeLogged  = $null
         # What Windows last wouldn't read about DNS (Resolve-AdapterConfiguration's Unread), logged.
         DnsUnreadLogged    = $null
+        # The IPv6 DNS servers the network gave beside encrypted DNS, last logged.
+        DnsAdvertisedLogged = ''
         NetworkModeTrial   = if ($Previous -and $Previous.PSObject.Properties['NetworkMode'] -and $Previous.NetworkMode) { $Previous.NetworkMode.Trial } else { $null }
         NetworkModeNotice  = if ($Previous -and $Previous.PSObject.Properties['NetworkMode'] -and $Previous.NetworkMode) { $Previous.NetworkMode.Notice } else { $null }
         # The driver package the user chose last, as copied and checked (Test-WorkerDriverPackage),
@@ -1933,6 +1937,14 @@ function Invoke-ModemWorkerCycle {
             Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Encrypted DNS: $what can't be read; left as it is until they can"
         }
         $Worker.DnsUnreadLogged = $dnsUnread
+        # IPv6 DNS servers the network gives beside encrypted DNS: said once per set, by number -
+        # the window lists them.
+        $given = @(if ($facts -and $facts.PSObject.Properties['DnsAdvertised']) { $facts.DnsAdvertised | Where-Object { $_ } })
+        $givenKey = $given -join ','
+        if ($givenKey -and $givenKey -ne $Worker.DnsAdvertisedLogged) {
+            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Encrypted DNS: the network also gives $($given.Count) IPv6 DNS server(s), which Windows may query in the clear"
+        }
+        $Worker.DnsAdvertisedLogged = $givenKey
         # The probes follow the address the adapter carries; one set anew is proven anew.
         $configured = @($pass.Steps | Where-Object { $_.Action -eq 'ConfigureAdapter' -and $_.Result -eq 'Done' }).Count -gt 0
         $address = if ($facts -and $facts.AdapterConfigured -eq $true -and $facts.ContextAddress) { [string]$facts.ContextAddress } else { $null }

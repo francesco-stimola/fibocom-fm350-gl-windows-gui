@@ -46,6 +46,7 @@ function Resolve-ConnectionState {
           administrator rights to configure it. DohSupported, DohServers (encrypted now) and
           DohKnown (the servers Windows has a template for): for display. DnsUnread: what
           Windows wouldn't read, when encryption is left as it is for it (the plan's Unread).
+          DnsAdvertised: the IPv6 DNS servers the network gives, encrypted DNS on (the plan's).
         - DataPath: the last data-path probe passed ($null: not probed).
         - NetworkMode: Resolve-NetworkMode's decision on the modem's mode and bands.
 
@@ -280,7 +281,7 @@ function Get-ModemObservation {
         ContextDefined = $null; ContextActive = $null; ContextAddress = $null; ContextApn = $null; ContextDns = $null; ContextRead = $null; ApnSet = [bool]$Settings.Apn
         ApnPasswordUnreadable = $Settings.ApnAuthentication -ne 'None' -and (Test-Path -LiteralPath $ApnSecretPath -PathType Leaf) -and -not (Get-ApnPassword -Path $ApnSecretPath)
         Adapter = $null; AdapterConfigured = $null; AdapterProblem = $null; Elevated = $null; DataPath = $null
-        DohSupported = $null; DohServers = $null; DohKnown = $null; DnsUnread = $null
+        DohSupported = $null; DohServers = $null; DohKnown = $null; DnsUnread = $null; DnsAdvertised = $null
     }
     $result = [pscustomobject]@{ Facts = $null; Context = $null; AdapterState = $null; AdapterPlan = $null }
     $finish = {
@@ -437,6 +438,7 @@ function Get-ModemObservation {
         $facts.AdapterConfigured = $plan.Configured
         $facts.AdapterProblem = $plan.Problem
         $facts.DnsUnread = $plan.Unread
+        $facts.DnsAdvertised = [string[]]@($plan.Advertised)
         # The simulated adapter needs no rights.
         $facts.Elevated = [bool]$SimulatedAdapter -or (Test-AppElevation)
         if ($DataPath -and $DataPath.Address -and $DataPath.Address -eq $facts.ContextAddress) {

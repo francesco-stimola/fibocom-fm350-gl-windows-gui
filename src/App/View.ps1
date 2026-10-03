@@ -543,14 +543,17 @@ function Get-DnsView {
     elseif ($name) {
         Get-AppText 'Dns.LookingUp' $name.Host
     }
+    # IPv6 DNS servers the network gives beside encrypted DNS, which Windows may query in the clear.
+    $advertised = @(if ($dns -and $dns.PSObject.Properties['Advertised']) { $dns.Advertised | Where-Object { $_ } })
+    $given = if ($advertised.Count -gt 0) { Get-AppText 'Dns.Advertised' ($advertised -join ', ') }
     $text = if ($supported -eq $false) {
         Get-AppText 'Dns.Unavailable'
     }
     elseif ($encrypted.Count -gt 0) {
-        @((Get-AppText 'Dns.On' ($encrypted -join ', ')), $lookup | Where-Object { $_ }) -join ' '
+        @((Get-AppText 'Dns.On' ($encrypted -join ', ')), $lookup, $given | Where-Object { $_ }) -join ' '
     }
     elseif ($name) {
-        @((Get-AppText 'Dns.Waiting'), $lookup | Where-Object { $_ }) -join ' '
+        @((Get-AppText 'Dns.Waiting'), $lookup, $given | Where-Object { $_ }) -join ' '
     }
     elseif ($null -ne $supported) {
         Get-AppText 'Dns.Off'

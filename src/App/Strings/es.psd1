@@ -225,6 +225,7 @@
     'Dns.On'                   = 'El DNS cifrado está activado: {0}.'
     'Dns.Waiting'              = 'El DNS cifrado espera la dirección de su servidor: mientras tanto, no se establece ningún servidor DNS.'
     'Dns.Off'                  = 'El DNS cifrado está desactivado.'
+    'Dns.Advertised'           = 'La red también proporciona servidores DNS IPv6 ({0}), que Windows puede usar sin cifrar.'
     'Dns.LookupFailed'         = 'No se puede resolver {0}; la aplicación sigue intentándolo.'
     'Dns.LookingUp'            = 'Resolviendo {0}...'
     'Dns.LookedUp'             = 'Su servidor, {0}, se resolvió a las {1}.'

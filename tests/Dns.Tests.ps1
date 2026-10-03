@@ -155,6 +155,23 @@ Describe 'The adapter plan with encrypted DNS' {
         $plan.Actions[0].Servers | Should -Be @('2606:4700:4700::1111') -Because 'a server Windows lists on its own is never made a static one'
     }
 
+    It 'says which IPv6 servers the network gives besides, and changes nothing for them: <Name>' -ForEach @(
+        @{ Name = 'one from router advertisements'; Dns = @('1.1.1.1', '2001:db8:1::53'); Static = @('1.1.1.1'); Doh = $true; Read = $true; Advertised = @('2001:db8:1::53') }
+        @{ Name = 'none: Windows'' own'; Dns = @('1.1.1.1', 'fec0:0:0:ffff::1', 'fec0:0:0:ffff::3'); Static = @('1.1.1.1'); Doh = $true; Read = $true; Advertised = @() }
+        @{ Name = 'none: a static one, written otherwise'; Dns = @('1.1.1.1', '2001:db8::53'); Static = @('1.1.1.1', '2001:0db8:0000:0000:0000:0000:0000:0053'); Doh = $true; Read = $true; Advertised = @() }
+        @{ Name = 'none said with encrypted DNS off'; Dns = @('1.1.1.1', '2001:db8:1::53'); Static = @('1.1.1.1'); Doh = $false; Read = $true; Advertised = @() }
+        @{ Name = 'none said from a read Windows refused'; Dns = @('1.1.1.1', '2001:db8:1::53'); Static = @('1.1.1.1'); Doh = $true; Read = $false; Advertised = @() }
+    ) {
+        $adapter = Get-TestAdapter -Dns $Dns -Static $Static -Read $Read -Doh (Get-TestDoh '1.1.1.1')
+        $plan = Resolve-AdapterConfiguration -Context $script:context -Adapter $adapter -Settings (Get-TestSetting -Dns '1.1.1.1' -Doh $Doh) -DohKnown $script:known
+        , $plan.Advertised | Should -BeOfType ([string[]])
+        @($plan.Advertised) | Should -Be $Advertised
+        $plan.Problem | Should -BeNullOrEmpty -Because 'blocking the adapter wouldn''t stop the IPv6 the network gives'
+        if (@($Static | Where-Object { $_ -match ':' }).Count -eq 0) {
+            @($plan.Actions | ForEach-Object Action) | Should -Not -Contain 'ClearDns' -Because 'a reset can''t take them off'
+        }
+    }
+
     It 'compares the servers Windows lists where it has no per-interface read' {
         $adapter = Get-TestAdapter -Dns '1.1.1.1' -Static @() -Supported $false
         (Resolve-AdapterConfiguration -Context $script:context -Adapter $adapter -Settings (Get-TestSetting -Dns '1.1.1.1') -DohKnown $null).Configured | Should -BeTrue -Because 'an empty reading there is no reading'
@@ -397,6 +414,24 @@ Describe 'Encrypted DNS on the simulated modem' {
         Invoke-ModemWorkerCycle -Worker $script:worker
         $script:link['Snapshot'].Dns.Encrypted | Should -BeNullOrEmpty
         $script:device.Adapter.DnsServers | Should -Be @('1.1.1.1', '9.9.9.9') -Because 'the override stays, in the clear as the user now asks'
+    }
+
+    It 'encrypts as asked and says, in the window and once in the log, the IPv6 servers the network gives besides' {
+        $settings = (ConvertTo-AppSetting -InputObject @{ DnsServers = @('1.1.1.1'); DnsOverHttps = $true }).Settings
+        Export-AppSetting -Settings $settings -Path (Join-Path $script:folder 'settings.json') -Confirm:$false
+        $script:device.Adapter.AdvertisedDns = @('2001:db8:1::53')
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:worker.PassForced = $true
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $snapshot = $script:link['Snapshot']
+        $snapshot.State | Should -Be 'Online'
+        $snapshot.Blocked | Should -BeFalse
+        $snapshot.Dns.Encrypted | Should -Be @('1.1.1.1')
+        $snapshot.Dns.Advertised | Should -Be @('2001:db8:1::53')
+        (ConvertTo-WindowView -Snapshot $snapshot).Dns.Text | Should -Be 'Encrypted DNS is on: 1.1.1.1. The network also gives IPv6 DNS servers (2001:db8:1::53), which Windows may use in the clear.'
+        $written = @(Get-ChildItem -Path (Join-Path $script:folder 'logs') -Filter '*.log' | Get-Content)
+        @($written | Where-Object { $_ -match 'WARNING.*Encrypted DNS: the network also gives 1 IPv6 DNS server\(s\), which Windows may query in the clear' }).Count | Should -Be 1
+        @($written | Where-Object { $_ -match '2001:db8' }).Count | Should -Be 0 -Because 'the log says how many, the window which'
     }
 
     It 'goes online, encryption left as it is, and says once that Windows'' list of templates can''t be read' {
@@ -886,6 +921,7 @@ Describe 'What the window shows' {
         @{ Name = 'nothing before the adapter is read'; Dns = $null; Text = $null; CanEnable = $true }
         @{ Name = 'off'; Dns = @{ Supported = $true; Encrypted = @(); Known = @('1.1.1.1') }; Text = 'Encrypted DNS is off.'; CanEnable = $true }
         @{ Name = 'on, and for which servers'; Dns = @{ Supported = $true; Encrypted = @('1.1.1.1'); Known = @('1.1.1.1') }; Text = 'Encrypted DNS is on: 1.1.1.1.'; CanEnable = $true }
+        @{ Name = 'on, and the IPv6 servers the network gives besides'; Dns = @{ Supported = $true; Encrypted = @('1.1.1.1'); Known = @('1.1.1.1'); Advertised = @('2001:db8:1::53', '2001:db8:1::54') }; Text = 'Encrypted DNS is on: 1.1.1.1. The network also gives IPv6 DNS servers (2001:db8:1::53, 2001:db8:1::54), which Windows may use in the clear.'; CanEnable = $true }
         @{ Name = 'that this Windows can''t'; Dns = @{ Supported = $false; Encrypted = @(); Known = @() }; Text = 'Encrypted DNS is not available on this Windows: DNS over HTTPS on one adapter needs Windows 11.'; CanEnable = $false }
     ) {
         $snapshot = if ($Dns) { [pscustomobject]@{ Dns = [pscustomobject]$Dns } } else { $null }

@@ -77,8 +77,9 @@ function Resolve-AdapterConfiguration {
           Unread says which.
         - The interface metric is the settings' one, never automatic.
 
-        Returns Unread ('Settings', 'Templates' or $null), Configured ($true when nothing needs to
-        change), Actions - in order, each with
+        Returns Unread ('Settings', 'Templates' or $null), Advertised (with encrypted DNS on, the
+        IPv6 DNS servers the network gives, which Windows may query in the clear: said, never
+        acted on), Configured ($true when nothing needs to change), Actions - in order, each with
         Action ('DisableDhcp', 'RemoveAddress', 'SetAddress', 'RemoveGateway', 'SetGateway',
         'SetDns', 'ClearDns', 'SetDoh', 'ClearDoh', 'SetMetric') and its values; a gateway of
         0.0.0.0 is an on-link route - and Problem, when no action is planned at all: 'NoAddress'
@@ -107,6 +108,8 @@ function Resolve-AdapterConfiguration {
     # What Windows wouldn't read, when DNS is left as it is for that reason: 'Settings' (the
     # adapter's) or 'Templates' (its list of DoH templates).
     $unreadWhat = $null
+    # IPv6 DNS servers the network gives, with encrypted DNS on: said, never acted on.
+    $advertised = @()
     $plan = {
         param($problem)
         [pscustomobject]@{
@@ -115,6 +118,7 @@ function Resolve-AdapterConfiguration {
             Actions    = [object[]]@(if (-not $problem) { $actions })
             Problem    = $problem
             Unread     = $unreadWhat
+            Advertised = [string[]]$advertised
         }
     }
     $addresses = @($Adapter.Addresses | Where-Object { Test-UsableIPv4Address -Address $_.Address })
@@ -192,6 +196,17 @@ function Resolve-AdapterConfiguration {
         }
         if (-not $encryption -or -not $encryption.Supported) {
             return & $plan 'DohUnavailable'
+        }
+        # IPv6 servers Windows lists that are neither static nor its own (fec0:0:0:ffff::1 to 3):
+        # the network's, from router advertisements or DHCPv6. A reset can't take them off, and
+        # blocking the adapter wouldn't stop the IPv6 the network gives: they are said, nothing
+        # more (decided 2026-10-03).
+        if (-not $unread) {
+            # Compared in one form: the two lists may write an IPv6 address differently.
+            $canonical = { param($text) $address = $null; if ([System.Net.IPAddress]::TryParse([string]$text, [ref]$address)) { $address.ToString() } else { [string]$text } }
+            $mine = @($static | ForEach-Object { & $canonical $_ })
+            $advertised = @($Adapter.DnsServers | Where-Object { $_ -match ':' } | ForEach-Object { & $canonical $_ } |
+                    Where-Object { $_ -notin $mine -and $_ -notmatch '^fec0:0:0:ffff::[1-3]$' })
         }
         if ($pending -and $kept) {
             # An adapter the modem's DHCP configured keeps the DHCP servers: it waits, unchanged.

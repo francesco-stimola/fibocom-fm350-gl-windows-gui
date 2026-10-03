@@ -225,6 +225,7 @@
     'Dns.On'                   = 'Le DNS chiffré est activé : {0}.'
     'Dns.Waiting'              = 'Le DNS chiffré attend l''adresse de son serveur : aucun serveur DNS n''est défini en attendant.'
     'Dns.Off'                  = 'Le DNS chiffré est désactivé.'
+    'Dns.Advertised'           = 'Le réseau fournit aussi des serveurs DNS IPv6 ({0}), que Windows peut utiliser en clair.'
     'Dns.LookupFailed'         = 'Impossible de résoudre {0} ; l''application continue d''essayer.'
     'Dns.LookingUp'            = 'Résolution de {0}...'
     'Dns.LookedUp'             = 'Son serveur, {0}, a été résolu à {1}.'

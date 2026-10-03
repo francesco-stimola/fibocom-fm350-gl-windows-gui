@@ -18,6 +18,8 @@ class SimulatedAdapter {
     [object[]] $Addresses = @([pscustomobject]@{ Address = '169.254.10.20'; PrefixLength = 16; Origin = 'WellKnown'; State = 'Preferred' })
     [string[]] $Gateways = @()
     [string[]] $DnsServers = @()
+    # IPv6 DNS servers the network gives (router advertisements): listed, never static.
+    [string[]] $AdvertisedDns = @()
     # Encrypted DNS: whether this Windows has the per-interface API, the servers carrying a DoH
     # property, and the templates it knows - Cloudflare's and Quad9's, from Windows' own list.
     [bool] $DohSupported = $true
@@ -49,8 +51,8 @@ class SimulatedAdapter {
             AutomaticMetric = $this.AutomaticMetric
             Addresses       = [object[]]@($this.Addresses)
             Gateways        = [string[]]@($this.Gateways)
-            DnsServers      = [string[]]@($this.DnsServers)
-            # The simulated adapter's DNS servers are all static ones; a DoH property is read with
+            DnsServers      = [string[]]@(@($this.DnsServers) + @($this.AdvertisedDns))
+            # The simulated adapter's DNS servers are all static ones, but the network's; a DoH property is read with
             # its server, as Windows reads it by the server's position.
             Doh             = [pscustomobject]@{ Supported = $this.DohSupported; Read = $true; NameServers = [string[]]@($this.DnsServers); Servers = [object[]]@($this.DohServers | Where-Object { $_.Address -in $this.DnsServers }) }
         }

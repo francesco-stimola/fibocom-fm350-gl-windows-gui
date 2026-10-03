@@ -225,6 +225,7 @@
     'Dns.On'                   = 'Encrypted DNS is on: {0}.'
     'Dns.Waiting'              = 'Encrypted DNS waits for its server''s address: no DNS server is set meanwhile.'
     'Dns.Off'                  = 'Encrypted DNS is off.'
+    'Dns.Advertised'           = 'The network also gives IPv6 DNS servers ({0}), which Windows may use in the clear.'
     'Dns.LookupFailed'         = '{0} can''t be looked up; the app keeps trying.'
     'Dns.LookingUp'            = 'Looking up {0}...'
     'Dns.LookedUp'             = 'Its server, {0}, was looked up at {1}.'

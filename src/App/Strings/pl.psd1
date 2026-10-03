@@ -225,6 +225,7 @@
     'Dns.On'                   = 'Szyfrowany DNS jest włączony: {0}.'
     'Dns.Waiting'              = 'Szyfrowany DNS czeka na adres swojego serwera: do tego czasu nie jest ustawiony żaden serwer DNS.'
     'Dns.Off'                  = 'Szyfrowany DNS jest wyłączony.'
+    'Dns.Advertised'           = 'Sieć podaje też serwery DNS IPv6 ({0}), których Windows może używać bez szyfrowania.'
     'Dns.LookupFailed'         = 'Nie można wyszukać adresu {0}; aplikacja nadal próbuje.'
     'Dns.LookingUp'            = 'Wyszukiwanie adresu {0}...'
     'Dns.LookedUp'             = 'Adres serwera {0} wyszukano o {1}.'

@@ -224,6 +224,7 @@
     'Dns.On'                   = 'Versleutelde DNS staat aan: {0}.'
     'Dns.Waiting'              = 'Versleutelde DNS wacht op het adres van de server: intussen is er geen DNS-server ingesteld.'
     'Dns.Off'                  = 'Versleutelde DNS staat uit.'
+    'Dns.Advertised'           = 'Het netwerk geeft ook IPv6-DNS-servers op ({0}), die Windows onversleuteld kan gebruiken.'
     'Dns.LookupFailed'         = '{0} kan niet worden opgezocht; de app blijft het proberen.'
     'Dns.LookingUp'            = '{0} opzoeken...'
     'Dns.LookedUp'             = 'De server, {0}, is om {1} opgezocht.'
