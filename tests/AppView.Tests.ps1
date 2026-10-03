@@ -214,6 +214,7 @@ Describe 'What unblocks the connection' {
         @{ Scenario = 'PinRequired'; Kind = 'Pin'; Action = 'Store PIN'; Enabled = $true }
         @{ Scenario = 'FccLocked'; Kind = 'Unlock'; Action = 'Unlock...'; Enabled = $true }
         @{ Scenario = 'AdapterDisabled'; Kind = 'EnableAdapter'; Action = 'Enable adapter'; Enabled = $true }
+        @{ Scenario = 'NoDriver'; Kind = 'Driver'; Action = 'Install the driver...'; Enabled = $true }
     ) {
         $blocker = (ConvertTo-WindowView -Snapshot (Get-ScenarioSnapshot -Scenario $Scenario)).Blocker
         $blocker.Kind | Should -Be $Kind
@@ -234,7 +235,6 @@ Describe 'What unblocks the connection' {
         @{ Reason = 'PukRequired' }
         @{ Reason = 'NoSim' }
         @{ Reason = 'LastAttempt' }
-        @{ Reason = 'NoDriver' }
         @{ Reason = 'NotElevated' }
     ) {
         $blocker = (ConvertTo-WindowView -Snapshot (Copy-Snapshot $script:online @{ State = 'Identified'; Reason = $Reason; Blocked = $true })).Blocker
@@ -330,6 +330,27 @@ Describe 'Command outcomes' {
         @{ Kind = 'SetNetworkMode'; Result = 'NoModem' }
         @{ Kind = 'SetNetworkMode'; Result = 'Refused' }
         @{ Kind = 'SetNetworkMode'; Result = 'Failed' }
+        @{ Kind = 'CheckDriverPackage'; Result = 'Verified' }
+        @{ Kind = 'CheckDriverPackage'; Result = 'Signed' }
+        @{ Kind = 'CheckDriverPackage'; Result = 'Refused' }
+        @{ Kind = 'CheckDriverPackage'; Result = 'NoPackage' }
+        @{ Kind = 'CheckDriverPackage'; Result = 'Failed' }
+        @{ Kind = 'CheckDriverPackage'; Result = 'NotElevated' }
+        @{ Kind = 'InstallDriver'; Result = 'Done' }
+        @{ Kind = 'InstallDriver'; Result = 'RestartNeeded' }
+        @{ Kind = 'InstallDriver'; Result = 'NoDevice' }
+        @{ Kind = 'InstallDriver'; Result = 'Unconfirmed' }
+        @{ Kind = 'InstallDriver'; Result = 'NoPackage' }
+        @{ Kind = 'InstallDriver'; Result = 'DriverWorking' }
+        @{ Kind = 'InstallDriver'; Result = 'TimedOut' }
+        @{ Kind = 'InstallDriver'; Result = 'Failed' }
+        @{ Kind = 'InstallDriver'; Result = 'Refused' }
+        @{ Kind = 'UninstallDriver'; Result = 'Done' }
+        @{ Kind = 'UninstallDriver'; Result = 'RestartNeeded' }
+        @{ Kind = 'UninstallDriver'; Result = 'NoDriver' }
+        @{ Kind = 'UninstallDriver'; Result = 'TrialOn' }
+        @{ Kind = 'UninstallDriver'; Result = 'TimedOut' }
+        @{ Kind = 'UninstallDriver'; Result = 'Failed' }
     ) {
         $result = [pscustomobject]@{ Id = '1'; Kind = $Kind; Result = $Result; Detail = $null; AttemptsLeft = $null; Time = [DateTimeOffset]::new(2026, 10, 1, 12, 0, 0, [timespan]::Zero) }
         $text = (ConvertTo-WindowView -Snapshot (Copy-Snapshot $script:online @{ Results = @($result) })).Result
@@ -343,6 +364,128 @@ Describe 'Command outcomes' {
         (ConvertTo-WindowView -Snapshot (Copy-Snapshot $script:online @{ Results = @($rejected) })).Result | Should -Match 'Attempts left: 2\.$'
         $failed = [pscustomobject]@{ Id = '2'; Kind = 'SaveSettings'; Result = 'Failed'; Detail = 'Settings not saved: InterfaceMetric must be a whole number.'; AttemptsLeft = $null; Time = $time }
         (ConvertTo-WindowView -Snapshot (Copy-Snapshot $script:online @{ Results = @($failed) })).Result | Should -Match 'InterfaceMetric'
+    }
+}
+
+Describe 'Get-DriverView' {
+    BeforeAll {
+        $script:known = @(Get-KnownDriverPackage)
+        # A snapshot whose Driver part is changed.
+        function Get-DriverSnapshot {
+            param([object] $Snapshot, [hashtable] $Change = @{}, [hashtable] $Top = @{})
+            $driver = $Snapshot.Driver | Select-Object -Property *
+            foreach ($key in $Change.Keys) { $driver.$key = $Change[$key] }
+            $Top['Driver'] = $driver
+            Copy-Snapshot $Snapshot $Top
+        }
+        # The package the user chose, as the check left it.
+        function Get-TestPackage {
+            param([string] $Verdict = 'Verified', [string[]] $Problems = @())
+            [pscustomobject]@{
+                Name    = 'acer_v3.22.43.1.zip'
+                Verdict = [pscustomobject]@{
+                    Verdict = $Verdict; Problems = $Problems; Path = 'usb2ser_tm.inf'; Provider = 'MediaTek'; Version = '3.22.43.1'
+                    Known = if ($Verdict -eq 'Verified') { [pscustomobject]@{ Name = 'MediaTek usb2ser_tm'; Version = '3.22.43.1' } } else { $null }
+                }
+                Time    = [DateTimeOffset]::Now
+            }
+        }
+        $script:noDriver = Get-ScenarioSnapshot -Scenario NoDriver
+    }
+
+    It 'says the AT port has no driver, where a copy is published and by whom, and lets the user choose a package' {
+        $view = Get-DriverView -Snapshot $script:noDriver -Known $script:known
+        $view.StateText | Should -BeLike '*has no driver*'
+        $copy = $script:known[0].Copy
+        $view.PageUrl | Should -Be $copy.Page
+        $view.SourceText | Should -BeLike "*doesn't come with the modem's driver*"
+        $view.SourceText | Should -BeLike "*third party, $($copy.Publisher), as $($copy.File)*"
+        $view.SourceText | Should -BeLike '*never runs a program from it*'
+        $view.CanChoose | Should -BeTrue
+        $view.CanInstall | Should -BeFalse
+        $view.CanUninstall | Should -BeFalse
+        $view.PackageText | Should -BeNullOrEmpty
+    }
+
+    It 'names the driver an AT port has, and lets the user uninstall it' {
+        $view = Get-DriverView -Snapshot $script:online -Known $script:known
+        $view.StateText | Should -Be 'The modem''s AT port has its driver: MediaTek 3.22.43.1 (oem0.inf).'
+        $view.CanUninstall | Should -BeTrue
+        $view.CanInstall | Should -BeFalse
+    }
+
+    It 'offers to install a package that may be installed, and asks first for one it doesn''t know: <Verdict>' -ForEach @(
+        @{ Verdict = 'Verified'; Confirm = $false; Text = 'acer_v3.22.43.1.zip: MediaTek usb2ser_tm 3.22.43.1, a version the app knows, signed by Microsoft (WHQL) for this modem.' }
+        @{ Verdict = 'Signed'; Confirm = $true; Text = 'acer_v3.22.43.1.zip: MediaTek 3.22.43.1, signed by Microsoft (WHQL) for this modem, but not a version the app knows: it asks before installing it.' }
+    ) {
+        $view = Get-DriverView -Snapshot (Get-DriverSnapshot -Snapshot $script:noDriver -Change @{ Package = (Get-TestPackage -Verdict $Verdict) }) -Known $script:known
+        $view.PackageText | Should -Be $Text
+        $view.CanInstall | Should -BeTrue
+        $view.ConfirmInstall | Should -Be $Confirm
+    }
+
+    It 'says why a package is refused, and offers nothing to install' {
+        $package = Get-TestPackage -Verdict 'Refused' -Problems 'NotWhql', 'NotInCatalog'
+        $view = Get-DriverView -Snapshot (Get-DriverSnapshot -Snapshot $script:noDriver -Change @{ Package = $package }) -Known $script:known
+        $view.PackageText | Should -Be 'acer_v3.22.43.1.zip can''t be installed: its catalog is not signed by Microsoft (WHQL); its INF file is not the one its catalog vouches for: it was changed, or is damaged.'
+        $view.CanInstall | Should -BeFalse
+    }
+
+    It 'has a sentence for every reason a package is refused: <_>' -ForEach @('NoInf', 'NotForModem', 'NoCatalog', 'NotWhql', 'NotInCatalog', 'NotTrusted') {
+        $view = Get-DriverView -Snapshot (Get-DriverSnapshot -Snapshot $script:noDriver -Change @{ Package = (Get-TestPackage -Verdict 'Refused' -Problems $_) }) -Known $script:known
+        $view.PackageText | Should -Not -BeLike "*$_*"
+    }
+
+    It 'never installs over an AT port that works' {
+        $view = Get-DriverView -Snapshot (Get-DriverSnapshot -Snapshot $script:online -Change @{ Package = (Get-TestPackage) }) -Known $script:known
+        $view.CanInstall | Should -BeFalse
+    }
+
+    It 'keeps the driver while a network mode is on trial, and says why' {
+        $mode = $script:online.NetworkMode | Select-Object -Property *
+        $mode.Trial = [pscustomobject]@{ Selection = [pscustomobject]@{ NetworkMode = 'LteOnly' }; Until = [DateTimeOffset]::Now.AddMinutes(3) }
+        $view = Get-DriverView -Snapshot (Copy-Snapshot $script:online @{ NetworkMode = $mode }) -Known $script:known
+        $view.CanUninstall | Should -BeFalse
+        $view.Note | Should -Be 'A network mode is on trial: the driver can be uninstalled once the trial ends.'
+    }
+
+    It 'says what is under way, and offers nothing meanwhile: <Operation>' -ForEach @(
+        @{ Operation = 'CheckDriverPackage'; Text = 'Checking the driver package...' }
+        @{ Operation = 'InstallDriver'; Text = 'Installing the driver: Windows may take a minute.' }
+        @{ Operation = 'UninstallDriver'; Text = 'Uninstalling the driver...' }
+    ) {
+        $view = Get-DriverView -Snapshot (Get-DriverSnapshot -Snapshot $script:online -Change @{ Operation = $Operation; Package = (Get-TestPackage) }) -Known $script:known
+        $view.PackageText | Should -Be $Text
+        $view.CanChoose, $view.CanInstall, $view.CanUninstall | Should -Be @($false, $false, $false)
+    }
+
+    It 'offers nothing <Name>, and says why' -ForEach @(
+        @{ Name = 'while the app only observes'; Top = @{ ObserveOnly = $true }; Note = 'The app only observes: it changes nothing.' }
+        @{ Name = 'without administrator rights'; Top = @{ Elevated = $false }; Note = 'Installing or uninstalling a driver needs administrator rights: start the app as administrator.' }
+    ) {
+        $view = Get-DriverView -Snapshot (Get-DriverSnapshot -Snapshot $script:noDriver -Change @{ Package = (Get-TestPackage) } -Top $Top) -Known $script:known
+        $view.Note | Should -Be $Note
+        $view.CanChoose, $view.CanInstall, $view.CanUninstall | Should -Be @($false, $false, $false)
+    }
+
+    It 'offers nothing while the worker restarts' {
+        $view = Get-DriverView -Snapshot $script:noDriver -Worker Restarting -Known $script:known
+        $view.CanChoose | Should -BeFalse
+    }
+
+    It 'says where no modem is, and that a driver installed now is used once it is plugged in' {
+        (Get-DriverView -Snapshot (Get-ScenarioSnapshot -Scenario NoDevice) -Known $script:known).StateText | Should -BeLike 'No modem on USB.*plugged in.'
+    }
+
+    It 'shows a page without a snapshot, and without known packages' {
+        $view = Get-DriverView -Snapshot $null -Known @()
+        $view.PageUrl | Should -BeNullOrEmpty
+        $view.SourceText | Should -BeLike '*Download a copy*'
+        $view.CanChoose | Should -BeFalse
+    }
+
+    It 'is the window''s Driver tab' {
+        (ConvertTo-WindowView -Snapshot $script:noDriver).Driver.StateText | Should -BeLike '*has no driver*'
     }
 }
 

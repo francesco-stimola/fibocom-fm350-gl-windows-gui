@@ -362,4 +362,27 @@ Describe 'The simulated modem on USB' {
             Close-AtChannel -Channel $channel
         }
     }
+
+    It 'has its AT port''s driver installed and uninstalled, as pnputil would (NoDriver)' {
+        $device = New-SimulatedDevice -Scenario NoDriver
+        $presence = $device.Find()
+        $presence.Device | Should -Be 'NoDriver'
+        $presence.ProductId | Should -Be '7127'
+        $presence.Driver | Should -BeNullOrEmpty
+        $device.InstallDriver()
+        $presence = $device.Find()
+        $presence.Device | Should -Be 'Present'
+        $presence.Driver.InfPath | Should -Be 'oem0.inf'
+        $presence.Driver.Version | Should -Be '3.22.43.1'
+        $device.UninstallDriver()
+        $device.Find().Device | Should -Be 'NoDriver'
+    }
+
+    It 'gets no driver without a modem on USB (NoDevice)' {
+        $device = New-SimulatedDevice -Scenario NoDevice
+        $device.InstallDriver()
+        $presence = $device.Find()
+        $presence.Device | Should -Be 'Absent'
+        $presence.ProductId | Should -BeNullOrEmpty
+    }
 }

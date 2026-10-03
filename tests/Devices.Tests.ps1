@@ -85,6 +85,17 @@ Describe 'Resolve-ModemUsbDevice' {
             $script:modems[0].Functions.PortName | Should -Be @($null, 'COM3', 'COM5', 'COM7', $null, 'COM9', 'COM4', 'COM6', 'COM8')
             $script:modems[0].Network.PortName | Should -BeNullOrEmpty
         }
+
+        It 'names each function''s driver package: the AT port''s published as an oem INF, the network''s Windows'' own' {
+            $script:modems[0].AtPort.Driver.InfPath | Should -Be 'oem24.inf'
+            $script:modems[0].Network.Driver.InfPath | Should -Be 'wceisvista.inf'
+        }
+    }
+
+    It 'names no driver for a function without one' {
+        $fixture = Get-Content -LiteralPath "$PSScriptRoot/fixtures/device/pnp.7127.nodriver.json" -Raw | ConvertFrom-Json
+        (Resolve-ModemUsbDevice -Device $fixture.Devices).AtPort.Driver | Should -BeNullOrEmpty
+        (Resolve-ModemUsbDevice -Device @(ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&0&0006')).AtPort.Driver | Should -BeNullOrEmpty
     }
 
     It 'finds the AT port on MI_04 in composition 7126' {
@@ -100,16 +111,46 @@ Describe 'Resolve-ModemUsbDevice' {
         $modem.Functions.Role | Should -Be @('Network', 'AtPort', 'Other')
     }
 
-    It 'reads problem code <Code> as <State>' -ForEach @(
-        @{ Code = 0; State = 'Working' }
-        @{ Code = 1; State = 'NoDriver' }
-        @{ Code = 28; State = 'NoDriver' }
-        @{ Code = 10; State = 'Problem' }
-        @{ Code = 22; State = 'Problem' }
+    It 'reads problem code <Code> with service ''<Service>'' as <State>' -ForEach @(
+        @{ Code = 0; Service = 'usb2ser'; State = 'Working' }
+        @{ Code = 0; Service = ''; State = 'NoDriver' }
+        @{ Code = 1; Service = ''; State = 'NoDriver' }
+        @{ Code = 28; Service = ''; State = 'NoDriver' }
+        @{ Code = 10; Service = 'usb2ser'; State = 'Problem' }
+        @{ Code = 22; Service = 'usb2ser'; State = 'Problem' }
     ) {
-        $modem = Resolve-ModemUsbDevice -Device @(ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&0&0006' -ProblemCode $Code)
+        $modem = Resolve-ModemUsbDevice -Device @(ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&0&0006' -ProblemCode $Code -Service $Service)
         $modem.AtPort.State | Should -Be $State
         $modem.AtPort.ProblemCode | Should -Be $Code
+    }
+
+    It 'leaves a function whose service couldn''t be read to the opening of its port' {
+        $record = ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&0&0006'
+        $record.Service = $null
+        (Resolve-ModemUsbDevice -Device @($record)).AtPort.State | Should -Be 'Working'
+    }
+
+    Context 'on the captured 7127 modem right after its AT-port driver was uninstalled' {
+        BeforeAll {
+            $fixture = Get-Content -LiteralPath "$PSScriptRoot/fixtures/device/pnp.7127.uninstalled.json" -Raw | ConvertFrom-Json
+            $script:modems = @(Resolve-ModemUsbDevice -Device $fixture.Devices)
+        }
+
+        It 'sees the serial functions without a driver, though Windows gives them no problem code yet' {
+            $atPort = $script:modems[0].AtPort
+            $atPort.ProblemCode | Should -Be 0
+            $atPort.Service | Should -BeNullOrEmpty
+            $atPort.State | Should -Be 'NoDriver'
+            $atPort.PortName | Should -BeNullOrEmpty
+            $atPort.Driver | Should -BeNullOrEmpty
+            @($script:modems[0].Functions | Where-Object State -EQ 'NoDriver').Interface | Should -Be @(2, 3, 4, 6, 7, 8, 9)
+        }
+
+        It 'says the driver is missing' {
+            $presence = Resolve-ModemPresence -Modem $script:modems
+            $presence.Device | Should -Be 'NoDriver'
+            $presence.ProductId | Should -Be '7127'
+        }
     }
 
     It 'skips devices left over from an earlier plug-in' {
@@ -175,13 +216,23 @@ Describe 'Resolve-ModemPresence' {
         $presence.AdapterInstanceId | Should -BeLike 'USB\VID_0E8D&PID_7127&MI_00\*'
         $presence.InstanceId | Should -Match '^USB\\VID_0E8D&PID_7127\\[^\\]+$' -Because 'the composite device is what R6 restarts'
         $presence.Modems | Should -Be 1
+        $presence.ProductId | Should -Be '7127'
+        $presence.Driver.InfPath | Should -Be 'oem24.inf'
     }
 
-    It 'says the driver is missing on the captured modem without it' {
+    It 'says the driver is missing on the captured modem without it, and which composition needs it' {
         $fixture = Get-Content -LiteralPath "$PSScriptRoot/fixtures/device/pnp.7127.nodriver.json" -Raw | ConvertFrom-Json
         $presence = Resolve-ModemPresence -Modem @(Resolve-ModemUsbDevice -Device $fixture.Devices)
         $presence.Device | Should -Be 'NoDriver'
         $presence.PortName | Should -BeNullOrEmpty
+        $presence.ProductId | Should -Be '7127'
+        $presence.Driver | Should -BeNullOrEmpty
+    }
+
+    It 'names no composition and no driver without a modem' {
+        $presence = Resolve-ModemPresence -Modem @()
+        $presence.ProductId | Should -BeNullOrEmpty
+        $presence.Driver | Should -BeNullOrEmpty
     }
 
     It '<Name>: <Device>' -ForEach @(
@@ -249,12 +300,21 @@ Describe 'Get-ModemPnpRecord' {
                     default { 'usb2ser' }
                 }
                 $values = @{
-                    DEVPKEY_Device_ProblemCode = 0
-                    DEVPKEY_Device_Service     = $service
-                    DEVPKEY_Device_Parent      = if ($device.InstanceId -eq $script:composite) { 'USB\ROOT_HUB30\6&00000000&1&0' } else { $script:composite }
+                    DEVPKEY_Device_ProblemCode    = 0
+                    DEVPKEY_Device_Service        = $service
+                    DEVPKEY_Device_Parent         = if ($device.InstanceId -eq $script:composite) { 'USB\ROOT_HUB30\6&00000000&1&0' } else { $script:composite }
+                    DEVPKEY_Device_DriverInfPath  = if ($service -eq 'usb2ser') { 'oem24.inf' } else { $null }
+                    DEVPKEY_Device_DriverVersion  = if ($service -eq 'usb2ser') { '3.22.43.1' } else { $null }
+                    DEVPKEY_Device_DriverProvider = if ($service -eq 'usb2ser') { 'MediaTek' } else { $null }
                 }
+                # As the cmdlet does, a key without a value comes back without Data.
                 foreach ($key in $KeyName) {
-                    [pscustomobject]@{ InstanceId = $device.InstanceId; KeyName = $key; Data = $values[$key] }
+                    if ($null -eq $values[$key]) {
+                        [pscustomobject]@{ InstanceId = $device.InstanceId; KeyName = $key; Type = 'Empty' }
+                    }
+                    else {
+                        [pscustomobject]@{ InstanceId = $device.InstanceId; KeyName = $key; Data = $values[$key] }
+                    }
                 }
             }
         }
@@ -286,6 +346,36 @@ Describe 'Get-ModemPnpRecord' {
         $modem.AtPort.State | Should -Be 'Working'
         $modem.Network.InstanceId | Should -Be $script:networkId
         $modem.Network.PortName | Should -BeNullOrEmpty
+    }
+
+    It 'reads each device''s driver package, version and provider in the same call' {
+        $atPort = Get-ModemPnpRecord | Where-Object InstanceId -EQ $script:atPortId
+        $atPort.DriverInfPath | Should -Be 'oem24.inf'
+        $atPort.DriverVersion | Should -Be '3.22.43.1'
+        $atPort.DriverProvider | Should -Be 'MediaTek'
+        (Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord)).AtPort.Driver.Version | Should -Be '3.22.43.1'
+        Should -Invoke -ModuleName FibocomFm350 Get-PnpDeviceProperty -ParameterFilter { 'DEVPKEY_Device_DriverInfPath' -in $KeyName -and 'DEVPKEY_Device_ProblemCode' -in $KeyName }
+    }
+
+    It 'tells a service read as none - a driver uninstalled - from one that couldn''t be read' {
+        # The AT port's service comes back without a value; the network function's properties not at all.
+        Mock -ModuleName FibocomFm350 Get-PnpDeviceProperty -RemoveParameterType InputObject {
+            foreach ($device in $InputObject) {
+                if ($device.InstanceId -eq $script:atPortId) {
+                    [pscustomobject]@{ InstanceId = $device.InstanceId; KeyName = 'DEVPKEY_Device_ProblemCode'; Data = 0 }
+                    [pscustomobject]@{ InstanceId = $device.InstanceId; KeyName = 'DEVPKEY_Device_Parent'; Data = $script:composite }
+                    [pscustomobject]@{ InstanceId = $device.InstanceId; KeyName = 'DEVPKEY_Device_Service'; Type = 'Empty' }
+                }
+                elseif ($device.InstanceId -eq $script:composite) {
+                    [pscustomobject]@{ InstanceId = $device.InstanceId; KeyName = 'DEVPKEY_Device_Service'; Data = 'usbccgp' }
+                }
+            }
+        }
+        $records = @(Get-ModemPnpRecord)
+        ($records | Where-Object InstanceId -EQ $script:atPortId).Service | Should -BeExactly ''
+        ($records | Where-Object InstanceId -EQ $script:networkId).Service | Should -BeNullOrEmpty
+        $null -eq ($records | Where-Object InstanceId -EQ $script:networkId).Service | Should -BeTrue
+        (Resolve-ModemUsbDevice -Device $records).AtPort.State | Should -Be 'NoDriver'
     }
 
     It 'reads nothing more when no MediaTek device is present' {

@@ -13,6 +13,7 @@
         'ConvertTo-WindowView'
         'Enter-AppInstance'
         'Exit-AppInstance'
+        'Get-DriverView'
         'Get-GuiResourceCount'
         'Get-NetworkModeView'
         'Get-TrayModeMenu'

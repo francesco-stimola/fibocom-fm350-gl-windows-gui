@@ -25,8 +25,10 @@ function Get-ModemPnpRecord {
         labels one device's properties with another's instance ID. Reads only; needs no
         administrator rights and never opens a port.
 
-        Returns one record per present device: InstanceId, Present, ProblemCode, Service,
-        Parent and PortName ($null when the device has none).
+        Returns one record per present device: InstanceId, Present, ProblemCode, Service ('' when
+        the device has none; $null when it couldn't be read), Parent, PortName ($null when the
+        device has none), and its driver: DriverInfPath (the name its package has in the driver
+        store), DriverVersion, DriverProvider - $null without one.
     .EXAMPLE
         Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord)
     #>
@@ -38,23 +40,31 @@ function Get-ModemPnpRecord {
     if ($devices.Count -eq 0) {
         return
     }
-    $keys = 'DEVPKEY_Device_ProblemCode', 'DEVPKEY_Device_Service', 'DEVPKEY_Device_Parent'
+    $keys = 'DEVPKEY_Device_ProblemCode', 'DEVPKEY_Device_Service', 'DEVPKEY_Device_Parent',
+    'DEVPKEY_Device_DriverInfPath', 'DEVPKEY_Device_DriverVersion', 'DEVPKEY_Device_DriverProvider'
     foreach ($device in $devices) {
         $own = @(Get-PnpDeviceProperty -InputObject $device -KeyName $keys -ErrorAction SilentlyContinue |
                 Where-Object InstanceId -EQ $device.InstanceId)
+        # A key the device has no value for comes back with no Data at all: no service, no driver.
         $value = {
             param($key)
             $property = $own | Where-Object KeyName -EQ $key | Select-Object -First 1
-            if ($property) { $property.Data }
+            if ($property -and $property.PSObject.Properties['Data']) { $property.Data }
         }
         $parameters = Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Enum\$($device.InstanceId)\Device Parameters" -ErrorAction SilentlyContinue
+        $serviceRead = @($own | Where-Object KeyName -EQ 'DEVPKEY_Device_Service').Count -gt 0
+        $service = & $value 'DEVPKEY_Device_Service'
         [pscustomobject]@{
-            InstanceId  = [string]$device.InstanceId
-            Present     = $true
-            ProblemCode = [int]((& $value 'DEVPKEY_Device_ProblemCode') -as [int])
-            Service     = & $value 'DEVPKEY_Device_Service'
-            Parent      = & $value 'DEVPKEY_Device_Parent'
-            PortName    = if ($parameters -and $parameters.PSObject.Properties['PortName']) { [string]$parameters.PortName } else { $null }
+            InstanceId     = [string]$device.InstanceId
+            Present        = $true
+            ProblemCode    = [int]((& $value 'DEVPKEY_Device_ProblemCode') -as [int])
+            # '' when read and empty - no driver -, $null when it couldn't be read.
+            Service        = if (-not $serviceRead) { $null } elseif ($null -eq $service) { '' } else { [string]$service }
+            Parent         = & $value 'DEVPKEY_Device_Parent'
+            PortName       = if ($parameters -and $parameters.PSObject.Properties['PortName']) { [string]$parameters.PortName } else { $null }
+            DriverInfPath  = & $value 'DEVPKEY_Device_DriverInfPath'
+            DriverVersion  = & $value 'DEVPKEY_Device_DriverVersion'
+            DriverProvider = & $value 'DEVPKEY_Device_DriverProvider'
         }
     }
 }
@@ -67,17 +77,20 @@ function Resolve-ModemUsbDevice {
     .DESCRIPTION
         Takes device records as read from PnP, each with InstanceId, Present, ProblemCode,
         Service and Parent, plus PortName (the COM port, from the device's registry parameters)
-        for a serial port; other properties are ignored. Only present USB functions of the FM350
+        for a serial port and DriverInfPath, DriverVersion and DriverProvider for a device with a
+        driver; other properties are ignored. Only present USB functions of the FM350
         compositions (USB\VID_0E8D&PID_7126 and 7127, interface MI_xx) count: devices left over
         from an earlier plug-in, the composite device itself and other MediaTek devices are
         skipped. A modem is the composite device its functions hang from.
 
         Returns one object per modem: InstanceId (of the composite device), ProductId, AtPort,
         Network and Functions (every function, by interface number). Each function has
-        InstanceId, Interface, Role ('AtPort', 'Network' or 'Other'), State, ProblemCode, Service
-        and PortName. State is 'Working', 'NoDriver' (problem code 1 or 28) or 'Problem' (any
-        other problem code: disabled, failed to start...). AtPort or Network is $null when that
-        function is not present; PortName is $null when the record has none.
+        InstanceId, Interface, Role ('AtPort', 'Network' or 'Other'), State, ProblemCode, Service,
+        PortName and Driver (InfPath, Version, Provider). State is 'Working' (no problem code,
+        and a service or none read), 'NoDriver' (problem code 1 or 28, or no problem code and a
+        service read as '': a driver just uninstalled) or 'Problem' (any other problem code:
+        disabled, failed to start...). AtPort or Network is $null when that function is not
+        present; PortName and Driver are $null when the record has none.
     .EXAMPLE
         Resolve-ModemUsbDevice -Device $records | Where-Object { $_.AtPort.State -eq 'NoDriver' }
     #>
@@ -103,15 +116,23 @@ function Resolve-ModemUsbDevice {
                 'Other'
             }
             $problemCode = [int]$record.ProblemCode
-            $state = if ($problemCode -eq 0) {
-                'Working'
+            $service = if ($record.PSObject.Properties['Service']) { $record.Service } else { $null }
+            $state = if ($problemCode -in $script:NoDriverProblemCodes) {
+                'NoDriver'
             }
-            elseif ($problemCode -in $script:NoDriverProblemCodes) {
+            elseif ($problemCode -ne 0) {
+                'Problem'
+            }
+            elseif ($null -ne $service -and -not $service) {
+                # Read, and none: a function whose driver was just uninstalled has no problem
+                # code yet (AT-COMMANDS section 1.1).
                 'NoDriver'
             }
             else {
-                'Problem'
+                # A service, or one that couldn't be read: opening the port tells.
+                'Working'
             }
+            $driver = { param($name) if ($record.PSObject.Properties[$name] -and $record.$name) { [string]$record.$name } }
             [pscustomobject]@{
                 Parent      = [string]$record.Parent
                 ProductId   = $productId
@@ -122,6 +143,12 @@ function Resolve-ModemUsbDevice {
                 ProblemCode = $problemCode
                 Service     = if ($record.Service) { [string]$record.Service } else { $null }
                 PortName    = if ($record.PSObject.Properties['PortName'] -and $record.PortName) { [string]$record.PortName } else { $null }
+                Driver      = if (& $driver 'DriverInfPath') {
+                    [pscustomobject]@{ InfPath = & $driver 'DriverInfPath'; Version = & $driver 'DriverVersion'; Provider = & $driver 'DriverProvider' }
+                }
+                else {
+                    $null
+                }
             }
         }
     }
@@ -154,7 +181,8 @@ function Resolve-ModemPresence {
         device), PortName and AdapterInstanceId (its network function, $null when absent) of the
         modem chosen, and Modems, how many there are.
         With several usable modems the first by instance ID is chosen, so the choice is the same
-        at every look.
+        at every look. ProductId and Driver (InfPath, Version, Provider: its AT port's driver, $null
+        without one) are the chosen modem's, else those of the first modem with an AT port.
     .EXAMPLE
         Resolve-ModemPresence -Modem @(Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord))
     #>
@@ -181,12 +209,15 @@ function Resolve-ModemPresence {
         'Absent'
     }
     $chosen = if ($usable.Count -gt 0) { $usable[0] } else { $null }
+    $shown = if ($chosen) { $chosen } else { $atPorts | Sort-Object -Property InstanceId | Select-Object -First 1 }
     [pscustomobject]@{
         Device            = $device
         InstanceId        = if ($chosen) { $chosen.InstanceId } else { $null }
         PortName          = if ($chosen) { $chosen.AtPort.PortName } else { $null }
         AdapterInstanceId = if ($chosen -and $chosen.Network) { $chosen.Network.InstanceId } else { $null }
         Modems            = $Modem.Count
+        ProductId         = if ($shown -and $shown.PSObject.Properties['ProductId']) { $shown.ProductId } else { $null }
+        Driver            = if ($shown -and $shown.AtPort.PSObject.Properties['Driver']) { $shown.AtPort.Driver } else { $null }
     }
 }
 
@@ -222,21 +253,39 @@ function Restart-ModemUsbDevice {
     if (-not $PSCmdlet.ShouldProcess("USB device $InstanceId", 'Restart')) {
         return
     }
+    $exitCode = Invoke-Pnputil -Argument '/restart-device', $InstanceId -TimeoutMs $TimeoutMs
+    [pscustomobject]@{ Done = $exitCode -eq 0; ExitCode = $exitCode }
+}
+
+function Invoke-Pnputil {
+    # Runs pnputil with -Argument and returns its exit code; $null when it didn't end within
+    # -TimeoutMs and was stopped. pnputil is run from the system folder, never found through PATH:
+    # the app runs elevated (ARCHITECTURE -> Invariants). Its text is localized, so only the exit
+    # code is read; the text is drained, so that it never fills the pipe. While it waits, -Beat
+    # runs about once a second: the worker's heartbeat.
+    param([string[]] $Argument, [int] $TimeoutMs, [scriptblock] $Beat)
+
     $start = [System.Diagnostics.ProcessStartInfo]::new((Join-Path -Path ([Environment]::SystemDirectory) -ChildPath 'pnputil.exe'))
-    $start.ArgumentList.Add('/restart-device')
-    $start.ArgumentList.Add($InstanceId)
+    foreach ($item in $Argument) {
+        $start.ArgumentList.Add($item)
+    }
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
-    # Its text is localized: only the exit code is read. Drained, so that it never fills the pipe.
     $start.RedirectStandardOutput = $true
     $process = [System.Diagnostics.Process]::Start($start)
     try {
         [void]$process.StandardOutput.ReadToEndAsync()
-        if (-not $process.WaitForExit($TimeoutMs)) {
-            $process.Kill()
-            return [pscustomobject]@{ Done = $false; ExitCode = $null }
+        $deadline = [Environment]::TickCount64 + $TimeoutMs
+        while (-not $process.WaitForExit([int][Math]::Max(0, [Math]::Min(1000, $deadline - [Environment]::TickCount64)))) {
+            if ([Environment]::TickCount64 -ge $deadline) {
+                $process.Kill()
+                return $null
+            }
+            if ($Beat) {
+                & $Beat
+            }
         }
-        [pscustomobject]@{ Done = $process.ExitCode -eq 0; ExitCode = $process.ExitCode }
+        $process.ExitCode
     }
     finally {
         $process.Dispose()

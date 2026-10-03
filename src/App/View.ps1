@@ -5,7 +5,7 @@
 # Why the connection is where it is, in the user's words: one sentence per reason.
 $script:ReasonTexts = @{
     NoDevice              = 'No modem found on USB.'
-    NoDriver              = 'The modem''s AT port has no driver: install the MediaTek USB serial driver.'
+    NoDriver              = 'The modem''s AT port has no driver: the app can''t talk to the modem until it is installed.'
     DeviceProblem         = 'Windows reports a problem with the modem''s AT port.'
     PortInUse             = 'Another program is using the modem''s AT port.'
     PortFailed            = 'The modem''s AT port can''t be opened.'
@@ -91,6 +91,26 @@ $script:ResultTexts = @{
     'SetNetworkMode/ModeUnsupported' = 'The modem doesn''t support this network mode: nothing was written.'
     'SetNetworkMode/NoSupportedBand' = 'The modem supports none of the bands chosen for one of its RATs: nothing was written.'
     'SetNetworkMode/Unknown'   = 'The modem''s network mode can''t be read: nothing was written.'
+    'CheckDriverPackage/Verified'  = 'Driver package checked: a version the app knows.'
+    'CheckDriverPackage/Signed'    = 'Driver package checked: signed by Microsoft, a version the app doesn''t know.'
+    'CheckDriverPackage/Refused'   = 'The driver package can''t be installed: the Driver tab says why.'
+    'CheckDriverPackage/NoPackage' = 'No driver package was chosen.'
+    'CheckDriverPackage/Failed'    = 'The driver package can''t be read.'
+    'InstallDriver/Done'           = 'Driver installed: the app opens the modem''s AT port as soon as Windows starts it.'
+    'InstallDriver/RestartNeeded'  = 'Driver installed: Windows needs a restart to finish.'
+    'InstallDriver/NoDevice'       = 'Driver added to Windows, but no device took it: it is used when the modem is plugged in, unless Windows ranks another driver higher.'
+    'InstallDriver/Unconfirmed'    = 'Not installed: a version the app doesn''t know needs your confirmation.'
+    'InstallDriver/NoPackage'      = 'Choose a driver package first.'
+    'InstallDriver/DriverWorking'  = 'The AT port already has a working driver: nothing was installed.'
+    'InstallDriver/TimedOut'       = 'Windows didn''t finish installing the driver in time: it was stopped.'
+    'InstallDriver/Failed'         = 'Windows didn''t install the driver.'
+    'UninstallDriver/Done'         = 'Driver uninstalled: the app can''t talk to the modem until it is installed again.'
+    'UninstallDriver/RestartNeeded' = 'Driver uninstalled: Windows needs a restart to finish.'
+    'UninstallDriver/NoDriver'     = 'The AT port has no driver the app can uninstall.'
+    'UninstallDriver/TrialOn'      = 'Not uninstalled: a network mode is on trial, and only the AT port can write it back.'
+    'UninstallDriver/TimedOut'     = 'Windows didn''t finish uninstalling the driver in time: it was stopped.'
+    'UninstallDriver/Failed'       = 'Windows didn''t uninstall the driver.'
+    'NotElevated'              = 'That needs administrator rights.'
     'Refused'                  = 'Not available while the app only observes.'
     'NoModem'                  = 'The modem is not connected.'
     'PortLost'                 = 'The modem left USB during the command.'
@@ -370,8 +390,8 @@ function ConvertTo-TrayText {
 
 function Resolve-AppBlocker {
     # What the user can do about what blocks the connection, if anything: Kind - 'Apn',
-    # 'ApnPassword', 'Pin', 'EnableAdapter', 'Unlock' or $null for a message alone - Message,
-    # ActionText, and Enabled ($false when the app can't do it now).
+    # 'ApnPassword', 'Pin', 'EnableAdapter', 'Unlock', 'Driver' (the Driver tab) or $null for a
+    # message alone - Message, ActionText, and Enabled ($false when the app can't do it now).
     param([object] $Snapshot)
 
     if (Test-NoNetworkForMode -Snapshot $Snapshot) {
@@ -391,6 +411,7 @@ function Resolve-AppBlocker {
         { $_ -in 'NoPin', 'PinForOtherSim', 'PinUnconfirmed' } { 'Pin', 'Store PIN' }
         'AdapterDisabled' { 'EnableAdapter', 'Enable adapter' }
         'FccLocked' { 'Unlock', 'Unlock...' }
+        'NoDriver' { 'Driver', 'Install the driver...' }
         default { $null, $null }
     }
     $enabled = $true
@@ -617,6 +638,118 @@ function Get-TrayModeMenu {
     }
 }
 
+# Why a driver package is refused (Resolve-DriverPackage's problems), in the user's words.
+$script:DriverProblemTexts = @{
+    NoInf        = 'it holds no driver (no INF file)'
+    NotForModem  = 'none of its drivers is meant for this modem''s AT port'
+    NoCatalog    = 'its driver has no signature catalog'
+    NotWhql      = 'its catalog is not signed by Microsoft (WHQL)'
+    NotInCatalog = 'its INF file is not the one its catalog vouches for: it was changed, or is damaged'
+    NotTrusted   = 'its signature can''t be verified'
+}
+
+function Get-DriverView {
+    <#
+    .SYNOPSIS
+        The window's Driver tab, from the snapshot.
+    .DESCRIPTION
+        A pure function of the snapshot, the worker's state and -Known (Get-KnownDriverPackage's
+        packages). Returns StateText (the AT port and its driver), SourceText and PageUrl (that
+        the app doesn't come with the driver, and where a third party publishes a copy of a
+        version it knows), PackageText (the package the user chose and what its check found, or
+        the driver command under way), Note (why the buttons are off), CanChoose, CanInstall,
+        ConfirmInstall (the package is no version the app knows: the user must accept it first)
+        and CanUninstall.
+    .EXAMPLE
+        Get-DriverView -Snapshot $snapshot -Known (Get-KnownDriverPackage)
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [AllowNull()]
+        [object] $Snapshot,
+
+        [ValidateSet('Running', 'Restarting', 'NotResponding')]
+        [string] $Worker = 'Running',
+
+        [AllowEmptyCollection()]
+        [object[]] $Known = @()
+    )
+
+    $driver = if ($Snapshot -and $Snapshot.PSObject.Properties['Driver']) { $Snapshot.Driver } else { $null }
+    $device = if ($driver) { $driver.Device } else { $null }
+    $stateText = switch ($device) {
+        'Present' {
+            $what = @($driver.Provider, $driver.Version | Where-Object { $_ }) -join ' '
+            "The modem's AT port has its driver$(if ($what) { ": $what" })$(if ($driver.Inf) { " ($($driver.Inf))" })."
+        }
+        'NoDriver' { 'The modem''s AT port has no driver: the app can''t talk to the modem.' }
+        'Problem' { 'Windows reports a problem with the modem''s AT port: installing its driver again may mend it.' }
+        'Absent' { 'No modem on USB. A driver installed now is used as soon as the modem is plugged in.' }
+        default { 'The modem''s AT port is not looked at yet.' }
+    }
+
+    $copy = @($Known | Where-Object { $_.Copy }) | Select-Object -First 1
+    $sourceText = 'The app doesn''t come with the modem''s driver: it has no license to redistribute it. Download a copy, then choose it here: the app checks that Microsoft signed it (WHQL) for this modem, and never runs a program from it.'
+    if ($copy) {
+        $sourceText = "The app doesn't come with the modem's driver: it has no license to redistribute it. A copy of MediaTek's driver, $($copy.Name) $($copy.Version), is published by a third party, $($copy.Copy.Publisher), as $($copy.Copy.File). Download it, then choose it here: the app checks that Microsoft signed it (WHQL) for this modem, and never runs a program from it."
+    }
+
+    $package = if ($driver) { $driver.Package } else { $null }
+    $verdict = if ($package) { $package.Verdict } else { $null }
+    $operation = if ($driver) { $driver.Operation } else { $null }
+    $packageText = switch ($operation) {
+        'CheckDriverPackage' { 'Checking the driver package...' }
+        'InstallDriver' { 'Installing the driver: Windows may take a minute.' }
+        'UninstallDriver' { 'Uninstalling the driver...' }
+        default {
+            if ($verdict) {
+                $what = if ($verdict.Known) { "$($verdict.Known.Name) $($verdict.Known.Version)" } else { @($verdict.Provider, $verdict.Version | Where-Object { $_ }) -join ' ' }
+                switch ($verdict.Verdict) {
+                    'Verified' { "$($package.Name): $what, a version the app knows, signed by Microsoft (WHQL) for this modem." }
+                    'Signed' { "$($package.Name): $what, signed by Microsoft (WHQL) for this modem, but not a version the app knows: it asks before installing it." }
+                    default {
+                        $why = @($verdict.Problems | ForEach-Object { if ($script:DriverProblemTexts.ContainsKey($_)) { $script:DriverProblemTexts[$_] } else { $_ } })
+                        "$($package.Name) can't be installed: $($why -join '; ')."
+                    }
+                }
+            }
+            else {
+                $null
+            }
+        }
+    }
+
+    $note = $null
+    $usable = [bool]($Snapshot -and $Worker -eq 'Running' -and -not $operation)
+    if ($Snapshot -and $Snapshot.ObserveOnly) {
+        $usable = $false
+        $note = 'The app only observes: it changes nothing.'
+    }
+    elseif ($Snapshot -and -not $Snapshot.Elevated) {
+        $usable = $false
+        $note = 'Installing or uninstalling a driver needs administrator rights: start the app as administrator.'
+    }
+    $installable = $verdict -and $verdict.Verdict -in 'Verified', 'Signed'
+    # A mode on trial is written back through the AT port: the driver stays until it ends.
+    $mode = Get-SnapshotNetworkMode -Snapshot $Snapshot
+    $trial = [bool]($mode -and $mode.Trial)
+    if ($usable -and $trial -and $device -eq 'Present') {
+        $note = 'A network mode is on trial: the driver can be uninstalled once the trial ends.'
+    }
+    [pscustomobject]@{
+        StateText      = $stateText
+        SourceText     = $sourceText
+        PageUrl        = if ($copy) { $copy.Copy.Page } else { $null }
+        PackageText    = $packageText
+        Note           = $note
+        CanChoose      = $usable
+        CanInstall     = [bool]($usable -and $installable -and $device -ne 'Present')
+        ConfirmInstall = [bool]($verdict -and $verdict.Verdict -eq 'Signed')
+        CanUninstall   = [bool]($usable -and -not $trial -and $device -eq 'Present' -and $driver.Inf -match '^oem\d+\.inf$')
+    }
+}
+
 function ConvertTo-WindowView {
     <#
     .SYNOPSIS
@@ -625,7 +758,8 @@ function ConvertTo-WindowView {
         A pure function of the snapshot and of the worker's state ('Running', 'Restarting' or
         'NotResponding'). Returns Tone, Title, Detail, Note, Technology, Operator, Signal (lines),
         Cells and Carriers (rows of text), Blocker (Resolve-AppBlocker's), Sim (the SIM tab),
-        NetworkMode (the network tab, Get-NetworkModeView's), Settings and ApnPasswordStored
+        NetworkMode (the network tab, Get-NetworkModeView's), Driver (the Driver tab,
+        Get-DriverView's), Settings and ApnPasswordStored
         (the connection tab), Result (the newest command's
         outcome, as a sentence) and LastResult (its Id, Kind and Result), and Footer.
     .EXAMPLE
@@ -731,6 +865,7 @@ function ConvertTo-WindowView {
         Blocker           = if ($Snapshot -and $Worker -eq 'Running') { Resolve-AppBlocker -Snapshot $Snapshot } else { $null }
         Sim               = if ($Snapshot) { Get-SimView -Snapshot $Snapshot } else { $null }
         NetworkMode       = Get-NetworkModeView -Snapshot $Snapshot
+        Driver            = Get-DriverView -Snapshot $Snapshot -Worker $Worker -Known @(Get-KnownDriverPackage)
         Settings          = if ($Snapshot) { $Snapshot.Settings } else { $null }
         ApnPasswordStored = $Snapshot -and $Snapshot.ApnPasswordStored
         Result            = if ($Snapshot) { Get-ResultText -Snapshot $Snapshot } else { $null }

@@ -41,7 +41,11 @@ $script:WorkerFailedCyclesAllowed = 3
 $script:WorkerPassUrcPattern = '^\s*\+(CREG|CGREG|CEREG|C5GREG|CGEV)\s*:'
 
 # The commands the UI can send (Send-ModemCommand).
-$script:WorkerCommandKinds = @('ConnectNow', 'SaveSettings', 'SetNetworkMode', 'SaveSimPin', 'ForgetSimPin', 'DisableSimPin', 'UnlockFcc', 'EnableAdapter')
+$script:WorkerCommandKinds = @('ConnectNow', 'SaveSettings', 'SetNetworkMode', 'SaveSimPin', 'ForgetSimPin', 'DisableSimPin', 'UnlockFcc', 'EnableAdapter',
+    'CheckDriverPackage', 'InstallDriver', 'UninstallDriver')
+
+# The commands about the AT port's driver: they change the system, and may take a while.
+$script:DriverCommandKinds = @('CheckDriverPackage', 'InstallDriver', 'UninstallDriver')
 
 # The settings that make the network mode, set by the SetNetworkMode command only.
 $script:NetworkModeSettings = @('NetworkMode', 'LteBands', 'NrBands')
@@ -166,6 +170,13 @@ function Send-ModemCommand {
           user confirmed it.
         - UnlockFcc: lifts the FCC lock (Invoke-FccUnlock). Only after the user confirmed it.
         - EnableAdapter: enables the modem's network adapter (Enable-ModemAdapter).
+        - CheckDriverPackage: Path, the driver package the user chose (a zip, or an INF in its
+          folder): copied where only administrators can write, and checked there
+          (Resolve-DriverPackage). Never runs anything from it.
+        - InstallDriver: installs the package checked last (Install-ModemDriver); AcceptUnknown,
+          $true once the user accepted a version the app doesn't know.
+        - UninstallDriver: removes the AT port's driver package (Uninstall-ModemDriver). Only
+          after the user confirmed it.
         Secrets travel as SecureStrings, stay in the process, and never come back in a snapshot.
     .EXAMPLE
         Send-ModemCommand -Link $link -Kind SaveSimPin -Parameter @{ Pin = $passwordBox.SecurePassword }
@@ -177,7 +188,8 @@ function Send-ModemCommand {
         [hashtable] $Link,
 
         [Parameter(Mandatory)]
-        [ValidateSet('ConnectNow', 'SaveSettings', 'SetNetworkMode', 'SaveSimPin', 'ForgetSimPin', 'DisableSimPin', 'UnlockFcc', 'EnableAdapter')]
+        [ValidateSet('ConnectNow', 'SaveSettings', 'SetNetworkMode', 'SaveSimPin', 'ForgetSimPin', 'DisableSimPin', 'UnlockFcc', 'EnableAdapter',
+            'CheckDriverPackage', 'InstallDriver', 'UninstallDriver')]
         [string] $Kind,
 
         [hashtable] $Parameter = @{}
@@ -331,9 +343,11 @@ function New-ModemSnapshot {
         that replaces this one carries on); NetworkMode (Current: the modem's setting as read;
         Support: what it supports; Decision: Resolve-NetworkMode's; Trial: a mode the user chose,
         being tried - Selection, Until, and what a worker that replaces this one carries on -;
-        Notice: how the last trial ended, or a mode the modem didn't keep); Settings,
-        ApnPasswordStored, SettingsProblems; Results (the last commands' outcomes: Id, Kind,
-        Result, Detail, AttemptsLeft, Time).
+        Notice: how the last trial ended, or a mode the modem didn't keep); Driver (the AT port's:
+        Device - Resolve-ModemPresence's -, Inf, Version and Provider of its driver; Package, the
+        package the user chose: Name, Verdict - Resolve-DriverPackage's - and Time; Operation,
+        the driver command under way); Settings, ApnPasswordStored, SettingsProblems; Results
+        (the last commands' outcomes: Id, Kind, Result, Detail, AttemptsLeft, Time).
     .EXAMPLE
         $Link['Snapshot'] = New-ModemSnapshot -Worker $worker -Time ([DateTimeOffset]::Now)
     #>
@@ -355,6 +369,7 @@ function New-ModemSnapshot {
     $field = { param($name) if ($decision) { $decision.$name } }
     $pin = & $fact 'Sim'
     $presence = $Worker.Presence
+    $driver = if ($presence -and $presence.PSObject.Properties['Driver']) { $presence.Driver } else { $null }
 
     [pscustomobject]@{
         Version           = $Worker.Version
@@ -399,6 +414,14 @@ function New-ModemSnapshot {
             Trial    = if ($Worker.NetworkModeTrial) { $Worker.NetworkModeTrial | Select-Object -Property * } else { $null }
             Notice   = $Worker.NetworkModeNotice
         }
+        Driver            = [pscustomobject]@{
+            Device    = if ($presence) { $presence.Device } else { $null }
+            Inf       = if ($driver) { $driver.InfPath } else { $null }
+            Version   = if ($driver) { $driver.Version } else { $null }
+            Provider  = if ($driver) { $driver.Provider } else { $null }
+            Package   = if ($Worker.DriverPackage) { $Worker.DriverPackage | Select-Object -Property Name, Verdict, Time } else { $null }
+            Operation = $Worker.DriverOperation
+        }
         Settings          = if ($Worker.Settings) { $Worker.Settings | Select-Object -Property * } else { $null }
         ApnPasswordStored = $Worker.ApnPasswordStored
         SettingsProblems  = [string[]]@($Worker.SettingsProblems)
@@ -416,8 +439,11 @@ function New-ModemWorker {
         of the one before) starts from its state: its first pass attaches, it never re-dials, and
         its recovery carries on where the other's was - a restart never starts the ladder over.
 
-        -DataFolder keeps the settings, the secrets and the log in one folder (development mode,
-        tests); by default they are the app's (ARCHITECTURE -> Settings and logs). -Simulation is
+        -DataFolder keeps the settings, the secrets, the log and the driver packages the user
+        chooses in one folder (development mode, tests); by default they are the app's
+        (ARCHITECTURE -> Settings and logs), and a driver package goes to a folder of its own
+        that only administrators can open, in Windows' temporary folder (ARCHITECTURE ->
+        Drivers). -Simulation is
         New-SimulatedDevice's device, driven instead of a real modem. -ObserveOnly reads and
         never writes: no step, no command that changes the modem or the system. -Clock returns
         the time in milliseconds; [Environment]::TickCount64 by default.
@@ -447,18 +473,22 @@ function New-ModemWorker {
 
     $paths = if ($DataFolder) {
         @{
-            Settings  = Join-Path -Path $DataFolder -ChildPath 'settings.json'
-            SimPin    = Join-Path -Path $DataFolder -ChildPath 'sim-pin.json'
-            ApnSecret = Join-Path -Path $DataFolder -ChildPath 'apn-password.dat'
-            Log       = Join-Path -Path $DataFolder -ChildPath 'logs'
+            Settings         = Join-Path -Path $DataFolder -ChildPath 'settings.json'
+            SimPin           = Join-Path -Path $DataFolder -ChildPath 'sim-pin.json'
+            ApnSecret        = Join-Path -Path $DataFolder -ChildPath 'apn-password.dat'
+            Log              = Join-Path -Path $DataFolder -ChildPath 'logs'
+            DriverStaging    = Join-Path -Path $DataFolder -ChildPath 'driver-staging'
+            DriverAdminOnly  = $false
         }
     }
     else {
         @{
-            Settings  = Get-AppDataPath -Name 'settings.json'
-            SimPin    = Get-AppDataPath -Name 'sim-pin.json'
-            ApnSecret = Get-AppDataPath -Name 'apn-password.dat'
-            Log       = Get-AppDataPath -Name 'logs' -Local
+            Settings         = Get-AppDataPath -Name 'settings.json'
+            SimPin           = Get-AppDataPath -Name 'sim-pin.json'
+            ApnSecret        = Get-AppDataPath -Name 'apn-password.dat'
+            Log              = Get-AppDataPath -Name 'logs' -Local
+            DriverStaging    = Join-Path -Path ([Environment]::GetFolderPath('Windows')) -ChildPath 'Temp'
+            DriverAdminOnly  = $true
         }
     }
     @{
@@ -521,6 +551,13 @@ function New-ModemWorker {
         NetworkModeLogged  = $null
         NetworkModeTrial   = if ($Previous -and $Previous.PSObject.Properties['NetworkMode'] -and $Previous.NetworkMode) { $Previous.NetworkMode.Trial } else { $null }
         NetworkModeNotice  = if ($Previous -and $Previous.PSObject.Properties['NetworkMode'] -and $Previous.NetworkMode) { $Previous.NetworkMode.Notice } else { $null }
+        # The driver package the user chose last, as copied and checked (Test-WorkerDriverPackage),
+        # and the driver command under way.
+        DriverPackage     = $null
+        DriverOperation   = $null
+        # Copies that couldn't be deleted yet, tried again; each logged once.
+        DriverLeftovers   = [System.Collections.Generic.List[string]]::new()
+        DriverLeftoversLogged = [System.Collections.Generic.HashSet[string]]::new()
         # The computer slept: Invoke-ModemWorker sets it, the next cycle takes it into account.
         Resumed           = $false
     }
@@ -1081,6 +1118,161 @@ function Invoke-WorkerNetworkModeTrial {
     }
     $false
 }
+function Clear-WorkerDriverPackage {
+    # Deletes the driver package copied for checking: nothing is kept once it is installed,
+    # replaced or refused, or the worker ends. A copy that can't be deleted (a file still held) is
+    # logged once and tried again at every later clear and when the worker ends; one left by an
+    # app that ended mid-install goes at the next start (Remove-DriverStagingLeftover).
+    param([hashtable] $Worker)
+
+    $package = $Worker.DriverPackage
+    $Worker.DriverPackage = $null
+    if ($package -and $package.Folder -and -not $Worker.DriverLeftovers.Contains($package.Folder)) {
+        $Worker.DriverLeftovers.Add($package.Folder)
+    }
+    foreach ($folder in @($Worker.DriverLeftovers)) {
+        if (Test-Path -LiteralPath $folder) {
+            Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if (-not (Test-Path -LiteralPath $folder)) {
+            [void]$Worker.DriverLeftovers.Remove($folder)
+        }
+        elseif ($Worker.DriverLeftoversLogged.Add($folder)) {
+            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message 'A copy of a driver package can''t be deleted yet: it is tried again later'
+        }
+    }
+}
+
+function Get-WorkerBeat {
+    # What a long wait runs about once a second, so that the supervisor never takes the worker
+    # for hung: the heartbeat.
+    param([hashtable] $Worker)
+
+    $link = $Worker.Link
+    { $link['Heartbeat'] = [Environment]::TickCount64 }.GetNewClosure()
+}
+
+function Test-WorkerDriverPackage {
+    # Copies the driver package the user chose where only administrators can write, and decides
+    # on it there (Resolve-DriverPackage): what is checked is what pnputil would install. A package
+    # refused is deleted at once; one that may be installed is kept until it is installed or
+    # replaced, or the worker ends. Returns the verdict.
+    param([hashtable] $Worker, [string] $Path)
+
+    Clear-WorkerDriverPackage -Worker $Worker
+    if (-not $Path) {
+        return 'NoPackage'
+    }
+    $name = Split-Path -Path $Path -Leaf
+    $beat = Get-WorkerBeat -Worker $Worker
+    $folder = New-DriverStagingFolder -Root $Worker.Paths.DriverStaging -AdminOnly:$Worker.Paths.DriverAdminOnly -Confirm:$false
+    try {
+        [void](Copy-DriverPackage -Path $Path -Destination $folder -Beat $beat -Confirm:$false)
+        $productId = if ($Worker.Presence -and $Worker.Presence.PSObject.Properties['ProductId']) { $Worker.Presence.ProductId } else { $null }
+        $verdict = Resolve-DriverPackage -Inf @(Get-DriverPackageFact -Folder $folder -Beat $beat) -Known @(Get-KnownDriverPackage) -ProductId $productId
+    }
+    catch {
+        Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue
+        # Told with the package's name alone: its folder may hold the user's name, which the log
+        # keeps out.
+        $message = $_.Exception.Message
+        $full = [System.IO.Path]::GetFullPath($Path)
+        foreach ($form in @($Path, $full)) {
+            $message = $message.Replace($form, $name)
+        }
+        foreach ($form in @((Split-Path -Path $Path -Parent), [System.IO.Path]::GetDirectoryName($full))) {
+            if ($form) {
+                $message = $message.Replace($form, '...')
+            }
+        }
+        throw [System.InvalidOperationException]::new($message)
+    }
+    $Worker.DriverPackage = [pscustomobject]@{ Name = $name; Folder = $folder; Verdict = $verdict; Time = [DateTimeOffset]::Now }
+    $what = @($verdict.Provider, $verdict.Version | Where-Object { $_ }) -join ' '
+    $why = if ($verdict.Problems.Count -gt 0) { " ($($verdict.Problems -join ', '))" } else { '' }
+    Write-WorkerLog -Worker $Worker -Level 'Info' -Message "Driver package ${name}: $($verdict.Verdict)$(if ($what) { " - $what" })$why"
+    if ($verdict.Verdict -eq 'Refused') {
+        Clear-WorkerDriverPackage -Worker $Worker
+        # The verdict stays in view; the copy is gone.
+        $Worker.DriverPackage = [pscustomobject]@{ Name = $name; Folder = $null; Verdict = $verdict; Time = [DateTimeOffset]::Now }
+    }
+    $verdict.Verdict
+}
+
+function Install-WorkerDriver {
+    # Installs the package checked last, from the folder it was checked in; a version the app
+    # doesn't know only once the user accepted it. Never over an AT port that works. Once Windows
+    # starts the port, the modem may stay silent on it for minutes (AT-COMMANDS section 2): a
+    # maintenance window as long as a USB restart's settle time keeps recovery from taking that
+    # for a failure. Returns Result and ExitCode.
+    param([hashtable] $Worker, [switch] $AcceptUnknown)
+
+    $package = $Worker.DriverPackage
+    $verdict = if ($package -and $package.Folder) { $package.Verdict.Verdict } else { $null }
+    $refusal = if ($verdict -notin 'Verified', 'Signed') {
+        'NoPackage'
+    }
+    elseif ($verdict -eq 'Signed' -and -not $AcceptUnknown) {
+        'Unconfirmed'
+    }
+    elseif ($Worker.Presence -and $Worker.Presence.Device -eq 'Present') {
+        'DriverWorking'
+    }
+    if ($refusal) {
+        return [pscustomobject]@{ Result = $refusal; ExitCode = $null }
+    }
+    try {
+        $outcome = if ($Worker.Simulation) {
+            $Worker.Simulation.InstallDriver()
+            [pscustomobject]@{ Result = 'Done'; ExitCode = 0 }
+        }
+        else {
+            $inf = Join-Path -Path $package.Folder -ChildPath $package.Verdict.Path.Replace('/', '\')
+            Install-ModemDriver -InfPath $inf -Beat (Get-WorkerBeat -Worker $Worker) -Confirm:$false
+        }
+    }
+    finally {
+        Clear-WorkerDriverPackage -Worker $Worker
+    }
+    if ($outcome.Result -in 'Done', 'RestartNeeded', 'NoDevice') {
+        # The AT port is looked for at once.
+        $Worker.LastScan = $null
+    }
+    if ($outcome.Result -eq 'Done') {
+        $Worker.Recovery = Open-MaintenanceWindow -History $Worker.Recovery -Now (& $Worker.Clock) -DurationMs $script:RecoveryTimings.Settle['R6']
+    }
+    $outcome
+}
+
+function Uninstall-WorkerDriver {
+    # Removes the AT port's driver package, the port closed first. The data connection stays as
+    # it is - the network adapter has Windows' own driver -, but without its AT port the app can
+    # no longer watch it. Returns Result and ExitCode.
+    param([hashtable] $Worker)
+
+    $presence = $Worker.Presence
+    $inf = if ($presence -and $presence.Device -eq 'Present' -and $presence.PSObject.Properties['Driver'] -and $presence.Driver) { $presence.Driver.InfPath } else { $null }
+    if ($inf -notmatch '^oem\d+\.inf$') {
+        return [pscustomobject]@{ Result = 'NoDriver'; ExitCode = $null }
+    }
+    # A network mode on trial is written back, and the data connection its write ended is
+    # brought back, through the AT port: not while one is on trial.
+    if ($Worker.NetworkModeTrial) {
+        return [pscustomobject]@{ Result = 'TrialOn'; ExitCode = $null }
+    }
+    # Windows can't remove the driver of a port held open.
+    Close-WorkerChannel -Worker $Worker -Why 'closed to uninstall its driver'
+    $outcome = if ($Worker.Simulation) {
+        $Worker.Simulation.UninstallDriver()
+        [pscustomobject]@{ Result = 'Done'; ExitCode = 0 }
+    }
+    else {
+        Uninstall-ModemDriver -PublishedName $inf -Beat (Get-WorkerBeat -Worker $Worker) -Confirm:$false
+    }
+    $Worker.LastScan = $null
+    $outcome
+}
+
 function Invoke-WorkerCommand {
     # Carries out one of the user's commands; returns its outcome for the snapshot. Never logs or
     # returns a secret.
@@ -1091,10 +1283,13 @@ function Invoke-WorkerCommand {
     $detail = $null
     $attemptsLeft = $null
     $channelOpen = $Worker.Channel -and $Worker.Channel.State -eq 'Open'
-    $writes = $Command.Kind -in 'DisableSimPin', 'UnlockFcc', 'EnableAdapter'
+    $writes = $Command.Kind -in @('DisableSimPin', 'UnlockFcc', 'EnableAdapter') + $script:DriverCommandKinds
     try {
         if ($writes -and $Worker.ObserveOnly) {
             $result = 'Refused'
+        }
+        elseif ($Command.Kind -in $script:DriverCommandKinds -and -not $Worker.Elevated) {
+            $result = 'NotElevated'
         }
         elseif ($Command.Kind -in 'SaveSimPin', 'DisableSimPin', 'UnlockFcc' -and -not $channelOpen) {
             $result = 'NoModem'
@@ -1168,6 +1363,19 @@ function Invoke-WorkerCommand {
                         $result = 'NoModem'
                     }
                 }
+                'CheckDriverPackage' {
+                    $result = Test-WorkerDriverPackage -Worker $Worker -Path $parameter['Path']
+                }
+                'InstallDriver' {
+                    $outcome = Install-WorkerDriver -Worker $Worker -AcceptUnknown:([bool]$parameter['AcceptUnknown'])
+                    $result = $outcome.Result
+                    $detail = if ($outcome.Result -eq 'Failed') { "pnputil exit code $($outcome.ExitCode)" } else { $null }
+                }
+                'UninstallDriver' {
+                    $outcome = Uninstall-WorkerDriver -Worker $Worker
+                    $result = $outcome.Result
+                    $detail = if ($outcome.Result -eq 'Failed') { "pnputil exit code $($outcome.ExitCode)" } else { $null }
+                }
                 default {
                     $result = 'Unknown'
                 }
@@ -1186,7 +1394,7 @@ function Invoke-WorkerCommand {
         AttemptsLeft = $attemptsLeft
         Time         = [DateTimeOffset]::Now
     }
-    $level = if ($result -in 'Done', 'Disabled', 'AlreadyOff', 'Restarted', 'NotLocked') { 'Info' } else { 'Warning' }
+    $level = if ($result -in 'Done', 'Disabled', 'AlreadyOff', 'Restarted', 'NotLocked', 'Verified', 'Signed', 'RestartNeeded', 'NoDevice') { 'Info' } else { 'Warning' }
     Write-WorkerLog -Worker $Worker -Level $level -Message "Command $($Command.Kind): $result$(if ($detail) { " - $detail" })"
     $outcome
 }
@@ -1260,7 +1468,13 @@ function Invoke-ModemWorkerCycle {
     # The user's commands.
     $command = $null
     while ($link['Commands'].TryDequeue([ref]$command)) {
+        if ($command.Kind -in $script:DriverCommandKinds) {
+            # Published before it runs: it can take minutes, and the window says so meanwhile.
+            $Worker.DriverOperation = $command.Kind
+            & $publish
+        }
         $Worker.Results.Add((Invoke-WorkerCommand -Worker $Worker -Command $command))
+        $Worker.DriverOperation = $null
         if ($command.Kind -eq 'SetNetworkMode') {
             # A mode on trial is published at once, with its maintenance window: should the rest
             # of the cycle fail, the worker that replaces this one carries them on.
@@ -1421,7 +1635,8 @@ function Invoke-ModemWorkerCycle {
 function Close-ModemWorker {
     <#
     .SYNOPSIS
-        Ends a worker: closes its AT port. The connection stays as it is.
+        Ends a worker: closes its AT port, and deletes the copy of a driver package it kept. The
+        connection stays as it is.
     .EXAMPLE
         Close-ModemWorker -Worker $worker
     #>
@@ -1432,6 +1647,7 @@ function Close-ModemWorker {
     )
 
     Close-WorkerChannel -Worker $Worker
+    Clear-WorkerDriverPackage -Worker $Worker
 }
 
 function Invoke-ModemWorker {
@@ -1473,6 +1689,18 @@ function Invoke-ModemWorker {
     $worker = New-ModemWorker @PSBoundParameters
     $mode = if ($Simulation) { " - simulated, scenario $($Simulation.Scenario)" } else { '' }
     Write-WorkerLog -Worker $worker -Level 'Info' -Message "Worker $Generation started$mode$(if ($ObserveOnly) { ' - observe only' })"
+    if ($Generation -eq 1 -and $worker.Paths.DriverAdminOnly -and -not $ObserveOnly) {
+        # As the app starts: copies of driver packages an app ended mid-install left behind.
+        try {
+            $deleted = Remove-DriverStagingLeftover -Root $worker.Paths.DriverStaging -Confirm:$false
+            if ($deleted) {
+                Write-WorkerLog -Worker $worker -Level 'Info' -Message "$deleted leftover copies of driver packages deleted"
+            }
+        }
+        catch {
+            Write-WorkerLog -Worker $worker -Level 'Warning' -Message "Leftover copies of driver packages not deleted: $($_.Exception.Message)"
+        }
+    }
     $failures = 0
     try {
         while (-not $Link['Stop']) {

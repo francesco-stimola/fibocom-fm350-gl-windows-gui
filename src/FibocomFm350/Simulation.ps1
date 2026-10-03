@@ -132,6 +132,22 @@ class SimulatedDevice {
             PortName          = if ($device -eq 'Present') { $this.Modem.PortName } else { $null }
             AdapterInstanceId = $null
             Modems            = if ($device -eq 'Absent') { 0 } else { 1 }
+            ProductId         = if ($device -eq 'Absent') { $null } else { '7127' }
+            Driver            = if ($device -eq 'Present') { [pscustomobject]@{ InfPath = 'oem0.inf'; Version = '3.22.43.1'; Provider = 'MediaTek' } } else { $null }
+        }
+    }
+
+    # Windows installs the AT port's driver (pnputil): a modem on USB without one has it at once.
+    [void] InstallDriver() {
+        if ($this.Presence -eq 'NoDriver') {
+            $this.Presence = 'Present'
+        }
+    }
+
+    # Windows removes the AT port's driver: the port is gone until it is installed again.
+    [void] UninstallDriver() {
+        if ($this.Presence -eq 'Present') {
+            $this.Presence = 'NoDriver'
         }
     }
 
@@ -189,7 +205,8 @@ function New-SimulatedDevice {
         - PinRequired: the SIM waits for its PIN, 1234; 0000 is refused.
         - FccLocked: locked by a laptop's maker; the unlock restarts it, online.
         - AdapterDisabled: the modem's adapter disabled by the user.
-        - NoDevice, NoDriver: no modem on USB; its AT port without a driver.
+        - NoDevice, NoDriver: no modem on USB; its AT port without a driver, until the driver is
+          installed (InstallDriver(): online then). Any scenario's driver can be uninstalled.
         - Settling: as Connect, and the new address is not usable for two probes, then one round
           is lost: a path that settles, which is no failure.
         - DataPathDown: online, the path proven once, then no traffic gets through until the
@@ -210,7 +227,8 @@ function New-SimulatedDevice {
 
         Returns an object with Scenario, Modem (New-SimulatedModem's), Adapter, Presence, and
         the methods the worker calls: Find() (the modem as PnP would report it), Open() (its
-        port, for a new channel), Probe() (a data-path round) and Restart() (its USB device).
+        port, for a new channel), Probe() (a data-path round), Restart() (its USB device), and
+        InstallDriver() and UninstallDriver() (the AT port's driver, as pnputil would).
     .EXAMPLE
         Invoke-ModemWorker -Link $link -Simulation (New-SimulatedDevice -Scenario PinRequired)
     #>

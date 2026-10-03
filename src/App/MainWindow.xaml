@@ -38,7 +38,7 @@
             </StackPanel>
         </DockPanel>
 
-        <TabControl Margin="0,8,0,0">
+        <TabControl x:Name="Tabs" Margin="0,8,0,0">
             <TabItem Header="Signal">
                 <DockPanel Margin="8">
                     <StackPanel DockPanel.Dock="Top">
@@ -183,6 +183,23 @@
                         <TextBlock x:Name="SettingsProblemText" TextWrapping="Wrap" Foreground="#B03030" Margin="0,8,0,0"/>
                     </StackPanel>
                 </Grid>
+            </TabItem>
+
+            <TabItem x:Name="DriverTab" Header="Driver">
+                <StackPanel Margin="10">
+                    <TextBlock x:Name="DriverStateText" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="DriverSourceText" TextWrapping="Wrap" Margin="0,10,0,0" Foreground="#606060"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <Button x:Name="OpenDriverPageButton" Content="Open the download page" Padding="10,2"/>
+                        <Button x:Name="ChooseDriverButton" Content="Choose the downloaded package..." Margin="8,0,0,0" Padding="10,2"/>
+                    </StackPanel>
+                    <TextBlock x:Name="DriverPackageText" TextWrapping="Wrap" Margin="0,12,0,0"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button x:Name="InstallDriverButton" Content="Install" Padding="16,2"/>
+                        <Button x:Name="UninstallDriverButton" Content="Uninstall the driver..." Margin="8,0,0,0" Padding="10,2"/>
+                    </StackPanel>
+                    <TextBlock x:Name="DriverNoteText" TextWrapping="Wrap" Margin="0,8,0,0" Foreground="#606060" Visibility="Collapsed"/>
+                </StackPanel>
             </TabItem>
         </TabControl>
     </DockPanel>

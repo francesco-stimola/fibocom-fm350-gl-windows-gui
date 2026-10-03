@@ -1253,6 +1253,276 @@ Describe 'The worker and the AT port' {
     }
 }
 
+Describe 'The AT port''s driver' {
+    BeforeAll {
+        # What Get-DriverPackageFact reads in a package: by default the known one, signed for WHQL
+        # and vouched for by its catalog; -Change replaces some of its facts.
+        function Get-TestFact {
+            param([hashtable] $Change = @{})
+            $known = @(Get-KnownDriverPackage)[0]
+            $files = @{}
+            foreach ($key in $known.Files.Keys) { $files[$key] = $known.Files[$key] }
+            $fact = [pscustomobject]@{
+                Path         = 'driver/usb2ser_tm.inf'
+                Inf          = [pscustomobject]@{ Class = 'Ports'; Provider = 'MediaTek'; Version = '3.22.43.1'; Date = '10/18/2022'; CatalogFile = 'usb2ser_tm.cat'; HardwareIds = [string[]]@('USB\VID_0E8D&PID_7127&MI_06') }
+                Catalog      = $true
+                Signer       = [pscustomobject]@{ Subject = 'CN=Microsoft Windows Hardware Compatibility Publisher, O=Microsoft Corporation'; KeyUsages = [string[]]@('1.3.6.1.4.1.311.10.3.5') }
+                CatalogCheck = 0
+                Files        = $files
+            }
+            foreach ($key in $Change.Keys) { $fact.$key = $Change[$key] }
+            $fact
+        }
+
+        # The copies of driver packages the worker keeps in its folder.
+        function Get-TestCopy {
+            @(Get-ChildItem -Path (Join-Path $script:folder 'driver-staging') -Directory -ErrorAction SilentlyContinue)
+        }
+    }
+
+    BeforeEach {
+        $script:folder = Join-Path $TestDrive ([guid]::NewGuid())
+        $script:now = 100000
+        # A package as the user downloads it: a zip with an installer the app never runs.
+        $content = Join-Path $TestDrive ([guid]::NewGuid())
+        New-Item -ItemType Directory -Path (Join-Path $content 'driver') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $content 'driver/usb2ser_tm.inf') -Value '[Version]'
+        Set-Content -LiteralPath (Join-Path $content 'setup.exe') -Value 'MZ'
+        $script:zip = Join-Path $TestDrive "$([guid]::NewGuid()).zip"
+        Compress-Archive -Path (Join-Path $content '*') -DestinationPath $script:zip
+        $script:fact = Get-TestFact
+        Mock -ModuleName FibocomFm350 Get-DriverPackageFact { $script:fact }
+        # Never the real pnputil here: a test runner may have administrator rights.
+        Mock -ModuleName FibocomFm350 Invoke-Pnputil { throw 'pnputil must not run in the tests.' }
+    }
+
+    Context 'on the simulated modem' {
+        It 'checks the package where it copied it, installs it, and the modem comes online' {
+            $device = New-SimulatedDevice -Scenario NoDriver
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            $script:link['Snapshot'].Reason | Should -Be 'NoDriver'
+            $script:link['Snapshot'].Driver.Device | Should -Be 'NoDriver'
+
+            (Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip }).Result | Should -Be 'Verified'
+            $package = $script:link['Snapshot'].Driver.Package
+            $package.Name | Should -Be (Split-Path $script:zip -Leaf)
+            $package.Verdict.Known.Version | Should -Be '3.22.43.1'
+            $copies = Get-TestCopy
+            $copies.Count | Should -Be 1
+            Test-Path -LiteralPath (Join-Path $copies[0].FullName 'driver/usb2ser_tm.inf') | Should -BeTrue
+            $script:copy = $copies[0].FullName
+            Should -Invoke -ModuleName FibocomFm350 Get-DriverPackageFact -Times 1 -Exactly -ParameterFilter { $Folder -eq $script:copy -and $Beat }
+
+            (Invoke-TestCommand -Worker $worker -Kind InstallDriver).Result | Should -Be 'Done'
+            $worker.Recovery.MaintenanceUntil | Should -Be ($script:now + 300000) -Because 'the new port may stay silent for minutes'
+            (Get-TestCopy).Count | Should -Be 0
+            $script:link['Snapshot'].Driver.Package | Should -BeNullOrEmpty
+            Invoke-TestCycle -Worker $worker -Until { param($s) $s.State -eq 'Online' } -Max 5 | Out-Null
+            $snapshot = $script:link['Snapshot']
+            $snapshot.State | Should -Be 'Online'
+            $snapshot.Driver.Device | Should -Be 'Present'
+            $snapshot.Driver.Inf | Should -Be 'oem0.inf'
+        }
+
+        It 'publishes the command under way before it runs' {
+            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario NoDriver)
+            Mock -ModuleName FibocomFm350 Get-DriverPackageFact { $script:during = $script:link['Snapshot'].Driver.Operation; $script:fact }
+            Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip } | Out-Null
+            $script:during | Should -Be 'CheckDriverPackage'
+            $script:link['Snapshot'].Driver.Operation | Should -BeNullOrEmpty
+        }
+
+        It 'installs a version it doesn''t know only once the user accepted it' {
+            $device = New-SimulatedDevice -Scenario NoDriver
+            $worker = Get-TestWorker -Device $device
+            $script:fact = Get-TestFact -Change @{ Files = @{ 'usb2ser_tm.inf' = 'ab' * 32 } }
+            (Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip }).Result | Should -Be 'Signed'
+            (Invoke-TestCommand -Worker $worker -Kind InstallDriver).Result | Should -Be 'Unconfirmed'
+            $device.Presence | Should -Be 'NoDriver'
+            (Get-TestCopy).Count | Should -Be 1 -Because 'the package is kept for the user''s answer'
+            (Invoke-TestCommand -Worker $worker -Kind InstallDriver -Parameter @{ AcceptUnknown = $true }).Result | Should -Be 'Done'
+            $device.Presence | Should -Be 'Present'
+        }
+
+        It 'deletes a refused package at once, says why, and installs nothing' {
+            $device = New-SimulatedDevice -Scenario NoDriver
+            $worker = Get-TestWorker -Device $device
+            $script:fact = Get-TestFact -Change @{ Signer = [pscustomobject]@{ Subject = 'CN=Example'; KeyUsages = [string[]]@() } }
+            (Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip }).Result | Should -Be 'Refused'
+            (Get-TestCopy).Count | Should -Be 0
+            $script:link['Snapshot'].Driver.Package.Verdict.Problems | Should -Be @('NotWhql')
+            (Invoke-TestCommand -Worker $worker -Kind InstallDriver -Parameter @{ AcceptUnknown = $true }).Result | Should -Be 'NoPackage'
+            $device.Presence | Should -Be 'NoDriver'
+        }
+
+        It 'fails on a package it can''t read, and keeps nothing of it' {
+            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario NoDriver)
+            $exe = Join-Path $TestDrive 'setup.exe'
+            Set-Content -LiteralPath $exe -Value 'MZ'
+            $result = Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $exe }
+            $result.Result | Should -Be 'Failed'
+            $result.Detail | Should -BeLike '*a zip, or the INF*'
+            (Get-TestCopy).Count | Should -Be 0
+        }
+
+        It 'never installs over an AT port that works' {
+            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario Online)
+            Invoke-ModemWorkerCycle -Worker $worker
+            Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip } | Out-Null
+            (Invoke-TestCommand -Worker $worker -Kind InstallDriver).Result | Should -Be 'DriverWorking'
+        }
+
+        It 'uninstalls the driver: the port closed first, the connection left as it is, nothing escalated' {
+            $device = New-SimulatedDevice -Scenario Online
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            $adapter = $device.Adapter.Read()
+            (Invoke-TestCommand -Worker $worker -Kind UninstallDriver).Result | Should -Be 'Done'
+            $device.Presence | Should -Be 'NoDriver'
+            $device.Modem.Closed | Should -BeTrue
+            $trace = Invoke-TestCycle -Worker $worker -Max 20
+            $trace[-1].Reason | Should -Be 'NoDriver'
+            $trace[-1].Recovery | Should -Be 'Blocked'
+            Get-RecoveryCommand -Modem $device.Modem | Should -BeNullOrEmpty
+            ($device.Adapter.Read() | ConvertTo-Json) | Should -Be ($adapter | ConvertTo-Json)
+        }
+
+        It 'keeps the driver while a network mode is on trial: only the AT port can write it back' {
+            $device = New-SimulatedDevice -Scenario Online
+            $worker = Get-TestWorker -Device $device
+            Invoke-ModemWorkerCycle -Worker $worker
+            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'LteOnly' }).Result | Should -Be 'Applied'
+            (Invoke-TestCommand -Worker $worker -Kind UninstallDriver).Result | Should -Be 'TrialOn'
+            $device.Presence | Should -Be 'Present'
+            $device.Modem.Closed | Should -BeFalse
+        }
+
+        It 'never logs the folder of a package it can''t read: it may hold the user''s name' {
+            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario NoDriver)
+            $missing = Join-Path $TestDrive 'Users\Example.Person\Downloads\missing.zip'
+            $result = Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $missing }
+            $result.Result | Should -Be 'Failed'
+            $result.Detail | Should -BeLike '*missing.zip*'
+            $result.Detail | Should -Not -BeLike '*Example.Person*'
+            @(Get-TestLog | Where-Object { $_ -like '*Example.Person*' }).Count | Should -Be 0
+        }
+
+        It 'tries again to delete a copy it couldn''t, and logs it once' {
+            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario NoDriver)
+            Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip } | Out-Null
+            $held = [System.IO.File]::Open((Join-Path (Get-TestCopy)[0].FullName 'driver/usb2ser_tm.inf'), 'Open', 'Read', 'None')
+            try {
+                (Invoke-TestCommand -Worker $worker -Kind InstallDriver).Result | Should -Be 'Done'
+                Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip } | Out-Null
+                (Get-TestCopy).Count | Should -Be 2 -Because 'the held copy stays, beside the new one'
+            }
+            finally {
+                $held.Dispose()
+            }
+            @(Get-TestLog | Where-Object { $_ -like "*can't be deleted yet*" }).Count | Should -Be 1
+            Close-ModemWorker -Worker $worker
+            (Get-TestCopy).Count | Should -Be 0
+        }
+
+        It 'refuses every driver command while it only observes, and copies nothing' {
+            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario NoDriver) -Extra @{ ObserveOnly = $true }
+            foreach ($kind in 'CheckDriverPackage', 'InstallDriver', 'UninstallDriver') {
+                (Invoke-TestCommand -Worker $worker -Kind $kind -Parameter @{ Path = $script:zip }).Result | Should -Be 'Refused'
+            }
+            (Get-TestCopy).Count | Should -Be 0
+        }
+
+        It 'refuses them without administrator rights' {
+            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario NoDriver)
+            $worker.Elevated = $false
+            foreach ($kind in 'CheckDriverPackage', 'InstallDriver', 'UninstallDriver') {
+                (Invoke-TestCommand -Worker $worker -Kind $kind -Parameter @{ Path = $script:zip }).Result | Should -Be 'NotElevated'
+            }
+        }
+
+        It 'deletes the copy it kept when it ends' {
+            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario NoDriver)
+            Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip } | Out-Null
+            (Get-TestCopy).Count | Should -Be 1
+            Close-ModemWorker -Worker $worker
+            (Get-TestCopy).Count | Should -Be 0
+        }
+    }
+
+    Context 'with pnputil' {
+        BeforeEach {
+            # One modem, its AT port as -Driver says: none, or a package published as -Inf.
+            function Get-TestRecord {
+                param([switch] $Driver, [string] $Inf = 'oem24.inf')
+                $parent = 'USB\VID_0E8D&PID_7127\7&00000000&0&1'
+                [pscustomobject]@{
+                    InstanceId = 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&1&0006'; Present = $true; Parent = $parent
+                    ProblemCode = if ($Driver) { 0 } else { 28 }; Service = if ($Driver) { 'usb2ser_tm' } else { $null }; PortName = if ($Driver) { 'COM14' } else { $null }
+                    DriverInfPath = if ($Driver) { $Inf } else { $null }; DriverVersion = if ($Driver) { '3.22.43.1' } else { $null }; DriverProvider = if ($Driver) { 'MediaTek' } else { $null }
+                }
+                [pscustomobject]@{ InstanceId = 'USB\VID_0E8D&PID_7127&MI_00\8&00000000&1&0000'; Present = $true; ProblemCode = 0; Service = 'usbrndis6'; Parent = $parent; PortName = $null }
+            }
+            $script:records = @(Get-TestRecord)
+            $script:modem = (New-SimulatedDevice -Scenario Online -PortName 'COM14').Modem
+            $script:pnputil = [pscustomobject]@{ Result = 'Done'; ExitCode = 0 }
+            Mock -ModuleName FibocomFm350 Get-ModemPnpRecord { $script:records }
+            Mock -ModuleName FibocomFm350 Open-SerialAtTransport { $script:modem }
+            Mock -ModuleName FibocomFm350 Get-ModemAdapterState { (New-SimulatedDevice -Scenario Online).Adapter.Read() }
+            Mock -ModuleName FibocomFm350 Test-AppElevation { $true }
+            # pnputil working: the heartbeat as it beats meanwhile.
+            Mock -ModuleName FibocomFm350 Install-ModemDriver { $script:link['Heartbeat'] = 0; if ($Beat) { & $Beat }; $script:beaten = $script:link['Heartbeat']; $script:pnputil }
+            # Windows removes the driver: the AT port is left without one.
+            Mock -ModuleName FibocomFm350 Uninstall-ModemDriver { $script:records = @(Get-TestRecord); $script:pnputil }
+            $script:link = New-ModemWorkerLink
+            $script:worker = New-ModemWorker -Link $script:link -DataFolder $script:folder -Clock { $script:now }
+        }
+
+        It 'installs from the folder it checked, its heartbeat beating meanwhile' {
+            Invoke-ModemWorkerCycle -Worker $script:worker
+            $script:link['Snapshot'].Reason | Should -Be 'NoDriver'
+            Invoke-TestCommand -Worker $script:worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip } | Out-Null
+            $script:copy = (Get-TestCopy)[0].FullName
+            (Invoke-TestCommand -Worker $script:worker -Kind InstallDriver).Result | Should -Be 'Done'
+            Should -Invoke -ModuleName FibocomFm350 Install-ModemDriver -Times 1 -Exactly -ParameterFilter { $InfPath -eq (Join-Path $script:copy 'driver\usb2ser_tm.inf') }
+            $script:beaten | Should -BeGreaterThan 0
+            # Windows starts the port: the next look finds it, and opens it.
+            $script:records = @(Get-TestRecord -Driver)
+            $script:now += 5000
+            Invoke-ModemWorkerCycle -Worker $script:worker
+            $script:link['Snapshot'].PortName | Should -Be 'COM14'
+            $script:link['Snapshot'].Driver.Inf | Should -Be 'oem24.inf'
+        }
+
+        It 'says pnputil''s exit code when Windows refuses the package' {
+            Invoke-ModemWorkerCycle -Worker $script:worker
+            Invoke-TestCommand -Worker $script:worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip } | Out-Null
+            $script:pnputil = [pscustomobject]@{ Result = 'Failed'; ExitCode = 5 }
+            $result = Invoke-TestCommand -Worker $script:worker -Kind InstallDriver
+            $result.Result | Should -Be 'Failed'
+            $result.Detail | Should -Be 'pnputil exit code 5'
+            (Get-TestCopy).Count | Should -Be 0
+        }
+
+        It 'uninstalls the package the AT port reports, its port closed first' {
+            $script:records = @(Get-TestRecord -Driver)
+            Invoke-ModemWorkerCycle -Worker $script:worker
+            $script:link['Snapshot'].State | Should -Be 'Online'
+            (Invoke-TestCommand -Worker $script:worker -Kind UninstallDriver).Result | Should -Be 'Done'
+            Should -Invoke -ModuleName FibocomFm350 Uninstall-ModemDriver -Times 1 -Exactly -ParameterFilter { $PublishedName -eq 'oem24.inf' -and $Beat }
+            $script:modem.Closed | Should -BeTrue
+        }
+
+        It 'uninstalls nothing but a package Windows published as an oem-numbered INF' {
+            $script:records = @(Get-TestRecord -Driver -Inf 'usbser.inf')
+            Invoke-ModemWorkerCycle -Worker $script:worker
+            (Invoke-TestCommand -Worker $script:worker -Kind UninstallDriver).Result | Should -Be 'NoDriver'
+            Should -Invoke -ModuleName FibocomFm350 Uninstall-ModemDriver -Times 0 -Exactly
+            $script:modem.Closed | Should -BeFalse
+        }
+    }
+}
+
 Describe 'The heartbeat' {
     It 'never lets a wait for the modem''s answer go a second without a beat' {
         InModuleScope FibocomFm350 {

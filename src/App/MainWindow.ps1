@@ -12,9 +12,11 @@ $script:WindowControlNames = @(
     'CurrentModeText', 'NetworkModeBox', 'BandsPanel', 'LteAllBox', 'LteBandsPanel', 'NrAllBox', 'NrBandsPanel', 'ModeNoteText', 'ApplyModeButton', 'ReloadModeButton'
     'ApnBox', 'PdpTypeBox', 'AuthenticationBox', 'ApnUserBox', 'ApnPasswordBox', 'ClearPasswordBox', 'ApnPasswordStoredText'
     'DnsBox', 'MetricBox', 'SaveSettingsButton', 'ReloadSettingsButton', 'SettingsProblemText'
+    'Tabs', 'DriverTab', 'DriverStateText', 'DriverSourceText', 'OpenDriverPageButton', 'ChooseDriverButton', 'DriverPackageText'
+    'InstallDriverButton', 'UninstallDriverButton', 'DriverNoteText'
 )
 
-# What the confirmations say: they guard the two actions that change something outside the app.
+# What the confirmations say: they guard the actions that change something outside the app.
 $script:UnlockConfirmation = @'
 Unlock the modem?
 
@@ -26,6 +28,18 @@ $script:DisablePinConfirmation = @'
 Remove the PIN from the SIM?
 
 This changes the SIM card, not the app: the SIM will no longer ask for its PIN, in this modem or in any phone. A wrong PIN uses up one of its attempts.
+'@
+$script:UnknownDriverConfirmation = @'
+Install a driver version the app doesn't know?
+
+Microsoft signed this package (WHQL) for the modem's AT port, so Windows accepts it; but it is not a version the app knows.
+
+Windows installs it for every device it fits.
+'@
+$script:UninstallDriverConfirmation = @'
+Uninstall the modem's AT-port driver?
+
+Windows removes it from the modem's serial ports and from its driver store. The data connection stays up, but the app can't talk to the modem, nor watch the connection, until the driver is installed again.
 '@
 
 # The main window and what it remembers; one per app. Event handlers reach it here.
@@ -39,7 +53,10 @@ function New-MainWindow {
         -Send queues a command for the worker: it is called with a command kind and its
         parameters (Send-ModemCommand's), and must not wait. -Ask asks the user a question
         and returns $true when they agree; a modal Yes/No dialog by default, No preselected.
-        Closing the window hides it: the app stays in the tray.
+        -Choose asks for a driver package and returns its path, or nothing; a file dialog by
+        default (a zip, or an INF in its folder). -Open shows a web page; by default Explorer
+        hands it to the user's browser - the app runs elevated, and should never start a browser
+        itself. Closing the window hides it: the app stays in the tray.
 
         Returns a hashtable: Window, Controls (by name), View (the last one shown) and what the
         handlers need.
@@ -54,7 +71,11 @@ function New-MainWindow {
         [Parameter(Mandatory)]
         [scriptblock] $Send,
 
-        [scriptblock] $Ask
+        [scriptblock] $Ask,
+
+        [scriptblock] $Choose,
+
+        [scriptblock] $Open
     )
 
     $window = [System.Windows.Markup.XamlReader]::Parse((Get-Content -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath 'MainWindow.xaml') -Raw))
@@ -72,11 +93,31 @@ function New-MainWindow {
             [System.Windows.MessageBox]::Show($script:MainWindow.Window, $message, $title, 'YesNo', 'Warning', 'No') -eq 'Yes'
         }
     }
+    if (-not $Choose) {
+        $Choose = {
+            $dialog = [Microsoft.Win32.OpenFileDialog]::new()
+            $dialog.Title = 'Choose the downloaded driver package'
+            $dialog.Filter = 'Driver package (*.zip, *.inf)|*.zip;*.inf'
+            if ($dialog.ShowDialog($script:MainWindow.Window)) {
+                $dialog.FileName
+            }
+        }
+    }
+    if (-not $Open) {
+        $Open = {
+            param($url)
+            # Explorer from the Windows folder, never found through PATH (ARCHITECTURE ->
+            # Invariants): it hands the page to the browser of the user's own session.
+            Start-Process -FilePath (Join-Path -Path ([Environment]::GetFolderPath('Windows')) -ChildPath 'explorer.exe') -ArgumentList $url
+        }
+    }
     $script:MainWindow = @{
         Window       = $window
         Controls     = $controls
         Send         = $Send
         Ask          = $Ask
+        Choose       = $Choose
+        Open         = $Open
         View         = $null
         # The settings the form was last filled with, and the newest command outcome seen.
         FormSettings = $null
@@ -136,6 +177,24 @@ function New-MainWindow {
     $controls.NetworkModeBox.Add_SelectionChanged({ Sync-WindowBandState })
     $controls.LteAllBox.Add_Click({ Sync-WindowBandState })
     $controls.NrAllBox.Add_Click({ Sync-WindowBandState })
+    $controls.OpenDriverPageButton.Add_Click({
+            $driver = if ($script:MainWindow.View) { $script:MainWindow.View.Driver } else { $null }
+            if ($driver -and $driver.PageUrl) {
+                & $script:MainWindow.Open $driver.PageUrl
+            }
+        })
+    $controls.ChooseDriverButton.Add_Click({
+            $path = & $script:MainWindow.Choose
+            if ($path) {
+                & $script:MainWindow.Send 'CheckDriverPackage' @{ Path = [string]$path }
+            }
+        })
+    $controls.InstallDriverButton.Add_Click({ Invoke-WindowDriverInstall })
+    $controls.UninstallDriverButton.Add_Click({
+            if (& $script:MainWindow.Ask 'Uninstall the driver' $script:UninstallDriverConfirmation) {
+                & $script:MainWindow.Send 'UninstallDriver' @{}
+            }
+        })
     $controls.SaveSettingsButton.Add_Click({ Save-WindowSetting })
     $controls.ReloadSettingsButton.Add_Click({
             $script:MainWindow.FormSettings = $null
@@ -185,6 +244,24 @@ function Invoke-BlockerAction {
             & $script:MainWindow.Send 'SetNetworkMode' @{ NetworkMode = 'Automatic'; LteBands = [int[]]@(); NrBands = [int[]]@() }
             $script:MainWindow.FormMode = $null
         }
+        'Driver' {
+            $controls.Tabs.SelectedItem = $controls.DriverTab
+        }
+    }
+}
+
+function Invoke-WindowDriverInstall {
+    # The Driver tab's Install: a version the app knows at once; one it doesn't, once the user
+    # accepted it.
+    $driver = if ($script:MainWindow.View) { $script:MainWindow.View.Driver } else { $null }
+    if (-not $driver -or -not $driver.CanInstall) {
+        return
+    }
+    if (-not $driver.ConfirmInstall) {
+        & $script:MainWindow.Send 'InstallDriver' @{}
+    }
+    elseif (& $script:MainWindow.Ask 'Install an unknown driver version' $script:UnknownDriverConfirmation) {
+        & $script:MainWindow.Send 'InstallDriver' @{ AcceptUnknown = $true }
     }
 }
 
@@ -405,6 +482,21 @@ function Update-MainWindow {
         $controls.StorePinButton.IsEnabled = $sim.CanStorePin
         $controls.ForgetPinButton.IsEnabled = $sim.CanForgetPin
         $controls.DisablePinButton.IsEnabled = $sim.CanDisablePin
+    }
+
+    $driver = $View.Driver
+    if ($driver) {
+        $controls.DriverStateText.Text = $driver.StateText
+        $controls.DriverSourceText.Text = $driver.SourceText
+        $controls.OpenDriverPageButton.IsEnabled = [bool]$driver.PageUrl
+        $controls.ChooseDriverButton.IsEnabled = $driver.CanChoose
+        $controls.DriverPackageText.Text = [string]$driver.PackageText
+        $controls.DriverPackageText.Visibility = & $show $driver.PackageText
+        $controls.InstallDriverButton.IsEnabled = $driver.CanInstall
+        $controls.InstallDriverButton.Content = if ($driver.ConfirmInstall) { 'Install...' } else { 'Install' }
+        $controls.UninstallDriverButton.IsEnabled = $driver.CanUninstall
+        $controls.DriverNoteText.Text = [string]$driver.Note
+        $controls.DriverNoteText.Visibility = & $show $driver.Note
     }
 
     $controls.ApnPasswordStoredText.Text = if ($View.ApnPasswordStored) { 'A password is stored.' } else { 'No password is stored.' }
