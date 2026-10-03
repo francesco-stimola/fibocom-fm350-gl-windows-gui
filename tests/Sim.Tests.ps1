@@ -208,7 +208,10 @@ Describe 'SIM PIN store' {
     It 'stores the PIN and the SIM encrypted, and gives the PIN back for that SIM' {
         Save-SimPin -Pin (ConvertTo-TestSecret '1234') -Iccid $script:iccid -Path $script:path
         $text = Get-Content -LiteralPath $script:path -Raw
-        $text | Should -Not -Match '1234'
+        # Not as a value, nor as its bytes in hex (ASCII, UTF-16): a bare '1234' can turn up in
+        # any ciphertext written in hex.
+        @((ConvertFrom-Json -InputObject $text).PSObject.Properties.Value | ForEach-Object { [string]$_ }) | Should -Not -Contain '1234'
+        $text | Should -Not -Match '31323334|3100320033003400'
         $text | Should -Not -Match $script:iccid
         $stored = Get-SimPin -Iccid $script:iccid -Path $script:path
         [System.Net.NetworkCredential]::new('', $stored.Pin).Password | Should -Be '1234'
