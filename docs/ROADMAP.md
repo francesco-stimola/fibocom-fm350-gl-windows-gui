@@ -127,6 +127,7 @@ verifies it and installs it (design: ARCHITECTURE → *Drivers*).
 - [ ] Installer script: copies the app under `%ProgramFiles%` (the elevated task never runs files from a user-writable folder), unblocks them, registers the logon scheduled task (highest privileges) and the Start-menu shortcut; uninstaller removes all three.
 - [ ] Release workflow on `v*` tags: lint + tests, check the tag matches the module version, build the zip, publish a GitHub Release with the `CHANGELOG.md` section as notes.
 - [ ] Update notice: once per app start, when the connection first comes online, read the latest GitHub release; if it is newer, the tray menu says so and links to it. Never installs anything; can be turned off in settings.
+- [ ] Encrypted DNS (DoH) on the modem's adapter (decided 2026-10-03): a setting turns DoH on for the servers of the DNS override, which it needs (the operator's servers speak no DoH); an optional DoH template applies to every server of the override, for a provider whose template Windows doesn't know; a server with no template, known or given, is a settings problem. Applied per interface (`SetInterfaceDnsSettings`, `DNS_INTERFACE_SETTINGS3`, `DnsServerDohProperty`), re-applied by the pass like the servers, removed when turned off; no fallback to plain DNS. The window shows whether it is on. No DoT.
 - [ ] README install instructions: PowerShell 7, the app, and the guided driver step.
 - [ ] Set `ModuleVersion` to `1.0.0` and tag `v1.0.0`.
 

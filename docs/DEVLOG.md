@@ -4,6 +4,27 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-03 — Decided: encrypted DNS (DoH) on the modem's adapter, before v1.0.0
+
+The modem adapter's DNS servers can only be chosen in the app: the pass rewrites them at every
+connect, so a server set by hand on the adapter lasts until the next pass. Their encryption
+belongs with them. Decided by the maintainer, for M7:
+- **A DoH setting and an optional template.** The setting turns DoH on for the servers of the DNS
+  override; a template field serves a provider whose template Windows doesn't know (NextDNS,
+  AdGuard, a private resolver). It needs the override: the operator's servers speak no DoH.
+  Rejected: the setting for known templates alone (no custom provider), and documentation only
+  (an elevated PowerShell step outside the app).
+- **Per interface, not per server.** Windows can also mark a server address for DoH system-wide
+  (`Set-DnsClientDohServerAddress -AutoUpgrade`); that changes every adapter using the address,
+  against *every change is scoped to the modem's adapter*. The per-interface API
+  (`SetInterfaceDnsSettings` with `DNS_INTERFACE_SETTINGS3` and `DnsServerDohProperty`) keeps it
+  on the modem's adapter, and the pass re-applies it — on the new adapter a re-enumerated modem
+  brings, too.
+- **No fallback to plain DNS** when DoH fails: whoever turns encryption on wants no query in the
+  clear. The health checks won't notice such a failure: H7 probes by address, not by name.
+- **No DoT**: the documented per-interface API describes DoH only, and Windows' DoT client was
+  announced for Insider builds.
+
 ## 2026-10-03 — M5: the review pass
 
 One lite review of M5's changes found nine defects in the product, all fixed; each fix has a test
