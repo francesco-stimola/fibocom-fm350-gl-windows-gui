@@ -164,7 +164,9 @@ ARCHITECTURE → *eSIM*; facts: `AT-COMMANDS.md` §8). Everything but erasing th
 as far as it is verified on a module with an eUICC: nothing of it ships proven on the simulated
 modem alone (decided 2026-10-03).
 
-- [ ] Device session: look for an eUICC on our module's second slot (`AT+GTDUALSIM=1`, persistent, put back to `0` at the end) — its empty `+EID:` was read on slot 0 only (`AT-COMMANDS.md` §8). On a module with an eUICC: answer the open questions in §8.
+- [x] Device session, first part: our module's eUICC found on slot 1 and reached (`AT-COMMANDS.md` §8) — the slot switched there and back with `AT+GTDUALSIM`, the ISD-R through `+CCHO` / `+CGLA`; one profile on it, of class test.
+- [ ] Device session, the rest of §8's open questions: the longest APDU through `+CGLA`, how the class byte routes, what enabling a profile needs.
+- [ ] `+CPIN: EMPTY_EUICC` — an eUICC with no profile enabled — told apart from the other SIM states (today it reads as *Other*).
 - [ ] APDU bridge in the worker: lpac's `stdio` protocol ↔ `AT+CCHO` / `AT+CGLA` / `AT+CCHC` on the AT port the worker owns; the protocol translation as pure functions with a matrix of tests; lpac simulated in the tests.
 - [ ] Slot selection (`AT+GTDUALSIM`) and profile switches inside a maintenance window. The slot is persistent modem state: it is switched only after a confirmation that says so, and the active slot is always shown.
 - [ ] Operations: chip info; profile list, enable, disable, nickname; download from an activation code or a QR code; delete behind a strong confirmation. Notifications processed automatically. `chip purge` never exposed.

@@ -4,6 +4,24 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-03 — An eUICC on our module's slot 1
+
+The first part of M9's device session: reads on slot 0, then slot 1 selected, its eUICC asked, and
+slot 0 written back at the end. Facts in `AT-COMMANDS.md` §8:
+- **The logical-channel commands work**, on the physical USIM and on the eUICC: `+CCHO` answers the
+  session ID alone, without a prefix; `+CGLA` answers the response quoted, with its status word,
+  its length counted in hex characters. The `+CSIM` route is not needed.
+- **Slot 1 (SIM2) holds an eUICC**: `+SIMTYPE: 1`, an EID, and `+CPIN: EMPTY_EUICC`, a value the
+  SIM-state parser reads as *Other* today. The empty `+EID:` of slot 0 was that slot's, not the
+  module's: §8 had concluded too much from it.
+- **Switching slots** answers in a fraction of a second, with no re-enumeration and no `+CFUN`;
+  back on slot 0 the SIM was ready and registered within 5 s.
+- **The ISD-R answers ES10 requests** carried by `+CGLA`: SGP.22 2.2.2, one profile, disabled, of
+  class test.
+
+Still open (§8): the longest APDU that reaches the card intact, how the class byte routes, and what
+enabling a profile needs.
+
 ## 2026-10-03 — Decided: SMS, USSD and data usage before eSIM
 
 M8 is now *SMS, USSD and data usage* (`v1.1.0`) and M9 *eSIM* (`v1.2.0`); lpac ships from

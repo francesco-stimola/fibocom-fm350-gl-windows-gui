@@ -29,6 +29,7 @@ A `[DEVICE]` fact names its fixture under `tests/fixtures/device/`.
 | `[23.040]` | 3GPP TS 23.040 — *Technical realization of the Short Message Service* (PDU layouts) | Public standard |
 | `[23.038]` | 3GPP TS 23.038 — *Alphabets and language-specific information* (GSM 7-bit, UCS-2, data coding scheme) | Public standard |
 | `[23.003]` | 3GPP TS 23.003 — *Numbering, addressing and identification* (§9.1: an APN is a network identifier followed by an operator identifier, `mnc<MNC>.mcc<MCC>.gprs`) | Public standard |
+| `[SGP.22]` | GSMA SGP.22 — *RSP Technical Specification* v2.2: ES10 functions carried by STORE DATA; `GetEuiccInfo1` and `GetProfilesInfo` with their tags | Public specification |
 | `[V.250]` | ITU-T V.250 — *Serial asynchronous automatic dialling and control* | Public standard |
 | `[36.101]` | 3GPP TS 36.101 — *E-UTRA UE radio transmission and reception*, **V20.1.0** (`36101-k10.zip`, SHA-256 `9f9a56f5d0535e5f77da0b4154c3056ed6e0d09c4e0ee22b2beb9676de0144ad`) | Public standard |
 | `[38.101-1]` | 3GPP TS 38.101-1 — *NR UE radio transmission and reception, FR1*, **V20.1.0** (`38101-1-k10.zip`, SHA-256 `274357963736f04ef5fe419288c2341a7b02897dd478d0bb9c46304a2d9f5eda`) | Public standard |
@@ -469,9 +470,11 @@ eUICC over the AT port it already owns.
 | Fact | Status | Source |
 |---|---|---|
 | The eUICC is reached through **logical channels**: `AT+CCHO=<AID>` opens one and returns `<sessionid>`; `AT+CGLA=<sessionid>,<length>,<command>` exchanges an APDU and answers `+CGLA: <length>,<response>`; `AT+CCHC=<sessionid>` closes it. | 📄 | `[27.007]`, `[LPAC-WRAPPER]` |
-| `+CCHO`/`+CGLA`/`+CCHC` are **in neither vendor manual**; `AT+CSIM=<length>,<command>` is (`<length>` counts hex characters). Without the logical-channel commands, a channel could be opened with a MANAGE CHANNEL APDU sent through `+CSIM`. | ❓ | `[FIBOCOM]` §10.1.4 p.139; `[DEVICE]` |
-| The firmware takes the test forms `AT+CCHO=?`, `AT+CGLA=?`, `AT+CCHC=?` and `AT+CSIM=?` (`OK`, no values). Whether the commands themselves work needs a SIM. | ✅ | `[DEVICE]` |
-| Without a SIM, `AT+EID?` answers an empty `+EID:` and `+SIMTYPE?` / `+SIMTYPE=?` answer `+CME ERROR: 0`. With a physical SIM on slot 0 (SIM1), unlocked: `+SIMTYPE: 0` (USIM) and still an empty `+EID:`. Read **on slot 0 only**: whether our module has an eUICC on slot 1 is question 2 below. `+GTESIMCFG: 0,0,0`. | ✅ | `[DEVICE]` |
+| `+CCHO`/`+CGLA`/`+CCHC` are **in neither vendor manual**; `AT+CSIM=<length>,<command>` is (`<length>` counts hex characters). The firmware runs the logical-channel commands (next row), so the `+CSIM` route — a MANAGE CHANNEL APDU — is not needed. | ✅ | `[FIBOCOM]` §10.1.4 p.139; `[DEVICE]` |
+| The firmware takes the test forms `AT+CCHO=?`, `AT+CGLA=?`, `AT+CCHC=?` and `AT+CSIM=?` (`OK`, no values), and the commands work, on the physical USIM and on the eUICC's ISD-R. `AT+CCHO="<AID>"` answers the session ID **alone on its line, without a prefix** (`1`), in 13–40 ms — for a partial AID too, the USIM's first 7 bytes (`A0000000871002`). `AT+CGLA=<sessionid>,<length>,"<hex>"` answers `+CGLA: <length>,"<hex>"`: `<length>` counts hex characters, the response is quoted and ends with its status word (`…9000`). On session `1` the class byte carried the channel number (`81`). Answers of up to 100 bytes came in one `+CGLA`, without `61xx`. Commands of 250 and 520 hex characters were accepted; whether their data reached the card intact was not shown. `AT+CCHC=<sessionid>` answers `OK`. | ✅ | `[DEVICE]` |
+| Without a SIM, `AT+EID?` answers an empty `+EID:` and `+SIMTYPE?` / `+SIMTYPE=?` answer `+CME ERROR: 0`. With a physical SIM on slot 0 (SIM1), unlocked: `+SIMTYPE: 0` (USIM) and still an empty `+EID:` — the EID is the selected slot's (next row). `+GTESIMCFG: 0,0,0`. `AT+GTDUALSIM=?` answers `+GTDUALSIM: (0-1)`; `AT+CUAD=?` answers `+CUAD: (0-1)`, but `AT+CUAD` `+CME ERROR: 100`. | ✅ | `[DEVICE]` |
+| **Our module has an eUICC, on slot 1 (SIM2).** `AT+GTDUALSIM=1` answers `OK` in about 0.3 s, with `+CIREPI: 0`, `+ESIMS: 1,29` and `+ESIMS: 0,1` among its answer lines. From 5 s later until the switch back, 40 s on: `+CPIN: EMPTY_EUICC` — no profile enabled (its only profile is disabled, below) —, `+GTDUALSIM : 1, "SUB2", "NO SERVICE"`, `+SIMTYPE: 1`, an `+EID:` of 32 characters, `+COPS: 0,255,"",0`, `+GTESIMCFG: 0,0,0`. `AT+GTDUALSIM=0` answers `OK` in 0.25 s (`+CIREPI: 0`, `+CNEMIU: …`, `+ESIMS: 1,29` among its lines); 5 s later the physical SIM is `READY` and registered again. Neither switch re-enumerated the modem or needed `+CFUN`. | ✅ | `[DEVICE]` |
+| Through a channel on the ISD-R (`AT+CCHO` with its AID, below), ES10 requests go as STORE DATA — class `8x` with the channel number, `E2 91 00`, the request as BER-TLV. `GetEuiccInfo1` (`BF20`) answered 100 bytes: SGP.22 version 2.2.2, two CI keys for verification and two for signing. `GetProfilesInfo` (`BF2D`) answered 80 bytes: **one profile, disabled, of class test** (`9F70` state, `95` class). | ✅ | `[DEVICE]`, `[SGP.22]` |
 | The FM350 needs the eSIM slot selected first: `AT+GTDUALSIM=1`. The manual only calls the slots SIM1 and SIM2 and says the setting is **persistent** (§4) — switching slots writes persistent modem state. | 📄 | `[LPAC-WRAPPER]`, `[FIBOCOM]` §4.3 p.50 |
 | `AT+SIMTYPE?` tells which kind of SIM is in use: `0` USIM (default), `1` eSIM. | 📄 | `[FIBOCOM]` §3.15 p.32 |
 | `AT+EID?` answers the EID quoted, 32 digits, or an empty string when there is none; needs the SIM unlocked. **Identifier.** | 📄 | `[FIBOCOM]` §3.13 p.30 |
@@ -484,9 +487,9 @@ eUICC over the AT port it already owns.
 | **Identifiers:** EID (`chip info`) and ICCIDs (`profile list`) are identifiers — redacted in logs and fixtures like IMEI and IMSI. Activation codes are secrets. | — | Project rule |
 
 Open questions for the device (a module **with** an eUICC — not every FM350 has one):
-1. Does the FM350 accept `+CCHO/+CGLA/+CCHC`, and up to which APDU length through `+CGLA`? If not, does a logical channel opened through `+CSIM` work?
-2. Which slot holds the eUICC (`+SIMTYPE?` after each `+GTDUALSIM`), and does a slot change need re-registration or `+CFUN` cycling?
-3. After `profile enable`, what does the modem need to use the new profile (refresh, re-registration)?
+1. Does the FM350 accept `+CCHO/+CGLA/+CCHC`, and up to which APDU length through `+CGLA`? If not, does a logical channel opened through `+CSIM` work? *Answered in part: the commands work (above). Open: the longest APDU that reaches the card intact, and whether the modem routes by the session ID whatever the class byte says.*
+2. Which slot holds the eUICC (`+SIMTYPE?` after each `+GTDUALSIM`), and does a slot change need re-registration or `+CFUN` cycling? *Answered (above): slot 1 on our module; no `+CFUN` and no re-enumeration — service drops at the switch, and back on slot 0 the physical SIM registers again by itself within 5 s.*
+3. After `profile enable`, what does the modem need to use the new profile (refresh, re-registration)? *Open: our eUICC holds a test profile only.*
 
 ## 9. SMS and USSD (M8)
 
