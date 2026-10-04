@@ -1082,9 +1082,10 @@ What a prepaid or capped SIM needs day to day (facts: `AT-COMMANDS.md` §9).
   storage was last read, on the SIM in use — the only one registered —, and is noted with that SIM
   (told as for its APN settings: the SHA-256 of its ICCID), the kind of SIM and an eSIM profile's
   name, in one file encrypted with DPAPI for the user — fingerprints and a name, no text, no
-  number; the newest 1000 parts. Before the SIM in use changes — a slot switched, a profile enabled
-  or disabled — the storage is checked, so what came in on it is not told as the next one's; after,
-  the list is emptied and read again once a pass has identified the new SIM. On a profile, the
+  number; the newest 1000 parts. Before the app changes the SIM in use — a slot switched, a profile
+  enabled or disabled — the storage is checked, so what came in on it is not told as the next one's.
+  Whenever a pass finds another SIM in use — the app's switch, a SIM swapped, a profile switched by
+  another program —, the list is emptied and read again whole. On a profile, the
   messages that came in on **another profile still on the eUICC are not listed**: the tab says how
   many, and they show — and can be deleted — when that profile is in use. A message that came in on
   a SIM not there now (a deleted profile, another physical SIM), or not known to be there (the
@@ -1139,7 +1140,9 @@ What a prepaid or capped SIM needs day to day (facts: `AT-COMMANDS.md` §9).
   comes back under another storage index: each of its parts by a fingerprint (SHA-256 of the part's PDU
   as stored, which holds the sender, the time stamp and the text), kept in one file encrypted with DPAPI for
   the user — no text, no number. A fingerprint leaves when its message is opened or deleted, or is
-  no longer in the storage: the file holds at most what the storage can, and is rewritten whole.
+  no longer in the storage — unless the message came in on another SIM than the one in use, whose
+  storage is not the one read (*Each message by the SIM it came in on*, above): the file holds at
+  most what the storages can and the parts whose SIM is remembered, and is rewritten whole.
 - **The tray says who wrote** (decided 2026-10-04): a notification with the sender alone; the text
   only in the window. Windows keeps the sender in its notification history, for the same Windows
   account that can open the window anyway.

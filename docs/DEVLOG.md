@@ -25,6 +25,18 @@ which says so without telling which message is whose.
   message of a SIM not there now — a deleted profile, another physical SIM — or not known to be
   there is listed with a note naming that SIM, a deleted profile by its name as it was last:
   hidden, it would hold its place in the storage for good.
+- **A message stays new across a switch.** What is new was kept while the storage listed it, and
+  another SIM's storage doesn't list it: a message not opened lost its mark at the first switch.
+  A part that came in on another SIM than the one in use stays new though not listed; while the
+  SIM in use can't be identified, every part whose SIM is known stays new.
+
+A targeted review of the change (one pass: it hides messages, and touches the worker's cycle)
+found two; fixed, with tests:
+- **Another SIM found by a pass empties the list and reads it again**, not only the app's own
+  switches: a SIM swapped with the port open, or a profile switched by another program, left the
+  other SIM's list shown until the storage's count changed.
+- **A reading with the SIM in use not identified keeps other SIMs' messages new**: it dropped the
+  mark of every part it didn't list.
 
 On the device, before this: `+ICCID` on the eUICC's slot answers the enabled profile's ICCID, as
 lpac lists it, at the first pass after each switch (AT-COMMANDS §8, question 8); each SIM's APN
