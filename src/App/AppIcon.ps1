@@ -150,6 +150,23 @@ function Export-AppIcon {
     }
 }
 
+function New-AppNoticeIcon {
+    # The app's icon for its tray notifications, large - the largest size System.Drawing reads from
+    # it, 64 pixels; Windows wants the system's large icon size at least (NIIF_LARGE_ICON) -:
+    # Windows shows it in the notification (Show-TrayNotice). The caller disposes it.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Creates an in-memory icon; changes no system state.')]
+    param()
+
+    $stream = [System.IO.MemoryStream]::new([byte[]](Get-AppIconData))
+    try {
+        [System.Drawing.Icon]::new($stream, [System.Drawing.Size]::new(256, 256))
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 function New-AppIconImage {
     # The app's icon for a WPF window: an image whose decoder holds every size, among which WPF
     # picks the title bar's and the taskbar's.

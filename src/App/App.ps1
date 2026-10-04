@@ -106,8 +106,9 @@ function Show-AppNotice {
     }
     $app.Shown = @{ MessageId = $decision.MessageId; UsageId = $decision.UsageId }
     $app.NoticeKind = $decision.Notice.Kind
-    $icon = if ($decision.Notice.Kind -eq 'Quota') { [System.Windows.Forms.ToolTipIcon]::Warning } else { [System.Windows.Forms.ToolTipIcon]::Info }
-    $app.Tray.ShowBalloonTip(10000, $decision.Notice.Title, $decision.Notice.Text, $icon)
+    # The app's icon in it; the standard one where Windows takes no icon of the app's.
+    $fallback = if ($decision.Notice.Kind -eq 'Quota') { [System.Windows.Forms.ToolTipIcon]::Warning } else { [System.Windows.Forms.ToolTipIcon]::Info }
+    [void](Show-TrayNotice -NotifyIcon $app.Tray -Title $decision.Notice.Title -Text $decision.Notice.Text -Icon $app.NoticeIcon -Fallback $fallback -Confirm:$false)
 }
 
 function Stop-App {
@@ -393,9 +394,11 @@ function Start-Fm350App {
         TrayState     = @{}
         ShownVersion  = $null
         ShownWorker   = $null
-        # The tray notices shown (Get-TrayNotice's Ids), and the kind of the last one.
+        # The tray notices shown (Get-TrayNotice's Ids), the kind of the last one, and the icon
+        # they carry (New-AppNoticeIcon), disposed on the way out.
         Shown         = @{}
         NoticeKind    = $null
+        NoticeIcon    = $null
         LastTick      = $null
         ResumedAt     = [Environment]::TickCount64
     }
@@ -410,6 +413,7 @@ function Start-Fm350App {
         $identity = if ($Simulated) { $script:SimulatedAppUserModelId } else { $script:AppUserModelId }
         [void](New-MainWindow -Send { param($kind, $parameter) Send-AppCommand -Kind $kind -Parameter $parameter } -AppUserModelId $identity)
         $script:App.Tray = New-AppTray
+        $script:App.NoticeIcon = New-AppNoticeIcon
         Start-AppWorker
         Update-App
         $script:App.Tray.Visible = $true
@@ -434,6 +438,9 @@ function Start-Fm350App {
         }
         if ($app.TrayState['Handle']) {
             Remove-TrayIconHandle -Handle $app.TrayState['Handle'] -Confirm:$false
+        }
+        if ($app.NoticeIcon) {
+            $app.NoticeIcon.Dispose()
         }
         if ($script:MainWindow) {
             $script:MainWindow.Exiting = $true

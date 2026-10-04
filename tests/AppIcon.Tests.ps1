@@ -122,3 +122,16 @@ Describe 'The taskbar identity' {
         }
     }
 }
+
+Describe 'The notifications'' icon' {
+    It 'is the app''s, large, and gives its handle back' {
+        $before = Get-GuiResourceCount
+        foreach ($i in 1..20) {
+            $icon = & (Get-Module FibocomFm350.App) { New-AppNoticeIcon }
+            $icon.Width | Should -BeGreaterOrEqual 32 -Because 'Windows wants the system''s large icon size (NIIF_LARGE_ICON)'
+            $icon.Handle | Should -Not -Be ([System.IntPtr]::Zero)
+            $icon.Dispose()
+        }
+        (Get-GuiResourceCount).Gdi - $before.Gdi | Should -BeLessOrEqual 2 -Because 'each icon is released'
+    }
+}

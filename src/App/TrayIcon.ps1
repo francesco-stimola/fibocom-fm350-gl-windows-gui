@@ -15,6 +15,64 @@ public static extern uint GetGuiResources(IntPtr hProcess, uint uiFlags);
 '@
 }
 
+# A tray notification with an icon of the app's own (Shell_NotifyIcon, NOTIFYICONDATAW): NIF_INFO
+# with NIIF_USER and NIIF_LARGE_ICON, the icon in hBalloonIcon, sent with NIM_MODIFY to the
+# notification area icon a WinForms NotifyIcon added (AT-COMMANDS section 11.2).
+if (-not ('FibocomFm350.TrayNotice' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace FibocomFm350 {
+    public static class TrayNotice {
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct NotifyIconData {
+            public int cbSize;
+            public IntPtr hWnd;
+            public int uID;
+            public int uFlags;
+            public int uCallbackMessage;
+            public IntPtr hIcon;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string szTip;
+            public int dwState;
+            public int dwStateMask;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string szInfo;
+            public int uTimeoutOrVersion;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string szInfoTitle;
+            public int dwInfoFlags;
+            public Guid guidItem;
+            public IntPtr hBalloonIcon;
+        }
+
+        private const int NimModify = 0x1;
+        private const int NifInfo = 0x10;
+        private const int NiifUser = 0x4;
+        private const int NiifLargeIcon = 0x20;
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool Shell_NotifyIconW(int message, ref NotifyIconData data);
+
+        // Shows the notification on the icon (window, id) with the given icon; false when
+        // Windows refuses it.
+        public static bool Show(IntPtr window, int id, string title, string text, IntPtr icon) {
+            NotifyIconData data = new NotifyIconData();
+            data.cbSize = Marshal.SizeOf(typeof(NotifyIconData));
+            data.hWnd = window;
+            data.uID = id;
+            data.uFlags = NifInfo;
+            data.szTip = string.Empty;
+            data.szInfo = text;
+            data.szInfoTitle = title;
+            data.dwInfoFlags = NiifUser | NiifLargeIcon;
+            data.hBalloonIcon = icon;
+            return Shell_NotifyIconW(NimModify, ref data);
+        }
+    }
+}
+'@
+}
+
 # The color of each tone (Resolve-TrayIcon): green online, amber on its way, red when the user must
 # act, grey without a modem or a worker.
 $script:ToneColors = @{
@@ -154,6 +212,70 @@ function Remove-TrayIconHandle {
     if ($Handle -ne [System.IntPtr]::Zero -and $PSCmdlet.ShouldProcess("icon handle $Handle", 'Destroy')) {
         [void][FibocomFm350.NativeMethods]::DestroyIcon($Handle)
     }
+}
+
+function Get-TrayNoticeTarget {
+    # The window and the id Windows knows a WinForms NotifyIcon's icon by - private to the
+    # NotifyIcon, read by reflection -, or $null for anything else, or a NotifyIcon of a .NET that
+    # keeps them otherwise.
+    param([object] $NotifyIcon)
+
+    if ($NotifyIcon -isnot [System.Windows.Forms.NotifyIcon]) {
+        return $null
+    }
+    $flags = [System.Reflection.BindingFlags]'NonPublic, Instance'
+    $windowField = [System.Windows.Forms.NotifyIcon].GetField('_window', $flags)
+    $idField = [System.Windows.Forms.NotifyIcon].GetField('_id', $flags)
+    if (-not $windowField -or -not $idField) {
+        return $null
+    }
+    $window = $windowField.GetValue($NotifyIcon)
+    if (-not $window -or -not $window.PSObject.Properties['Handle'] -or $window.Handle -eq [System.IntPtr]::Zero) {
+        return $null
+    }
+    [pscustomobject]@{ Window = $window.Handle; Id = [int]$idField.GetValue($NotifyIcon) }
+}
+
+function Show-TrayNotice {
+    <#
+    .SYNOPSIS
+        Shows a tray notification with the app's own icon in it.
+    .DESCRIPTION
+        Windows heads a tray notification with the program that sends it: with PowerShell from
+        its MSIX package, PowerShell, whatever AppUserModelID the process or a shortcut carries
+        (AT-COMMANDS section 11.2). The app's icon goes in the notification itself (-Icon, large),
+        through the window and id of -NotifyIcon's own tray icon. Where those can't be reached,
+        or Windows refuses, the standard notification with -Fallback's icon is shown instead.
+        Returns 'Own' or 'Standard'.
+    .EXAMPLE
+        Show-TrayNotice -NotifyIcon $tray -Title 'New message' -Text 'From Info' -Icon $noticeIcon
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [object] $NotifyIcon,
+
+        [Parameter(Mandatory)]
+        [string] $Title,
+
+        [Parameter(Mandatory)]
+        [string] $Text,
+
+        [System.Drawing.Icon] $Icon,
+
+        [System.Windows.Forms.ToolTipIcon] $Fallback = 'Info'
+    )
+
+    if (-not $PSCmdlet.ShouldProcess('the tray', 'Show a notification')) {
+        return
+    }
+    $target = Get-TrayNoticeTarget -NotifyIcon $NotifyIcon
+    if ($target -and $Icon -and [FibocomFm350.TrayNotice]::Show($target.Window, $target.Id, $Title, $Text, $Icon.Handle)) {
+        return 'Own'
+    }
+    $NotifyIcon.ShowBalloonTip(10000, $Title, $Text, $Fallback)
+    'Standard'
 }
 
 function Set-TrayIcon {

@@ -119,7 +119,7 @@ Describe 'Tray notifications' {
             param($snapshot)
             $tray = [pscustomobject]@{ Visible = $false; Shown = [System.Collections.Generic.List[string]]::new() }
             $tray | Add-Member -MemberType ScriptMethod -Name ShowBalloonTip -Value { param($timeout, $title, $text, $icon) $this.Shown.Add("$timeout|$title|$text|$icon") }
-            $script:App = @{ Tray = $tray; Shown = @{}; NoticeKind = $null }
+            $script:App = @{ Tray = $tray; Shown = @{}; NoticeKind = $null; NoticeIcon = $null }
             try {
                 Show-AppNotice -Snapshot $snapshot
                 $hidden = $tray.Shown.Count

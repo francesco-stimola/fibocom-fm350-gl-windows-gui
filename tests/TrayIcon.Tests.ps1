@@ -129,3 +129,46 @@ Describe 'Set-TrayIcon' {
         $script:state['Handle'] | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Tray notifications with the app''s icon' {
+    BeforeAll {
+        $script:app = Get-Module FibocomFm350.App
+    }
+
+    It 'reaches the window and the id Windows knows a tray icon by, once it shows' {
+        $tray = [System.Windows.Forms.NotifyIcon]::new()
+        try {
+            & $script:app { param($t) Get-TrayNoticeTarget -NotifyIcon $t } $tray | Should -BeNullOrEmpty -Because 'an icon not shown has no window yet'
+            $tray.Icon = [System.Drawing.SystemIcons]::Application
+            $tray.Visible = $true
+            $target = & $script:app { param($t) Get-TrayNoticeTarget -NotifyIcon $t } $tray
+            $target | Should -Not -BeNullOrEmpty -Because 'this .NET keeps the icon''s window and id where the app reads them'
+            $target.Window | Should -Not -Be ([System.IntPtr]::Zero)
+            $target.Id | Should -BeGreaterOrEqual 0
+        }
+        finally {
+            $tray.Visible = $false
+            $tray.Dispose()
+        }
+    }
+
+    It 'reaches nothing on what is not a tray icon' {
+        & $script:app { Get-TrayNoticeTarget -NotifyIcon ([pscustomobject]@{ Visible = $true }) } | Should -BeNullOrEmpty
+    }
+
+    It 'shows the standard notification, with its icon, where it can''t give one of the app''s' {
+        $tray = [pscustomobject]@{ Shown = [System.Collections.Generic.List[string]]::new() }
+        $tray | Add-Member -MemberType ScriptMethod -Name ShowBalloonTip -Value { param($timeout, $title, $text, $icon) $this.Shown.Add("$timeout|$title|$text|$icon") }
+        $how = & $script:app { param($t) Show-TrayNotice -NotifyIcon $t -Title 'Data quota' -Text '80%' -Fallback Warning -Confirm:$false } $tray
+
+        $how | Should -Be 'Standard'
+        $tray.Shown | Should -Be @('10000|Data quota|80%|Warning')
+    }
+
+    It 'shows nothing under -WhatIf' {
+        $tray = [pscustomobject]@{ Shown = 0 }
+        $tray | Add-Member -MemberType ScriptMethod -Name ShowBalloonTip -Value { param($timeout, $title, $text, $icon) $this.Shown = "$timeout$title$text$icon".Length }
+        & $script:app { param($t) Show-TrayNotice -NotifyIcon $t -Title 'Title' -Text 'Text' -WhatIf } $tray | Should -BeNullOrEmpty
+        $tray.Shown | Should -Be 0
+    }
+}
