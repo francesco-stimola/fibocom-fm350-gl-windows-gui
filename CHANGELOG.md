@@ -10,8 +10,9 @@ All notable changes to this project are documented here. The format follows
 ## [1.2.0] - 2026-10-04
 
 ### Added
-- eSIM, on modules with an embedded SIM: an *eSIM* tab with the SIM slot in use — in the window's
-  top panel too — and the switch to the other slot; the EID, with *Copy*; the profiles, enabled,
+- eSIM, on modules with an embedded SIM: an *eSIM* tab with the SIM in use — in the window's top
+  panel too —; *Use the eSIM (slot 2)…* there and *Use the physical SIM (slot 1)…* on the *SIM*
+  tab, the button of the SIM in use saying so; the EID, with *Copy*; the profiles, enabled,
   disabled, renamed and deleted — a deletion confirmed by typing the profile's name —; a profile
   downloaded from its activation code, typed or read from the image of its QR code. The providers'
   notifications are sent by themselves. An eSIM with no profile enabled says so in the tray and the
@@ -19,6 +20,11 @@ All notable changes to this project are documented here. The format follows
   enabled, deleted and downloaded again. The activation code — and, to rename a profile, its
   ICCID — reach lpac on its command line: never in the app's log, but recorded on a computer that
   records processes' command lines.
+- Each SIM keeps its own APN settings — the APN, its type, the authentication, the user and the
+  password: the physical SIM and each eSIM profile connect with their own, with nothing to change
+  by hand at a switch. The *Connection* tab says they are the SIM in use's. The first SIM the app
+  identifies takes those saved before; another starts with its subscription's own APN. Nothing of
+  a deleted eSIM profile is kept.
 - The release zip carries lpac 2.2.1 (AGPL-3.0), which manages the eSIM, and ZXing.Net 0.16.11
   (Apache-2.0), which reads QR codes, each with its license; lpac's source is attached to the
   release. The app makes lpac's HTTPS requests itself, each server's certificate checked against
@@ -27,6 +33,8 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 - A silent message — one the network asks never to show — is listed in the *Messages* tab, marked
   and without its text, so it can be deleted: it takes a place on the SIM. It is never announced.
+- The *Messages* tab names the SIM in use: the modem uses one at a time, a message goes out from
+  it, and the list is what the modem keeps for its slot.
 
 ## [1.1.0] - 2026-10-04
 

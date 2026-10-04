@@ -4,6 +4,59 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-04 — Decided: each SIM its own APN settings; a button for each SIM
+
+The modem uses one SIM at a time, and a slot switch or an eSIM profile changes the operator: one
+APN for every SIM sent the physical SIM's subscription the eSIM's APN at the next connect. The
+maintainer's decisions, for 1.2.0:
+- **The APN settings are each SIM's** — the APN, its PDP type, the authentication, the user and
+  the password: an operator gives them together (ARCHITECTURE → *Settings and logs*). DNS, the
+  metric and the network mode stay every SIM's. A SIM is told by a SHA-256 of its ICCID,
+  encrypted with DPAPI — a plain digest of an ICCID can be found back by trying them —, without
+  the filler `F` that `+ICCID` carries and lpac's list doesn't; its password in a file named by a
+  random Id. Rejected: one APN per slot (two eSIM profiles share a slot); keeping the ICCID's
+  digest in `settings.json` (an identifier by another name).
+- **The ICCID is read at every pass** once the SIM is ready, one command: a SIM changes while the
+  port stays open — a switch, a profile, a SIM swapped. One that can't be read leaves the context
+  unknown: never connected with another SIM's settings.
+- **A SIM seen for the first time starts with its subscription's APN** (the defaults), which works
+  where the network gives its internet APN, and the window asks for one where it doesn't. The APN
+  settings saved before go to the first SIM identified — the one they were most likely saved for
+  —, and `settings.json` keeps the defaults from then on. Rejected: a default the new SIMs copy
+  (the problem again, for every SIM after the first).
+- **The window saves the APN settings for the SIM it showed them for**: the snapshot carries a
+  random token per SIM in use, never its fingerprint, and a save without the current one changes
+  no SIM's settings. The form takes the new SIM's settings when another is in use.
+- **A deleted eSIM profile's settings are forgotten**, with its password: nothing of a profile
+  removed is kept. A profile downloaded again starts with its subscription's APN.
+- **A button for each SIM**, on the tab of each — *Use the physical SIM (slot 1)…* on *SIM*, *Use
+  the eSIM (slot 2)…* on *eSIM* — instead of *Use slot N…*: the button of the SIM in use says
+  *In use* and is off, so what is in use shows at a glance; both tabs say in the same words that
+  the modem uses one SIM at a time. The slots as on the FM350-GL: the physical SIM's first, the
+  eUICC's second (AT-COMMANDS §8).
+- **The *Messages* tab names the SIM in use**, above the list and by *Send*: each slot shows a
+  storage of its own (AT-COMMANDS §9), and a message carries no trace of the SIM that received it.
+  Whether two eSIM profiles share their slot's storage is left open (AT-COMMANDS §9, question 6):
+  tagging each message with the SIM in use when it arrives would cover only those that arrive
+  while the app runs.
+
+A targeted review of the change (one pass, `CLAUDE.md`: it touches the connect path) found four;
+fixed, with tests:
+- **The old APN settings go to a SIM once**: a move run again — after a save that failed halfway
+  left the worker's view behind — replaced the SIM's own settings with the defaults the settings
+  file held by then. The move does nothing once the file of each SIM's settings is there; a save
+  checks everything, the password's characters too, before its first write, and the worker reads
+  its settings again after any save.
+- **A settings file that can't be read is not moved**: read as the defaults, it gave the first
+  SIM no APN for good. The move throws, and runs again at the next pass.
+- **A save that doesn't touch the APN settings leaves them out** — the *Data* tab's, the
+  *Connection* tab's with no SIM identified —: with them, a SIM that changed in between refused
+  the cycle day or the DNS.
+- **A ready SIM whose ICCID can't be read is said in the log**, once: its context is left as it
+  is. Whether `+ICCID` answers the enabled profile's ICCID on the eUICC's slot, right after a
+  switch too, is for the device session before the tag (AT-COMMANDS §8, question 8); a check
+  against lpac's list of profiles is added only if the modem's answer proves late.
+
 ## 2026-10-04 — Decided: the codes on lpac's command line, said
 
 The open decision from M9's review, taken by the maintainer: **accepted, and said** — in

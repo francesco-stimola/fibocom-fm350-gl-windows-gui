@@ -780,11 +780,13 @@ comes back in a later snapshot, so the window never waits on the modem or the sy
   the connection), and installing a driver version the app doesn't know. A version it knows is
   installed at *Install*. The eSIM's own (M9) are in *eSIM*.
 - **Tabs**: *Signal* — LTE and NR quality, serving and neighbour cells, carrier aggregation
-  (uplink values only for a carrier that carries uplink); *SIM* — its state and attempts left, the
-  stored PIN (store, forget), removing the PIN from the SIM; *Network* (M5) — the modem's mode and
-  bands as read, the mode to keep (or *As the modem has it*), a checkbox per band the modem
-  supports with *every band* per RAT, *Apply*, and how the last choice went (on trial until when,
-  kept, undone, bands the modem leaves out); *Connection* — the settings, checked as typed with
+  (uplink values only for a carrier that carries uplink); *SIM* — *Use the physical SIM (slot 1)…*
+  (M9, *eSIM*), its state and attempts left, the stored PIN (store, forget), removing the PIN from
+  the SIM; *Network* (M5) — the modem's mode and bands as read, the mode to keep (or *As the modem
+  has it*), a checkbox per band the modem supports with *every band* per RAT, *Apply*, and how the
+  last choice went (on trial until when, kept, undone, bands the modem leaves out); *Connection* —
+  the settings — the APN ones the SIM in use's, which the tab says above them and keeps closed
+  while no SIM is identified (*Settings and logs*) —, checked as typed with
   the same validation the worker applies, and encrypted DNS against what the snapshot says Windows
   can do — the servers it knows a template for, whether it has the per-interface API —; whether
   the adapter's DNS is encrypted now, and for which servers; saving them never changes the network
@@ -1025,7 +1027,11 @@ runs as an external process, one invocation per operation (facts: `AT-COMMANDS.m
   same tag is attached to the GitHub Release as the corresponding source. The binaries are never
   committed to git; a `lpac` folder in `src/` is never packaged.
 - **The window's *eSIM* tab** (decided 2026-10-04): the SIM in use — also in the top panel — and
-  *Use slot N…*; the EID with *Copy*; the chip's facts and the notifications waiting; the profiles,
+  *Use the eSIM (slot 2)…*, whose twin *Use the physical SIM (slot 1)…* is on the *SIM* tab: the
+  two exclude each other — the one whose SIM is in use says *In use* and is off —, and both tabs
+  say, in the same words, that the modem uses one SIM at a time and that a switch drops the
+  connection for a moment. The physical SIM in slot 1 and the eUICC in slot 2, as on the FM350-GL
+  (`AT-COMMANDS.md` §8); the EID with *Copy*; the chip's facts and the notifications waiting; the profiles,
   the enabled one in bold, with *Enable…*, *Disable…*, *Delete…* and a nickname to *Rename*; *Read
   again*; *Download a profile* from an activation code typed or read from the image of its QR code,
   with a confirmation code. Slots are counted from 1, as the modem names them (`SUB1`, `SUB2`).
@@ -1066,6 +1072,12 @@ What a prepaid or capped SIM needs day to day (facts: `AT-COMMANDS.md` §9).
   send in surrogate pairs come out whole, and a pair is never split between two parts. Sending:
   GSM 7-bit when the alphabet holds every character, else UCS2; the SIM's service centre; no
   validity period (the centre's own); parts joined by a one-octet reference.
+- **Which SIM** (decided 2026-10-04): the modem uses one SIM at a time, so a message goes out from
+  the SIM in use, and the list is what the modem stores for the slot in use — each slot has a
+  storage of its own (`AT-COMMANDS.md` §9). The *Messages* tab names the SIM in use above the list,
+  and says by *Send* that the message goes out from it and where to put the other one in use. A
+  message received carries no trace of the SIM that received it; whether two eSIM profiles share
+  their slot's storage is not known yet (§9).
 - **The modem stores, then announces.** Once the SIM is ready on a newly opened port, the worker
   sets `AT+CNMI=2,1,0,0,0`, so that a new message is saved on the modem and announced with
   `+CMTI: <storage>,<index>` — on the MD AT port, data up or not (`AT-COMMANDS.md` §9). Notices start
@@ -1160,7 +1172,8 @@ values of the same shape in fixtures.
 - Settings: a JSON file under `%APPDATA%\fibocom-fm350-gl-windows-gui\`. The elevated scheduled
   task runs as the same user, so the path is the same elevated or not. `Apn` (empty: the
   subscription's own), `PdpType` (`IP` or `IPV4V6`), `ApnAuthentication` (`None`, `PAP`, `CHAP`)
-  with `ApnUser`, `DnsServers` (the override; empty keeps the operator's) with, from M7,
+  with `ApnUser` — from 1.2.0 each SIM's own, kept apart (below) —, `DnsServers` (the override;
+  empty keeps the operator's) with, from M7,
   `DnsOverHttps` (off by default; on needs the override, or a template that names its server),
   `DohTemplate` (empty: the template Windows knows for each server — *Network configuration*) and
   `DohRefreshMinutes` (60: how often a server the template names by a name is looked up again;
@@ -1178,6 +1191,28 @@ values of the same shape in fixtures.
   a stored password that can't be read (another Windows user, a damaged file) is never replaced by
   an empty one: the pass stops before activating (`ApnPasswordUnreadable`, blocked) and the
   window asks for it again (decided 2026-10-01).
+- **Each SIM keeps its own APN settings** (decided 2026-10-04): `Apn`, `PdpType`,
+  `ApnAuthentication`, `ApnUser` and the APN password are the SIM in use's — an operator gives
+  them together, and a slot switch or an eSIM profile changes the operator. They are kept in
+  `sim-settings.json`, an entry per SIM, the SIM told by a SHA-256 of its ICCID — without the
+  filler `F`, which the modem's `+ICCID` carries and lpac's list of profiles doesn't —, encrypted
+  with DPAPI as the PIN file's is: the file holds no identifier. A SIM's password is in
+  `apn-password-<Id>.dat`, named by its entry's random Id. Every pass reads the ICCID once the SIM
+  is ready — a SIM can change while the port stays open: a slot switch, a profile, a SIM swapped
+  — and connects with that SIM's settings; an ICCID that can't be read leaves the context unknown
+  (`ContextUnknown`), no step is taken on it, and the log says so once. A SIM seen for the first
+  time connects with the subscription's own APN until the user gives one; the APN settings saved
+  before 1.2.0, in `settings.json`, go to the first SIM identified, once — the password file
+  copied as it is, so one that can't be read stays so; a `settings.json` that can't be read is
+  tried again at the next pass, never taken for one without APN settings —, and `settings.json`
+  keeps the defaults from then on. The window shows and saves the SIM in use's: the snapshot
+  carries a random token for it — never its fingerprint —, which a save carries back; none is
+  saved for a SIM that changed since (`SimChanged`) or with none identified (`NoSim`), and the
+  form takes the APN settings again when another SIM is in use. A save that doesn't touch them —
+  the *Data* tab's, the *Connection* tab's with no SIM identified — leaves them out. Everything
+  is checked before the first write, and the worker reads its settings again after a save, even
+  one that failed halfway. A deleted eSIM profile's are forgotten. DNS, the metric, the network
+  mode and the rest stay every SIM's.
 - Logs: rolling files under `%LOCALAPPDATA%\fibocom-fm350-gl-windows-gui\logs\`, one per day,
   the 14 newest kept, at most 10 MB a day (then one line says so). **Every line is redacted on its
   way in** (`ConvertTo-RedactedText`): no IMEI, IMSI, ICCID, EID, MSISDN or other phone numbers,
