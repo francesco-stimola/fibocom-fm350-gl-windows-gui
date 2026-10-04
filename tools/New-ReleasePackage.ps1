@@ -11,9 +11,9 @@
     CHANGELOG.md. No folder at the top of the zip: Explorer's "Extract All" puts it in a folder
     named after the zip.
 
-    lpac goes in the zip's 'lpac' folder (ARCHITECTURE -> eSIM): its Windows build as the pinned
-    release publishes it (-LpacPin, tools/Lpac.psd1) - lpac.exe, libcurl.dll, its README and
-    licenses -, and SOURCE.txt, which says where its source is. Its source archive is written
+    lpac goes in the zip's 'lpac' folder (ARCHITECTURE -> eSIM): the files the pin lists (-LpacPin,
+    tools/Lpac.psd1) from its pinned Windows build - lpac.exe, its README and licenses -, and
+    SOURCE.txt, which says where its source is. Its source archive is written
     beside the zip, for the release to carry. Each of the two files is taken from -LpacCache, or
     downloaded there from the pinned address, and used only once its SHA-256 matches the pin; a
     file that doesn't match is deleted and nothing is built. A 'lpac' folder in src/ is never
@@ -115,12 +115,17 @@ function Get-ReleaseFile {
 }
 
 function Test-LpacPin {
-    # Whether a pin of lpac's release is complete: a version, and for its build and its source a
-    # file name, an https address and a SHA-256. Throws on what is missing. A pure check.
+    # Whether a pin of lpac's release is complete: a version, the build's files to package -
+    # lpac.exe among them, plain names -, and for its build and its source a file name, an https
+    # address and a SHA-256. Throws on what is missing. A pure check.
     param([hashtable] $Pin)
 
     if ([string]$Pin['Version'] -notmatch '^\d+\.\d+\.\d+$') {
         throw "lpac's pin has no version."
+    }
+    $files = @($Pin['Files'])
+    if ('lpac.exe' -notin $files -or @($files | Where-Object { [string]$_ -notmatch '^[A-Za-z0-9._-]+$' -or $_ -match '^\.\.?$' }).Count -gt 0) {
+        throw "lpac's pin has no list of the build's files to package, lpac.exe among them, plain names."
     }
     foreach ($part in 'Build', 'Source') {
         $entry = $Pin[$part]
@@ -163,7 +168,7 @@ function Get-LpacSourceNote {
         'This app runs lpac to manage the profiles of an eSIM. lpac is free software: its program is'
         'under the GNU Affero General Public License v3.0 only (LICENSE-lpac), its eUICC library under'
         'the GNU Lesser General Public License v2.1 (LICENSE-libeuicc); the other LICENSE files are'
-        'those of the libraries built into it and of libcurl.'
+        'those of the libraries built into it.'
         ''
         "Its corresponding source is attached to this app's GitHub Release, beside this zip, as"
         "$($Pin.Source.Name) (SHA-256 $($Pin.Source.Sha256.ToLowerInvariant()))."
@@ -212,12 +217,13 @@ try {
     foreach ($file in $files) {
         [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.Path, $file.Entry, [System.IO.Compression.CompressionLevel]::Optimal)
     }
-    # lpac's build, its files as published, in the 'lpac' folder; a nested or climbing name is refused.
+    # The files of lpac's build the pin lists, as published, in the 'lpac' folder.
     $build = [System.IO.Compression.ZipFile]::OpenRead($lpacBuild)
     try {
-        foreach ($entry in @($build.Entries | Where-Object { $_.Name })) {
-            if ($entry.FullName -ne $entry.Name -or $entry.Name -match '[\\/]|^\.\.?$') {
-                throw "$($pin.Build.Name): an entry in a folder, $($entry.FullName); only a flat build is packaged."
+        foreach ($name in @($pin.Files)) {
+            $entry = @($build.Entries | Where-Object FullName -CEQ $name) | Select-Object -First 1
+            if (-not $entry) {
+                throw "$($pin.Build.Name) has no $name at its top."
             }
             $target = $zip.CreateEntry("$script:LpacFolder/$($entry.Name)", [System.IO.Compression.CompressionLevel]::Optimal)
             $in = $entry.Open()
