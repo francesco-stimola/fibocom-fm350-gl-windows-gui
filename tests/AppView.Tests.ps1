@@ -96,12 +96,23 @@ Describe 'Resolve-TrayIcon' {
 }
 
 Describe 'ConvertTo-TrayText' {
-    It 'says online, the technology, the operator and the RSRP' {
-        ConvertTo-TrayText -Snapshot $script:online | Should -Be 'FM350-GL: Online - 5G NSA - 001 01 - RSRP -97 dBm'
+    It 'says online, the technology, the operator and the RSRP; below, the data used' {
+        ConvertTo-TrayText -Snapshot $script:online | Should -Be "FM350-GL: Online - 5G NSA - 001 01 - RSRP -97 dBm`nData today 0 B, this cycle 0 B"
     }
 
     It 'says why when not online' {
-        ConvertTo-TrayText -Snapshot (Get-ScenarioSnapshot -Scenario PinRequired) | Should -Be 'FM350-GL: Action needed - The SIM is waiting for its PIN.'
+        ConvertTo-TrayText -Snapshot (Get-ScenarioSnapshot -Scenario PinRequired) | Should -Be "FM350-GL: Action needed - The SIM is waiting for its PIN.`nData today 0 B, this cycle 0 B"
+    }
+
+    It 'says the data used against the quota' {
+        $usage = [pscustomobject]@{
+            Today = [pscustomobject]@{ Total = 1234567890 }; Cycle = [pscustomobject]@{ Total = 14300000000 }; Quota = 50000000000
+        }
+        (ConvertTo-TrayText -Snapshot (Copy-Snapshot $script:online @{ Usage = $usage })) -split "`n" | Select-Object -Last 1 | Should -Be 'Data today 1.2 GB, this cycle 14.3 GB of 50.0 GB'
+    }
+
+    It 'says no data usage before the adapter was read' {
+        ConvertTo-TrayText -Snapshot (Copy-Snapshot $script:online @{ Usage = $null }) | Should -Be 'FM350-GL: Online - 5G NSA - 001 01 - RSRP -97 dBm'
     }
 
     It 'says when nothing is monitored' {
@@ -118,7 +129,8 @@ Describe 'ConvertTo-TrayText' {
         $radio.Operator = 'x' * 200
         $text = ConvertTo-TrayText -Snapshot (Copy-Snapshot $script:online @{ Radio = $radio })
         $text.Length | Should -Be 127
-        $text[-1] | Should -Be ([char]0x2026) -Because 'an ellipsis says it was cut'
+        ($text -split "`n")[0][-1] | Should -Be ([char]0x2026) -Because 'an ellipsis says the first line was cut'
+        ($text -split "`n")[1] | Should -Be 'Data today 0 B, this cycle 0 B' -Because 'the data used keeps its line'
     }
 }
 
@@ -678,5 +690,271 @@ Describe 'The network mode in the window and the tray' {
         # During its grace time it is only searching.
         $recovery.NextTime = $script:time
         (ConvertTo-WindowView -Snapshot $snapshot).Tone | Should -Be 'Working'
+    }
+}
+
+Describe 'The Messages tab' {
+    BeforeAll {
+        # A message as the worker's snapshot gives it.
+        function Get-TestMessage {
+            param([hashtable] $Change = @{})
+            $message = [ordered]@{
+                Fingerprints = [string[]]@('AA'); New = $false; Address = '+10000000000'; AddressType = 'International'
+                Time = [DateTimeOffset]::new(2026, 10, 4, 9, 30, 0, [timespan]::FromHours(2)); Text = 'hello'; Content = 'Text'; Class = $null
+                Waiting = $null; NationalLanguage = $false; Problem = $null; Count = 1; Missing = [int[]]@(); Complete = $true
+            }
+            foreach ($key in $Change.Keys) {
+                $message[$key] = $Change[$key]
+            }
+            [pscustomobject]$message
+        }
+
+        function Get-TestMessageList {
+            param([object[]] $Item, [int] $Used = 1, [int] $Total = 70)
+            [pscustomobject]@{ Items = [object[]]$Item; New = @($Item | Where-Object New).Count; Used = $Used; Total = $Total; Full = $Used -ge $Total }
+        }
+    }
+
+    It 'lists the messages newest first, the new ones marked, and says how full the SIM is' {
+        $view = Get-MessagesView -Snapshot $script:online
+        $view.StateText | Should -Be '4 of 70 places used on the SIM.'
+        $view.TabText | Should -Be 'Messages (2)'
+        @($view.Items | ForEach-Object From) | Should -Be @('Info', '+10000000000', 'Operator')
+        @($view.Items | ForEach-Object Marker) | Should -Be @([string][char]0x25CF, [string][char]0x25CF, '')
+        $first = $view.Items[0]
+        $first.Time | Should -Be ([DateTimeOffset]::new(2026, 10, 4, 11, 51, 0, [timespan]::FromHours(2)).ToLocalTime().ToString('yyyy-MM-dd HH:mm', [cultureinfo]::InvariantCulture))
+        $first.Header | Should -Be "From Info, $($first.Time)"
+        $first.Text | Should -Match '^Your data bundle renews .+ before showing it\.$'
+        $first.Preview.Length | Should -Be 60
+        $first.Preview[-1] | Should -Be ([char]0x2026) -Because 'a long text is cut in the list'
+        $first.Fingerprints.Count | Should -Be 2
+        $first.Key | Should -Be ($first.Fingerprints -join ',')
+        $view.CanDelete | Should -BeTrue
+        $view.CanSend | Should -BeTrue
+        $view.SendingText | Should -BeNullOrEmpty
+    }
+
+    It 'says why there are none: <Name>' -ForEach @(
+        @{ Name = 'observe-only'; Change = @{ Messages = $null; ObserveOnly = $true }; Text = 'Messages are not read while the app only observes*' }
+        @{ Name = 'no modem'; Change = @{ Messages = $null; PortName = $null }; Text = 'The modem is not connected.' }
+        @{ Name = 'the SIM not ready'; Change = @{ Messages = $null }; Text = 'Messages are read once the SIM is ready.' }
+    ) {
+        $view = Get-MessagesView -Snapshot (Copy-Snapshot $script:online $Change)
+        $view.StateText | Should -BeLike $Text
+        $view.Items.Count | Should -Be 0
+        $view.TabText | Should -Be 'Messages'
+        $view.CanSend | Should -BeFalse
+        $view.CanDelete | Should -BeFalse
+    }
+
+    It 'says an empty SIM, and a full one' {
+        (Get-MessagesView -Snapshot (Copy-Snapshot $script:online @{ Messages = (Get-TestMessageList -Item @() -Used 0) })).StateText | Should -Be '0 of 70 places used on the SIM. No messages on the SIM.'
+        $full = Get-MessagesView -Snapshot (Copy-Snapshot $script:online @{ Messages = (Get-TestMessageList -Item @(Get-TestMessage) -Used 70) })
+        $full.StateText | Should -Be '70 of 70 places used on the SIM. The SIM is full: new messages can''t be stored until some are deleted.'
+    }
+
+    It 'says what a message shows instead of text, and what it lacks: <Name>' -ForEach @(
+        @{ Name = '8-bit data'; Change = @{ Text = $null; Content = 'Binary' }; Text = 'This message carries data, not text.'; Note = $null }
+        @{ Name = 'compressed'; Change = @{ Text = $null; Content = 'Compressed' }; Text = 'This message is compressed: the app can''t show it.'; Note = $null }
+        @{ Name = 'malformed'; Change = @{ Text = $null; Content = $null; Problem = 'Malformed' }; Text = 'This message can''t be read.'; Note = $null }
+        @{ Name = 'malformed in its first part, the others read'; Change = @{ Text = 'the rest'; Problem = 'Malformed' }; Text = 'This message can''t be read.'; Note = $null }
+        @{ Name = 'parts missing'; Change = @{ Text = "one $([char]0x2026)"; Count = 3; Missing = [int[]]@(2, 3); Complete = $false }; Text = "one $([char]0x2026)"; Note = 'Parts not received (yet): 2, 3.' }
+        @{ Name = 'a national language table'; Change = @{ NationalLanguage = $true }; Text = 'hello'; Note = 'It uses a national language table the app doesn''t have: some characters may be wrong.' }
+    ) {
+        $view = Get-MessagesView -Snapshot (Copy-Snapshot $script:online @{ Messages = (Get-TestMessageList -Item @(Get-TestMessage -Change $Change)) })
+        $view.Items[0].Text | Should -Be $Text
+        $view.Items[0].Note | Should -Be $Note
+    }
+
+    It 'shows the time where the user is, whatever zone the centre stamped' {
+        $stamped = [DateTimeOffset]::new(2026, 10, 4, 9, 30, 0, [timespan]::FromHours(-7))
+        $view = Get-MessagesView -Snapshot (Copy-Snapshot $script:online @{ Messages = (Get-TestMessageList -Item @(Get-TestMessage -Change @{ Time = $stamped })) })
+        $view.Items[0].Time | Should -Be $stamped.ToLocalTime().ToString('yyyy-MM-dd HH:mm', [cultureinfo]::InvariantCulture)
+        if ([TimeZoneInfo]::Local.GetUtcOffset($stamped) -ne $stamped.Offset) {
+            $view.Items[0].Time | Should -Not -Be '2026-10-04 09:30'
+        }
+    }
+
+    It 'shows a text over several lines on one line in the list' {
+        $view = Get-MessagesView -Snapshot (Copy-Snapshot $script:online @{ Messages = (Get-TestMessageList -Item @(Get-TestMessage -Change @{ Text = "first`r`nsecond" })) })
+        $view.Items[0].Preview | Should -Be 'first second'
+        $view.Items[0].Text | Should -Be "first`r`nsecond"
+    }
+
+    It 'says a message is going out, and offers nothing meanwhile' {
+        $view = Get-MessagesView -Snapshot (Copy-Snapshot $script:online @{ MessageOperation = 'Sending' })
+        $view.SendingText | Should -Be 'Sending the message...'
+        $view.CanSend | Should -BeFalse
+        $view.CanDelete | Should -BeFalse
+    }
+
+    It 'names the newest message sent' {
+        $time = [DateTimeOffset]::Now
+        $results = @(
+            [pscustomobject]@{ Id = '1'; Kind = 'SendMessage'; Result = 'Sent'; Time = $time }
+            [pscustomobject]@{ Id = '2'; Kind = 'SendMessage'; Result = 'Failed'; Time = $time }
+            [pscustomobject]@{ Id = '3'; Kind = 'OpenMessage'; Result = 'Done'; Time = $time }
+        )
+        (Get-MessagesView -Snapshot (Copy-Snapshot $script:online @{ Results = $results })).SentId | Should -Be '1'
+        (Get-MessagesView -Snapshot $script:online).SentId | Should -BeNullOrEmpty
+    }
+
+    It 'shows nothing without a snapshot' {
+        $view = Get-MessagesView -Snapshot $null
+        $view.StateText | Should -BeNullOrEmpty
+        $view.Items.Count | Should -Be 0
+        $view.CanSend | Should -BeFalse
+    }
+
+    It 'is the window''s Messages tab' {
+        (ConvertTo-WindowView -Snapshot $script:online).Messages.TabText | Should -Be 'Messages (2)'
+    }
+}
+
+Describe 'The count of a message being written' {
+    It '<Name>' -ForEach @(
+        @{ Name = 'nothing for no text'; Text = ''; Expected = $null }
+        @{ Name = 'GSM 7-bit, one part'; Text = 'hello'; Expected = 'Characters: 5 - parts: 1' }
+        @{ Name = 'an escaped character counting two'; Text = "$([char]0x20AC)"; Expected = 'Characters: 2 - parts: 1' }
+        @{ Name = 'two parts past 160'; Text = ('x' * 161); Expected = 'Characters: 161 - parts: 2' }
+        @{ Name = 'UCS2 for a character the alphabet lacks'; Text = "$([char]0x0416)abc"; Expected = 'Characters: 4 - parts: 1 (with special characters, 70 per part)' }
+        @{ Name = 'too long'; Text = ('x' * 40000); Expected = 'Too long: a message has at most 255 parts.' }
+    ) {
+        & (Get-Module FibocomFm350.App) { param($text) Get-MessageCountText -Text $text } $Text | Should -Be $Expected
+    }
+}
+
+Describe 'The Data tab' {
+    BeforeAll {
+        function Get-TestUsage {
+            param([uint64[]] $Today, [uint64[]] $Cycle, $Quota = $null, $Percent = $null, $Threshold = $null)
+            [pscustomobject]@{
+                Today      = [pscustomobject]@{ Received = $Today[0]; Sent = $Today[1]; Total = $Today[0] + $Today[1] }
+                Cycle      = [pscustomobject]@{ Received = $Cycle[0]; Sent = $Cycle[1]; Total = $Cycle[0] + $Cycle[1] }
+                CycleStart = [datetime]::new(2026, 10, 1)
+                CycleEnd   = [datetime]::new(2026, 11, 1)
+                Quota      = $Quota
+                Percent    = $Percent
+                Threshold  = $Threshold
+            }
+        }
+    }
+
+    It 'says today and the cycle, with its first and last day, and no quota' {
+        $usage = Get-TestUsage -Today 1000000, 200000 -Cycle 14000000000, 300000000
+        $view = Get-UsageView -Snapshot (Copy-Snapshot $script:online @{ Usage = $usage })
+        $view.TodayText | Should -Be 'Today: 1.2 MB (received 1.0 MB, sent 200.0 kB)'
+        $view.CycleText | Should -Be 'This cycle, from 2026-10-01 to 2026-10-31: 14.3 GB (received 14.0 GB, sent 300.0 MB)'
+        $view.QuotaText | Should -Be 'No quota set.'
+        $view.Percent | Should -BeNullOrEmpty
+        $view.Warning | Should -BeFalse
+    }
+
+    It 'says the quota and the share used, at most a full bar, and a threshold reached' {
+        $usage = Get-TestUsage -Today 0, 0 -Cycle 14000000000, 300000000 -Quota ([uint64]10000000000) -Percent 143.0 -Threshold 100
+        $view = Get-UsageView -Snapshot (Copy-Snapshot $script:online @{ Usage = $usage })
+        $view.QuotaText | Should -Be 'Quota: 14.3 GB of 10.0 GB used (143%)'
+        $view.Percent | Should -Be 100
+        $view.Warning | Should -BeTrue
+        $below = Get-UsageView -Snapshot (Copy-Snapshot $script:online @{ Usage = (Get-TestUsage -Today 0, 0 -Cycle 500000000, 0 -Quota ([uint64]10000000000) -Percent 5.0) })
+        $below.Percent | Should -Be 5
+        $below.Warning | Should -BeFalse
+    }
+
+    It 'says nothing is counted before the adapter was read' {
+        $view = Get-UsageView -Snapshot (Copy-Snapshot $script:online @{ Usage = $null })
+        $view.TodayText | Should -Be 'Nothing counted yet: the modem''s network adapter has not been read.'
+        $view.CycleText | Should -BeNullOrEmpty
+    }
+
+    It 'writes <Bytes> bytes as <Text>, whatever the culture' -ForEach @(
+        @{ Bytes = 0; Text = '0 B' }
+        @{ Bytes = 999; Text = '999 B' }
+        @{ Bytes = 1000; Text = '1.0 kB' }
+        @{ Bytes = 999949; Text = '999.9 kB' }
+        @{ Bytes = 999950; Text = '1.0 MB' }
+        @{ Bytes = 1234567890; Text = '1.2 GB' }
+        @{ Bytes = 12000000000000; Text = '12.0 TB' }
+    ) {
+        $culture = [cultureinfo]::CurrentCulture
+        try {
+            [cultureinfo]::CurrentCulture = 'it-IT'
+            & (Get-Module FibocomFm350.App) { param($bytes) Format-DataSize -Bytes $bytes } $Bytes | Should -Be $Text
+        }
+        finally {
+            [cultureinfo]::CurrentCulture = $culture
+        }
+    }
+
+    It 'is the window''s Data tab' {
+        (ConvertTo-WindowView -Snapshot $script:online).Usage.TodayText | Should -Be 'Today: 0 B (received 0 B, sent 0 B)'
+    }
+}
+
+Describe 'Tray notices' {
+    It 'announces new messages once, by their newest sender only' {
+        $snapshot = Copy-Snapshot $script:online @{ UsageNotice = $null }
+        $first = Get-TrayNotice -Snapshot $snapshot
+        $first.Notice.Kind | Should -Be 'Messages'
+        $first.Notice.Title | Should -Be '2 new messages'
+        $first.Notice.Text | Should -Be 'From Info'
+        $again = Get-TrayNotice -Snapshot $snapshot -Shown @{ MessageId = $first.MessageId; UsageId = $first.UsageId }
+        $again.Notice | Should -BeNullOrEmpty -Because 'a notice is shown once'
+    }
+
+    It 'says one new message in the singular' {
+        $notice = (Get-TrayNotice -Snapshot (Copy-Snapshot $script:online @{ MessageNotice = [pscustomobject]@{ Sender = 'Operator'; Count = 1; Id = 7; Time = [DateTimeOffset]::Now } })).Notice
+        $notice.Title | Should -Be 'New message'
+        $notice.Text | Should -Be 'From Operator'
+    }
+
+    It 'says a quota threshold, after the messages, and that the connection stays on' {
+        $quota = [pscustomobject]@{ Threshold = 80; Id = 1; Time = [DateTimeOffset]::Now }
+        $snapshot = Copy-Snapshot $script:online @{ UsageNotice = $quota }
+        $first = Get-TrayNotice -Snapshot $snapshot
+        $first.Notice.Kind | Should -Be 'Messages'
+        $second = Get-TrayNotice -Snapshot $snapshot -Shown @{ MessageId = $first.MessageId; UsageId = $first.UsageId }
+        $second.Notice.Kind | Should -Be 'Quota'
+        $second.Notice.Title | Should -Be 'Data quota'
+        $second.Notice.Text | Should -Be '80% of the quota used in this cycle. The connection stays on.'
+        (Get-TrayNotice -Snapshot $snapshot -Shown @{ MessageId = $second.MessageId; UsageId = $second.UsageId }).Notice | Should -BeNullOrEmpty
+    }
+
+    It 'says nothing without a notice, or without a snapshot' {
+        (Get-TrayNotice -Snapshot (Copy-Snapshot $script:online @{ MessageNotice = $null; UsageNotice = $null })).Notice | Should -BeNullOrEmpty
+        (Get-TrayNotice -Snapshot $null).Notice | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Message command outcomes' {
+    BeforeAll {
+        $script:time = [DateTimeOffset]::new(2026, 10, 1, 12, 0, 0, [timespan]::Zero)
+    }
+
+    It 'says <Kind> / <Result> in words' -ForEach @(
+        @{ Kind = 'SendMessage'; Result = 'Sent'; Text = 'Message sent.' }
+        @{ Kind = 'SendMessage'; Result = 'Invalid'; Text = 'Enter a phone number and a text.' }
+        @{ Kind = 'SendMessage'; Result = 'NotReady'; Text = 'The SIM is not ready.' }
+        @{ Kind = 'SendMessage'; Result = 'Refused'; Text = 'Not available while the app only observes.' }
+        @{ Kind = 'DeleteMessage'; Result = 'Done'; Text = 'Message deleted from the SIM.' }
+        @{ Kind = 'DeleteMessage'; Result = 'NotFound'; Text = 'The message is no longer on the SIM.' }
+        @{ Kind = 'DeleteMessage'; Result = 'NoModem'; Text = 'The modem is not connected.' }
+    ) {
+        $result = [pscustomobject]@{ Id = '1'; Kind = $Kind; Result = $Result; Detail = $null; AttemptsLeft = $null; Parts = $null; Time = $script:time }
+        (ConvertTo-WindowView -Snapshot (Copy-Snapshot $script:online @{ Results = @($result) })).Result | Should -Be "12:00:00 $Text"
+    }
+
+    It 'says how many parts of a message went out, and why it stopped' {
+        $result = [pscustomobject]@{ Id = '1'; Kind = 'SendMessage'; Result = 'Failed'; Detail = 'part 2 of 3: CmsError 331'; AttemptsLeft = $null; Parts = [pscustomobject]@{ Sent = 1; Count = 3 }; Time = $script:time }
+        (ConvertTo-WindowView -Snapshot (Copy-Snapshot $script:online @{ Results = @($result) })).Result | Should -Be '12:00:00 The message was not sent completely: 1 of 3 parts went out. part 2 of 3: CmsError 331'
+        $broken = [pscustomobject]@{ Id = '2'; Kind = 'SendMessage'; Result = 'Failed'; Detail = 'FormatException'; AttemptsLeft = $null; Parts = $null; Time = $script:time }
+        (ConvertTo-WindowView -Snapshot (Copy-Snapshot $script:online @{ Results = @($broken) })).Result | Should -Be '12:00:00 It didn''t work. FormatException'
+    }
+
+    It 'says nothing of a message opened: the outcome before it stays' {
+        $sent = [pscustomobject]@{ Id = '1'; Kind = 'SendMessage'; Result = 'Sent'; Detail = $null; AttemptsLeft = $null; Parts = $null; Time = $script:time }
+        $opened = [pscustomobject]@{ Id = '2'; Kind = 'OpenMessage'; Result = 'Done'; Detail = $null; AttemptsLeft = $null; Parts = $null; Time = $script:time.AddMinutes(1) }
+        (ConvertTo-WindowView -Snapshot (Copy-Snapshot $script:online @{ Results = @($sent, $opened) })).Result | Should -Be '12:00:00 Message sent.'
+        (ConvertTo-WindowView -Snapshot (Copy-Snapshot $script:online @{ Results = @($opened) })).Result | Should -BeNullOrEmpty
     }
 }

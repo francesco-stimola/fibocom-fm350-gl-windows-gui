@@ -148,15 +148,18 @@
     #   PassedRounds: probe rounds that pass before a path that is down shows it.
     # - Presence: how PnP sees the modem - 'Present', 'Absent' or 'NoDriver'.
     # - NetworkMode: what differs from the base network mode (above), or the network around it.
+    # - Messages: the messages on its SIM instead of the base ones (above).
     Scenarios = @{
         # Online: the app attaches and changes nothing.
         Online           = @{
             Adapter = 'Configured'
         }
 
-        # A registered modem with no context yet: defined, activated, the adapter configured.
+        # A registered modem with no context yet: defined, activated, the adapter configured. Its
+        # SIM holds no message: nothing to announce while connecting.
         Connect          = @{
-            Adapter = 'Fresh'
+            Adapter  = 'Fresh'
+            Messages = @{ Stored = @(); Arrivals = @() }
             Answers = @{
                 'AT+CGDCONT?' = @('+CGDCONT: 0,"IPV4V6","","",0,0,0,2,1,1,,0,1,0', 'OK')
                 'AT+CGACT?'   = @('OK')

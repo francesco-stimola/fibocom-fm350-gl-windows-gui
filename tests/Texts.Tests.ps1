@@ -125,7 +125,7 @@ Describe 'The tables' {
             Get-Placeholder $table[$key] | Should -Be (Get-Placeholder $english[$key]) -Because "$key keeps its placeholders"
             # A brace that is no placeholder breaks the formatting.
             ($table[$key] -replace '\{\d+\}', '') | Should -Not -Match '[{}]' -Because "$key has no stray brace"
-            { [string]::Format([cultureinfo]::InvariantCulture, $table[$key], [object[]]@('a', 'b', 'c')) } | Should -Not -Throw
+            { [string]::Format([cultureinfo]::InvariantCulture, $table[$key], [object[]]@('a', 'b', 'c', 'd', 'e', 'f')) } | Should -Not -Throw
         }
     }
 
@@ -220,7 +220,7 @@ Describe 'Each language on the screen' {
     It '<_>: every rule a setting can break, in words' -ForEach $script:languages {
         [void](Set-AppLanguage -Culture $_)
         $app = Get-Module FibocomFm350.App
-        foreach ($rule in 'Text', 'TextQuotes', 'OneOf', 'EmptyOrOneOf', 'Addresses', 'Number', 'Minutes', 'Bool', 'Https', 'Bands', 'Unknown', 'Unreadable', 'DohNeedsServers', 'TemplateAddress') {
+        foreach ($rule in 'Text', 'TextQuotes', 'OneOf', 'EmptyOrOneOf', 'Addresses', 'Number', 'Minutes', 'Bool', 'Https', 'Bands', 'Unknown', 'Unreadable', 'DohNeedsServers', 'TemplateAddress', 'Gigabytes') {
             $issue = [pscustomobject]@{ Setting = 'InterfaceMetric'; Rule = $rule; Values = [object[]]@(1, 9999) }
             & $app { param($i) ConvertTo-SettingIssueText -Issue $i } $issue | Should -Not -Match $script:missing
         }

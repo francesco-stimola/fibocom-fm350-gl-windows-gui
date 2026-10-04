@@ -216,8 +216,9 @@ function ConvertTo-TrayText {
         The tray icon's tooltip, from the snapshot.
     .DESCRIPTION
         'FM350-GL: Online' and, when online, the technology, the operator and the RSRP; else the
-        reason in a few words. At most 127 characters: Windows cuts a longer tooltip, and .NET
-        refuses it.
+        reason in a few words. On a second line, the data used today and in this cycle, against
+        the quota when there is one. At most 127 characters - Windows cuts a longer tooltip, and
+        the framework refuses it: the first line is cut to make room.
     .EXAMPLE
         ConvertTo-TrayText -Snapshot $snapshot
     #>
@@ -247,7 +248,20 @@ function ConvertTo-TrayText {
         $parts.Add((Get-ReasonText -Snapshot $Snapshot))
     }
     $text = $parts -join ' - '
-    if ($text.Length -gt 127) { $text.Substring(0, 126) + [char]0x2026 } else { $text }
+    $usage = Get-SnapshotValue -Snapshot $Snapshot -Name 'Usage'
+    $line = if ($usage -and $tone -ne 'Stopped') {
+        if ($usage.Quota) {
+            Get-AppText 'Tray.UsageQuota' (Format-DataSize $usage.Today.Total) (Format-DataSize $usage.Cycle.Total) (Format-DataSize $usage.Quota)
+        }
+        else {
+            Get-AppText 'Tray.Usage' (Format-DataSize $usage.Today.Total) (Format-DataSize $usage.Cycle.Total)
+        }
+    }
+    $room = if ($line) { 127 - $line.Length - 1 } else { 127 }
+    if ($text.Length -gt $room) {
+        $text = $text.Substring(0, $room - 1) + [char]0x2026
+    }
+    if ($line) { "$text`n$line" } else { $text }
 }
 
 function Resolve-AppBlocker {
@@ -319,14 +333,20 @@ function Get-SimView {
 }
 
 function Get-ResultText {
-    # The newest command outcome, in a sentence with its time.
+    # The newest command outcome, in a sentence with its time. Opening a message says nothing: it
+    # would hide the outcome before it.
     param([object] $Snapshot)
 
-    $last = @($Snapshot.Results) | Select-Object -Last 1
+    $last = @($Snapshot.Results | Where-Object { $_ -and $_.Kind -ne 'OpenMessage' }) | Select-Object -Last 1
     if (-not $last) {
         return $null
     }
-    $text = if (Test-AppText "Result.$($last.Kind).$($last.Result)") {
+    $parts = if ($last.PSObject.Properties['Parts']) { $last.Parts } else { $null }
+    $text = if ($last.Kind -eq 'SendMessage' -and $last.Result -eq 'Failed') {
+        # How many parts went out, when the worker got as far as sending.
+        if ($parts) { Get-AppText 'Result.SendMessage.Failed' $parts.Sent $parts.Count } else { Get-AppText 'Result.Failed' }
+    }
+    elseif (Test-AppText "Result.$($last.Kind).$($last.Result)") {
         Get-AppText "Result.$($last.Kind).$($last.Result)"
     }
     elseif (Test-AppText "Result.$($last.Result)") {
@@ -719,6 +739,225 @@ function Get-DriverView {
     }
 }
 
+function Format-DataSize {
+    # Bytes in decimal units - a gigabyte is 10^9 bytes, as the quota counts it -, one decimal, in
+    # the invariant culture: '0 B', '950 B', '1.2 kB', '14.3 GB'.
+    param([double] $Bytes)
+
+    $units = 'B', 'kB', 'MB', 'GB', 'TB'
+    $value = [Math]::Max([double]0, $Bytes)
+    $unit = 0
+    while ([Math]::Round($value, 1) -ge 1000 -and $unit -lt $units.Count - 1) {
+        $value /= 1000
+        $unit++
+    }
+    if ($unit -eq 0) { "$([long]$value) B" } else { "$($value.ToString('0.0', [cultureinfo]::InvariantCulture)) $($units[$unit])" }
+}
+
+function Get-SnapshotValue {
+    # A snapshot's property, or $null: a snapshot from before M8 has no messages and no usage.
+    param([object] $Snapshot, [string] $Name)
+
+    if ($Snapshot -and $Snapshot.PSObject.Properties[$Name]) { $Snapshot.$Name } else { $null }
+}
+
+function Get-MessageBody {
+    # A message's text as the window shows it; for one without text, a sentence that says why.
+    param([object] $Message)
+
+    if ($Message.Problem) {
+        return Get-AppText 'Messages.Malformed'
+    }
+    if ($null -ne $Message.Text) {
+        return $Message.Text
+    }
+    switch ($Message.Content) {
+        'Binary' { Get-AppText 'Messages.Binary' }
+        'Compressed' { Get-AppText 'Messages.Compressed' }
+        default { Get-AppText 'Messages.Malformed' }
+    }
+}
+
+function Get-MessagesView {
+    <#
+    .SYNOPSIS
+        The Messages tab, from the snapshot.
+    .DESCRIPTION
+        A pure function. Returns StateText (how full the SIM is, or why there are no messages:
+        no modem, the SIM not ready, observe-only), TabText (the tab's header, with the number
+        of new messages), Items - a row per message, newest first: Key, Fingerprints, New,
+        Marker, From, Time, Preview, Header, Text, Note -, SentId (the newest message sent's
+        command), SendingText, CanDelete and CanSend.
+    .EXAMPLE
+        Get-MessagesView -Snapshot $snapshot
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [AllowNull()]
+        [object] $Snapshot
+    )
+
+    $messages = Get-SnapshotValue -Snapshot $Snapshot -Name 'Messages'
+    $sending = (Get-SnapshotValue -Snapshot $Snapshot -Name 'MessageOperation') -eq 'Sending'
+    $state = if ($messages) {
+        $sentences = [System.Collections.Generic.List[string]]::new()
+        if ($null -ne $messages.Used -and $null -ne $messages.Total) {
+            $sentences.Add((Get-AppText 'Messages.Storage' $messages.Used $messages.Total))
+        }
+        if ($messages.Full) {
+            $sentences.Add((Get-AppText 'Messages.Full'))
+        }
+        if (@($messages.Items).Count -eq 0) {
+            $sentences.Add((Get-AppText 'Messages.Empty'))
+        }
+        $sentences -join ' '
+    }
+    elseif (-not $Snapshot) {
+        $null
+    }
+    elseif ($Snapshot.ObserveOnly) {
+        Get-AppText 'Messages.ObserveOnly'
+    }
+    elseif (-not $Snapshot.PortName) {
+        Get-AppText 'Messages.NoModem'
+    }
+    else {
+        Get-AppText 'Messages.NotReady'
+    }
+    $rows = foreach ($item in @(if ($messages) { $messages.Items })) {
+        $time = if ($item.Time) { $item.Time.ToLocalTime().ToString('yyyy-MM-dd HH:mm', [cultureinfo]::InvariantCulture) } else { '' }
+        $body = Get-MessageBody -Message $item
+        $line = ($body -replace '\s+', ' ').Trim()
+        $notes = [System.Collections.Generic.List[string]]::new()
+        if (-not $item.Complete -and @($item.Missing).Count -gt 0) {
+            $notes.Add((Get-AppText 'Messages.Missing' (@($item.Missing) -join ', ')))
+        }
+        if ($item.NationalLanguage) {
+            $notes.Add((Get-AppText 'Messages.NationalLanguage'))
+        }
+        [pscustomobject]@{
+            Key          = @($item.Fingerprints) -join ','
+            Fingerprints = [string[]]@($item.Fingerprints)
+            New          = [bool]$item.New
+            Marker       = if ($item.New) { [string][char]0x25CF } else { '' }
+            From         = [string]$item.Address
+            Time         = $time
+            Preview      = if ($line.Length -gt 60) { $line.Substring(0, 59) + [char]0x2026 } else { $line }
+            Header       = Get-AppText 'Messages.Header' $item.Address $time
+            Text         = $body
+            Note         = if ($notes.Count) { $notes -join ' ' } else { $null }
+        }
+    }
+    $new = if ($messages) { [int]$messages.New } else { 0 }
+    $sent = @(Get-SnapshotValue -Snapshot $Snapshot -Name 'Results' | Where-Object { $_ -and $_.Kind -eq 'SendMessage' -and $_.Result -eq 'Sent' }) | Select-Object -Last 1
+    [pscustomobject]@{
+        StateText   = $state
+        TabText     = if ($new -gt 0) { Get-AppText 'Messages.TabNew' $new } else { Get-AppText 'Xaml.MessagesTab' }
+        Items       = [object[]]@($rows)
+        SentId      = if ($sent) { $sent.Id } else { $null }
+        SendingText = if ($sending) { Get-AppText 'Messages.Sending' } else { $null }
+        CanDelete   = [bool]$messages -and -not $sending
+        CanSend     = [bool]$messages -and -not $sending
+    }
+}
+
+function Get-MessageCountText {
+    # What a message being written takes (Measure-SmsText): its characters and its parts, and the
+    # characters a part holds when one of them needs UCS2; $null while it is empty.
+    param([string] $Text)
+
+    if (-not $Text) {
+        return $null
+    }
+    $measure = Measure-SmsText -Text $Text
+    if ($measure.TooLong) {
+        Get-AppText 'Messages.TooLong'
+    }
+    elseif ($measure.Alphabet -eq 'Ucs2') {
+        Get-AppText 'Messages.CountUnicode' $measure.Length $measure.Parts $measure.PerPart
+    }
+    else {
+        Get-AppText 'Messages.Count' $measure.Length $measure.Parts
+    }
+}
+
+function Get-UsageView {
+    <#
+    .SYNOPSIS
+        The Data tab, from the snapshot's data usage (Measure-DataUsage's).
+    .DESCRIPTION
+        A pure function. Returns TodayText, CycleText (with the cycle's first and last day),
+        QuotaText, Percent (the quota's share used, at most 100, or $null without a quota) and
+        Warning (a quota threshold reached).
+    .EXAMPLE
+        Get-UsageView -Snapshot $snapshot
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [AllowNull()]
+        [object] $Snapshot
+    )
+
+    $usage = Get-SnapshotValue -Snapshot $Snapshot -Name 'Usage'
+    if (-not $usage) {
+        return [pscustomobject]@{ TodayText = Get-AppText 'Usage.NotCounted'; CycleText = $null; QuotaText = $null; Percent = $null; Warning = $false }
+    }
+    $day = { param($date) $date.ToString('yyyy-MM-dd', [cultureinfo]::InvariantCulture) }
+    $today = $usage.Today
+    $cycle = $usage.Cycle
+    $percent = if ($usage.Quota) { [Math]::Min(100.0, [double]$usage.Percent) } else { $null }
+    [pscustomobject]@{
+        TodayText = Get-AppText 'Usage.Today' (Format-DataSize $today.Total) (Format-DataSize $today.Received) (Format-DataSize $today.Sent)
+        CycleText = Get-AppText 'Usage.Cycle' (& $day $usage.CycleStart) (& $day $usage.CycleEnd.AddDays(-1)) (Format-DataSize $cycle.Total) (Format-DataSize $cycle.Received) (Format-DataSize $cycle.Sent)
+        QuotaText = if ($usage.Quota) { Get-AppText 'Usage.Quota' (Format-DataSize $cycle.Total) (Format-DataSize $usage.Quota) ([Math]::Floor([double]$usage.Percent)) } else { Get-AppText 'Usage.NoQuota' }
+        Percent   = $percent
+        Warning   = [bool]$usage.Threshold
+    }
+}
+
+function Get-TrayNotice {
+    <#
+    .SYNOPSIS
+        Decides the tray notification to show, if any: new messages, or a quota threshold.
+    .DESCRIPTION
+        A pure function. -Shown holds the Ids of the last notices shown (MessageId, UsageId;
+        none yet at the start). A notice whose Id differs is shown once; a worker that replaces
+        another carries its Ids on, so nothing is said twice. New messages name their newest
+        sender only, the text stays in the window; the quota says the threshold, and that the
+        connection stays on (decided 2026-10-04). One notice at a time, messages first.
+        Returns Notice (Kind 'Messages' or 'Quota', Title, Text; or $null), MessageId and
+        UsageId: what is shown now.
+    .EXAMPLE
+        $decision = Get-TrayNotice -Snapshot $snapshot -Shown $shown
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [AllowNull()]
+        [object] $Snapshot,
+
+        [hashtable] $Shown = @{}
+    )
+
+    $messageId = $Shown['MessageId']
+    $usageId = $Shown['UsageId']
+    $message = Get-SnapshotValue -Snapshot $Snapshot -Name 'MessageNotice'
+    $quota = Get-SnapshotValue -Snapshot $Snapshot -Name 'UsageNotice'
+    $notice = $null
+    if ($message -and $message.Id -ne $messageId) {
+        $title = if ($message.Count -gt 1) { Get-AppText 'Tray.NewMessages' $message.Count } else { Get-AppText 'Tray.NewMessage' }
+        $notice = [pscustomobject]@{ Kind = 'Messages'; Title = $title; Text = Get-AppText 'Tray.MessageFrom' $message.Sender }
+        $messageId = $message.Id
+    }
+    elseif ($quota -and $quota.Id -ne $usageId) {
+        $notice = [pscustomobject]@{ Kind = 'Quota'; Title = Get-AppText 'Tray.QuotaTitle'; Text = Get-AppText 'Tray.Quota' $quota.Threshold }
+        $usageId = $quota.Id
+    }
+    [pscustomobject]@{ Notice = $notice; MessageId = $messageId; UsageId = $usageId }
+}
+
 function ConvertTo-WindowView {
     <#
     .SYNOPSIS
@@ -728,7 +967,8 @@ function ConvertTo-WindowView {
         'NotResponding'). Returns Tone, Title, Detail, Note, Technology, Operator, Signal (lines),
         Cells and Carriers (rows of text), Blocker (Resolve-AppBlocker's), Sim (the SIM tab),
         NetworkMode (the network tab, Get-NetworkModeView's), Driver (the Driver tab,
-        Get-DriverView's), Settings, ApnPasswordStored, Dns and Startup (the connection tab: its
+        Get-DriverView's), Messages (the Messages tab, Get-MessagesView's), Usage (the Data tab,
+        Get-UsageView's), Settings, ApnPasswordStored, Dns and Startup (the connection tab: its
         encrypted DNS, the start at sign-in), Result (the newest command's
         outcome, as a sentence) and LastResult (its Id, Kind and Result), and Footer.
     .EXAMPLE
@@ -836,6 +1076,8 @@ function ConvertTo-WindowView {
         Sim               = if ($Snapshot) { Get-SimView -Snapshot $Snapshot } else { $null }
         NetworkMode       = Get-NetworkModeView -Snapshot $Snapshot
         Driver            = Get-DriverView -Snapshot $Snapshot -Worker $Worker -Known @(Get-KnownDriverPackage)
+        Messages          = Get-MessagesView -Snapshot $Snapshot
+        Usage             = Get-UsageView -Snapshot $Snapshot
         Settings          = if ($Snapshot) { $Snapshot.Settings } else { $null }
         ApnPasswordStored = $Snapshot -and $Snapshot.ApnPasswordStored
         Dns               = Get-DnsView -Snapshot $Snapshot

@@ -79,10 +79,34 @@ function Get-AppWorkerState {
 }
 
 function Open-AppWindow {
-    # Shows the main window, filled with the latest snapshot.
+    # Shows the main window, filled with the latest snapshot; on its Messages tab with -Messages.
+    param([switch] $Messages)
+
     $state = Get-AppWorkerState
     Update-MainWindow -View (ConvertTo-WindowView -Snapshot $script:App.LastSnapshot -Worker $state) -Confirm:$false
+    if ($Messages) {
+        $controls = $script:MainWindow.Controls
+        $controls.Tabs.SelectedItem = $controls.MessagesTab
+    }
     Show-MainWindow
+}
+
+function Show-AppNotice {
+    # A tray notification for new messages or a quota threshold, once each (Get-TrayNotice). Only
+    # once the tray icon shows: one that can't be seen is shown at the next change.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Shows a notification; changes no system state.')]
+    param([object] $Snapshot)
+
+    $app = $script:App
+    $decision = Get-TrayNotice -Snapshot $Snapshot -Shown $app.Shown
+    if (-not $decision.Notice -or -not $app.Tray.Visible) {
+        return
+    }
+    $app.Shown = @{ MessageId = $decision.MessageId; UsageId = $decision.UsageId }
+    $app.NoticeKind = $decision.Notice.Kind
+    $icon = if ($decision.Notice.Kind -eq 'Quota') { [System.Windows.Forms.ToolTipIcon]::Warning } else { [System.Windows.Forms.ToolTipIcon]::Info }
+    $app.Tray.ShowBalloonTip(10000, $decision.Notice.Title, $decision.Notice.Text, $icon)
 }
 
 function Stop-App {
@@ -156,6 +180,8 @@ function New-AppTray {
                 Open-AppWindow
             }
         })
+    # A notification of new messages opens them.
+    $tray.Add_BalloonTipClicked({ Open-AppWindow -Messages:($script:App.NoticeKind -eq 'Messages') })
     $tray
 }
 
@@ -193,8 +219,9 @@ function Update-App {
         (Resolve-SupervisorAction), after the delay it decides; starts the next one when due;
         on exit - the tray menu's, or the installer's through the exit event - ends the UI loop
         once the worker has closed the AT port. Shows the window when a second launch asked for
-        it, and redraws the tray icon, its tooltip and the window when
-        the snapshot or the worker's state changed. Never waits on the worker.
+        it, and redraws the tray icon, its tooltip and the window, and shows a notification of
+        new messages or of a quota threshold, when the snapshot or the worker's state changed.
+        Never waits on the worker.
     .EXAMPLE
         $timer.Add_Tick({ Update-App })
     #>
@@ -281,6 +308,7 @@ function Update-App {
     $app.ShownWorker = $state
     [void](Set-TrayIcon -NotifyIcon $app.Tray -Icon (Resolve-TrayIcon -Snapshot $snapshot -Worker $state) -State $app.TrayState -Confirm:$false)
     $app.Tray.Text = ConvertTo-TrayText -Snapshot $snapshot -Worker $state
+    Show-AppNotice -Snapshot $snapshot
     if ($script:MainWindow.Window.IsVisible) {
         Update-MainWindow -View (ConvertTo-WindowView -Snapshot $snapshot -Worker $state) -Confirm:$false
     }
@@ -364,6 +392,9 @@ function Start-Fm350App {
         TrayState     = @{}
         ShownVersion  = $null
         ShownWorker   = $null
+        # The tray notices shown (Get-TrayNotice's Ids), and the kind of the last one.
+        Shown         = @{}
+        NoticeKind    = $null
         LastTick      = $null
         ResumedAt     = [Environment]::TickCount64
     }

@@ -101,3 +101,40 @@ Describe 'The tray menu' {
         }
     }
 }
+
+Describe 'Tray notifications' {
+    BeforeAll {
+        Import-Module "$PSScriptRoot/../src/FibocomFm350/FibocomFm350.psd1" -Force
+        Import-Module "$PSScriptRoot/../src/App/FibocomFm350.App.psd1" -Force
+    }
+
+    AfterAll {
+        Remove-Module FibocomFm350.App, FibocomFm350 -ErrorAction SilentlyContinue
+    }
+
+    It 'shows a notice once the tray icon shows, and each notice once' {
+        $notice = [pscustomobject]@{ Sender = 'Info'; Count = 2; Id = 1; Time = [DateTimeOffset]::Now }
+        $snapshot = [pscustomobject]@{ MessageNotice = $notice; UsageNotice = $null }
+        $shown = & (Get-Module FibocomFm350.App) {
+            param($snapshot)
+            $tray = [pscustomobject]@{ Visible = $false; Shown = [System.Collections.Generic.List[string]]::new() }
+            $tray | Add-Member -MemberType ScriptMethod -Name ShowBalloonTip -Value { param($timeout, $title, $text, $icon) $this.Shown.Add("$timeout|$title|$text|$icon") }
+            $script:App = @{ Tray = $tray; Shown = @{}; NoticeKind = $null }
+            try {
+                Show-AppNotice -Snapshot $snapshot
+                $hidden = $tray.Shown.Count
+                $tray.Visible = $true
+                Show-AppNotice -Snapshot $snapshot
+                Show-AppNotice -Snapshot $snapshot
+                [pscustomobject]@{ Hidden = $hidden; Shown = [string[]]$tray.Shown; Kind = $script:App.NoticeKind }
+            }
+            finally {
+                $script:App = $null
+            }
+        } $snapshot
+
+        $shown.Hidden | Should -Be 0 -Because 'a notice the user can''t see waits'
+        $shown.Shown | Should -Be @('10000|2 new messages|From Info|Info')
+        $shown.Kind | Should -Be 'Messages'
+    }
+}

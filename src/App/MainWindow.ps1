@@ -14,7 +14,13 @@ $script:WindowControlNames = @(
     'DnsBox', 'DohBox', 'DohTemplateBox', 'DohRefreshBox', 'DohStateText', 'MetricBox', 'UpdateCheckBox', 'StartupBox', 'StartupNoteText', 'SaveSettingsButton', 'ReloadSettingsButton', 'SettingsProblemText'
     'Tabs', 'ConnectionTab', 'DriverTab', 'DriverStateText', 'DriverSourceText', 'OpenDriverPageButton', 'ChooseDriverButton', 'DriverPackageText'
     'InstallDriverButton', 'UninstallDriverButton', 'DriverNoteText'
+    'MessagesTab', 'MessagesStateText', 'MessagesGrid', 'MessageHeaderText', 'DeleteMessageButton', 'MessageBodyText', 'MessageNoteText'
+    'MessageToBox', 'MessageTextBox', 'MessageCountText', 'SendMessageButton'
+    'DataTab', 'UsageTodayText', 'UsageCycleText', 'UsageQuotaText', 'UsageQuotaBar', 'CycleDayBox', 'QuotaBox', 'SaveUsageButton', 'ReloadUsageButton', 'UsageProblemText'
 )
+
+# The quota bar's colours: below the first threshold, and from it on.
+$script:UsageBarColors = @{ Normal = '#2E7D32'; Warning = '#C0392B' }
 
 # The main window and what it remembers; one per app. Event handlers reach it here.
 $script:MainWindow = $null
@@ -118,6 +124,17 @@ function New-MainWindow {
         ModeRevision = $null
         FormMode     = $null
         ModeHint     = $null
+        # The Data tab's form, as last filled from the settings.
+        FormUsage    = $null
+        # The Messages tab: the list as last shown, the message the user selected, those opened
+        # from here, the newest message sent and the text it had; and whether the window is
+        # filling the list itself, so a selection it restores opens nothing.
+        MessagesShown = $null
+        SelectedKey   = $null
+        OpenedKeys    = [System.Collections.Generic.HashSet[string]]::new()
+        SentId        = $null
+        SentText      = $null
+        Updating      = $false
         Exiting      = $false
     }
 
@@ -199,7 +216,175 @@ function New-MainWindow {
                 Update-MainWindow -View $script:MainWindow.View
             }
         })
+    $controls.MessagesGrid.Add_SelectionChanged({ Select-WindowMessage })
+    $controls.DeleteMessageButton.Add_Click({ Invoke-WindowMessageDelete })
+    $controls.SendMessageButton.Add_Click({ Send-WindowMessage })
+    $controls.MessageTextBox.Add_TextChanged({ Show-WindowMessageCount })
+    $controls.SaveUsageButton.Add_Click({ Save-WindowUsageSetting })
+    $controls.ReloadUsageButton.Add_Click({
+            $script:MainWindow.FormUsage = $null
+            if ($script:MainWindow.View) {
+                Update-MainWindow -View $script:MainWindow.View
+            }
+        })
     $script:MainWindow
+}
+
+function Show-WindowMessage {
+    # The selected message below the list - its sender and time, its text, a note - and whether it
+    # can be deleted.
+    param([object] $Message)
+
+    $controls = $script:MainWindow.Controls
+    $view = $script:MainWindow.View
+    $controls.MessageHeaderText.Text = if ($Message) { $Message.Header } else { '' }
+    $controls.MessageBodyText.Text = if ($Message) { $Message.Text } else { '' }
+    $note = if ($Message) { $Message.Note } else { $null }
+    $controls.MessageNoteText.Text = [string]$note
+    $controls.MessageNoteText.Visibility = if ($note) { 'Visible' } else { 'Collapsed' }
+    $controls.DeleteMessageButton.IsEnabled = [bool]($Message -and $view -and $view.Messages -and $view.Messages.CanDelete)
+}
+
+function Select-WindowMessage {
+    # A message the user selected in the list: shown, and opened - new no more (decided
+    # 2026-10-04). A selection the window restores after a refresh opens nothing.
+    $message = $script:MainWindow.Controls.MessagesGrid.SelectedItem
+    Show-WindowMessage -Message $message
+    if ($script:MainWindow.Updating -or -not $message) {
+        return
+    }
+    $script:MainWindow.SelectedKey = $message.Key
+    if ($message.New -and $script:MainWindow.OpenedKeys.Add($message.Key)) {
+        & $script:MainWindow.Send 'OpenMessage' @{ Fingerprints = [string[]]$message.Fingerprints }
+    }
+}
+
+function Invoke-WindowMessageDelete {
+    # The Delete button: the selected message, every part of it, once the user confirmed it - No
+    # preselected (decided 2026-10-04).
+    $message = $script:MainWindow.Controls.MessagesGrid.SelectedItem
+    if ($message -and (& $script:MainWindow.Ask (Get-AppText 'Confirm.DeleteMessageTitle') (Get-AppText 'Confirm.DeleteMessage'))) {
+        & $script:MainWindow.Send 'DeleteMessage' @{ Fingerprints = [string[]]$message.Fingerprints }
+    }
+}
+
+function Send-WindowMessage {
+    # The Send button: the number and the text as typed, for the worker, which checks them. The
+    # text stays until the message is sent: one that fails, the user may send again.
+    $controls = $script:MainWindow.Controls
+    $number = $controls.MessageToBox.Text.Trim()
+    $text = $controls.MessageTextBox.Text
+    if (-not $number -or -not $text) {
+        $controls.MessageCountText.Text = Get-AppText 'Result.SendMessage.Invalid'
+        return
+    }
+    $script:MainWindow.SentText = $text
+    & $script:MainWindow.Send 'SendMessage' @{ Number = $number; Text = $text }
+}
+
+function Show-WindowMessageCount {
+    # The characters and parts of the message being written, as it is typed - unless one is
+    # going out.
+    $controls = $script:MainWindow.Controls
+    $view = $script:MainWindow.View
+    if ($view -and $view.Messages -and $view.Messages.SendingText) {
+        $controls.MessageCountText.Text = $view.Messages.SendingText
+    }
+    else {
+        $controls.MessageCountText.Text = [string](Get-MessageCountText -Text $controls.MessageTextBox.Text)
+    }
+}
+
+function Show-WindowMessageList {
+    # The Messages tab, from the view. The list is filled again only when it changed, and the
+    # user's selection kept; the text being written is cleared once it is sent.
+    param([object] $View)
+
+    $controls = $script:MainWindow.Controls
+    $messages = $View.Messages
+    $controls.MessagesTab.Header = $messages.TabText
+    $controls.MessagesStateText.Text = [string]$messages.StateText
+    $signature = @($messages.Items | ForEach-Object { "$($_.Key)|$($_.New)" }) -join ';'
+    if ($signature -ne $script:MainWindow.MessagesShown) {
+        $script:MainWindow.Updating = $true
+        try {
+            $controls.MessagesGrid.ItemsSource = $messages.Items
+            $controls.MessagesGrid.SelectedItem = @($messages.Items | Where-Object { $_.Key -eq $script:MainWindow.SelectedKey }) | Select-Object -First 1
+        }
+        finally {
+            $script:MainWindow.Updating = $false
+        }
+        $script:MainWindow.MessagesShown = $signature
+    }
+    Show-WindowMessage -Message $controls.MessagesGrid.SelectedItem
+    $controls.SendMessageButton.IsEnabled = $messages.CanSend
+    if ($messages.SentId -and $messages.SentId -ne $script:MainWindow.SentId) {
+        $script:MainWindow.SentId = $messages.SentId
+        if ($controls.MessageTextBox.Text -eq $script:MainWindow.SentText) {
+            $controls.MessageTextBox.Clear()
+        }
+    }
+    Show-WindowMessageCount
+}
+
+function Show-WindowUsage {
+    # The Data tab, from the view. Its form is filled from the settings only when it was never
+    # filled, after Undo, and after a save.
+    param([object] $View)
+
+    $controls = $script:MainWindow.Controls
+    $usage = $View.Usage
+    $controls.UsageTodayText.Text = [string]$usage.TodayText
+    $controls.UsageCycleText.Text = [string]$usage.CycleText
+    $controls.UsageCycleText.Visibility = if ($usage.CycleText) { 'Visible' } else { 'Collapsed' }
+    $controls.UsageQuotaText.Text = [string]$usage.QuotaText
+    $controls.UsageQuotaText.Visibility = if ($usage.QuotaText) { 'Visible' } else { 'Collapsed' }
+    $controls.UsageQuotaBar.Visibility = if ($null -ne $usage.Percent) { 'Visible' } else { 'Collapsed' }
+    $controls.UsageQuotaBar.Value = if ($null -ne $usage.Percent) { $usage.Percent } else { 0 }
+    $color = $script:UsageBarColors[$(if ($usage.Warning) { 'Warning' } else { 'Normal' })]
+    $controls.UsageQuotaBar.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString($color)
+    $settings = $View.Settings
+    if ($settings -and $settings.PSObject.Properties['UsageCycleDay'] -and $null -eq $script:MainWindow.FormUsage) {
+        $controls.CycleDayBox.Text = [string]$settings.UsageCycleDay
+        $controls.QuotaBox.Text = ([double]$settings.UsageQuotaGB).ToString('0.###', [cultureinfo]::InvariantCulture)
+        $controls.UsageProblemText.Text = ''
+        $script:MainWindow.FormUsage = $settings
+    }
+}
+
+function Join-WindowSetting {
+    # The settings one tab saves: those saved, with the values its form has. The other tab's
+    # settings stay as saved, whatever is typed there.
+    param([object] $Saved, [System.Collections.IDictionary] $Form)
+
+    $settings = [ordered]@{}
+    if ($Saved) {
+        foreach ($property in $Saved.PSObject.Properties) {
+            $settings[$property.Name] = $property.Value
+        }
+    }
+    foreach ($key in $Form.Keys) {
+        $settings[$key] = $Form[$key]
+    }
+    $settings
+}
+
+function Save-WindowUsageSetting {
+    # The Data tab's Save: the cycle's first day and the quota as typed - a decimal comma read as
+    # a point -, checked here so a typo shows at once, then sent with the other settings as saved.
+    $controls = $script:MainWindow.Controls
+    $saved = if ($script:MainWindow.View) { $script:MainWindow.View.Settings } else { $null }
+    $form = [ordered]@{ UsageCycleDay = $controls.CycleDayBox.Text.Trim(); UsageQuotaGB = $controls.QuotaBox.Text.Trim().Replace(',', '.') }
+    $checked = ConvertTo-AppSetting -InputObject (Join-WindowSetting -Saved $saved -Form $form)
+    $problems = @($checked.Issues | Where-Object { $_.Setting -in $form.Keys } | ForEach-Object { ConvertTo-SettingIssueText -Issue $_ })
+    if ($problems.Count -gt 0) {
+        $controls.UsageProblemText.Text = $problems -join ' '
+        return
+    }
+    $controls.UsageProblemText.Text = ''
+    & $script:MainWindow.Send 'SaveSettings' @{ Settings = $checked.Settings }
+    # Filled again from the snapshot once the worker has saved them.
+    $script:MainWindow.FormUsage = $null
 }
 
 function Invoke-BlockerAction {
@@ -414,9 +599,11 @@ function Test-WindowDohSetting {
 }
 
 function Save-WindowSetting {
-    # The connection tab's Save: checked here, so a typo is shown at once, then sent.
+    # The connection tab's Save: checked here, so a typo is shown at once, then sent with the
+    # other tabs' settings as saved.
     $controls = $script:MainWindow.Controls
-    $checked = ConvertTo-AppSetting -InputObject (Get-WindowSetting)
+    $saved = if ($script:MainWindow.View) { $script:MainWindow.View.Settings } else { $null }
+    $checked = ConvertTo-AppSetting -InputObject (Join-WindowSetting -Saved $saved -Form (Get-WindowSetting))
     $dns = if ($script:MainWindow.View) { $script:MainWindow.View.Dns } else { $null }
     $problems = @($checked.Issues | ForEach-Object { ConvertTo-SettingIssueText -Issue $_ }) + @(Test-WindowDohSetting -Settings $checked.Settings -Dns $dns | Where-Object { $_ })
     if ($problems.Count -gt 0) {
@@ -546,6 +733,7 @@ function Update-MainWindow {
         $script:MainWindow.LastResultId = $newest.Id
         if ($newest.Kind -in 'SaveSettings', 'SetStartAtLogon') {
             $script:MainWindow.FormSettings = $null
+            $script:MainWindow.FormUsage = $null
         }
         if ($newest.Kind -eq 'SetNetworkMode') {
             $script:MainWindow.FormMode = $null
@@ -553,6 +741,12 @@ function Update-MainWindow {
     }
     if ($View.NetworkMode) {
         Show-WindowNetworkMode -View $View
+    }
+    if ($View.PSObject.Properties['Messages'] -and $View.Messages) {
+        Show-WindowMessageList -View $View
+    }
+    if ($View.PSObject.Properties['Usage'] -and $View.Usage) {
+        Show-WindowUsage -View $View
     }
     if ($View.Startup) {
         $controls.StartupBox.IsEnabled = [bool]$View.Startup.CanChange

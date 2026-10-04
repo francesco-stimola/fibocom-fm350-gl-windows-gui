@@ -83,7 +83,7 @@ Describe 'The main window' {
         $script:left | Should -BeNullOrEmpty -Because 'a window''s properties are taken off before it closes'
     }
 
-    It 'scrolls the <_> tab when the window is too small for it' -ForEach @('ConnectionTab', 'DriverTab', 'SimTab') {
+    It 'scrolls the <_> tab when the window is too small for it' -ForEach @('ConnectionTab', 'DriverTab', 'SimTab', 'DataTab') {
         $tab = $script:window.Window.FindName($_)
         $tab.Content | Should -BeOfType ([System.Windows.Controls.ScrollViewer])
         $tab.Content.VerticalScrollBarVisibility | Should -Be 'Auto'
@@ -438,5 +438,193 @@ Describe 'The main window' {
         $script:sent[0].Parameter.NetworkMode | Should -Be 'Automatic'
         @($script:sent[0].Parameter.LteBands).Count | Should -Be 0
         @($script:sent[0].Parameter.NrBands).Count | Should -Be 0
+    }
+
+    It 'shows the Messages tab: how full the SIM is, the list, the new ones counted in its header' {
+        Update-MainWindow -View $script:views['Online']
+        $script:controls.MessagesTab.Header | Should -Be 'Messages (2)'
+        $script:controls.MessagesStateText.Text | Should -Be '4 of 70 places used on the SIM.'
+        @($script:controls.MessagesGrid.ItemsSource).Count | Should -Be 3
+        $script:controls.MessagesGrid.SelectedItem | Should -BeNullOrEmpty
+        $script:controls.DeleteMessageButton.IsEnabled | Should -BeFalse -Because 'nothing is selected'
+        $script:controls.SendMessageButton.IsEnabled | Should -BeTrue
+    }
+
+    It 'opens a new message the user selects, once, and shows it' {
+        Update-MainWindow -View $script:views['Online']
+        $items = @($script:controls.MessagesGrid.ItemsSource)
+        $script:controls.MessagesGrid.SelectedItem = $items[0]
+        $script:controls.MessagesGrid.SelectedItem = $items[2]
+        $script:controls.MessagesGrid.SelectedItem = $items[0]
+
+        $script:sent.Kind | Should -Be @('OpenMessage') -Because 'a message read is opened once, and one already read not at all'
+        $script:sent[0].Parameter.Fingerprints | Should -Be $items[0].Fingerprints
+        $script:controls.MessageHeaderText.Text | Should -Be $items[0].Header
+        $script:controls.MessageBodyText.Text | Should -Be $items[0].Text
+        $script:controls.DeleteMessageButton.IsEnabled | Should -BeTrue
+    }
+
+    It 'keeps the selection when the list is filled again, opening nothing' {
+        $view = $script:views['Online']
+        Update-MainWindow -View $view
+        $script:controls.MessagesGrid.SelectedItem = @($script:controls.MessagesGrid.ItemsSource)[2]
+        $refreshed = $view | Select-Object -Property *
+        $messages = $view.Messages | Select-Object -Property *
+        $messages.Items = [object[]]@($view.Messages.Items | ForEach-Object { $row = $_ | Select-Object -Property *; $row.New = $false; $row })
+        $refreshed.Messages = $messages
+        Update-MainWindow -View $refreshed
+
+        $script:controls.MessagesGrid.SelectedItem.Key | Should -Be $view.Messages.Items[2].Key
+        $script:sent | Should -BeNullOrEmpty
+        $script:controls.MessageHeaderText.Text | Should -Be $view.Messages.Items[2].Header
+    }
+
+    It 'deletes the selected message only after the user confirmed it' {
+        Update-MainWindow -View $script:views['Online']
+        $item = @($script:controls.MessagesGrid.ItemsSource)[2]
+        $script:controls.MessagesGrid.SelectedItem = $item
+        Invoke-Click $script:controls.DeleteMessageButton
+        $script:sent | Should -BeNullOrEmpty
+        $script:answer = $true
+        Invoke-Click $script:controls.DeleteMessageButton
+
+        $script:asked | Should -Be 2
+        $script:sent.Kind | Should -Be @('DeleteMessage')
+        $script:sent[0].Parameter.Fingerprints | Should -Be $item.Fingerprints
+    }
+
+    It 'sends the number and the text as typed, and keeps the text until the message is sent' {
+        $view = $script:views['Online']
+        Update-MainWindow -View $view
+        $script:controls.MessageToBox.Text = ' +10000000000 '
+        $script:controls.MessageTextBox.Text = 'hello'
+        Invoke-Click $script:controls.SendMessageButton
+        $script:sent.Kind | Should -Be @('SendMessage')
+        $script:sent[0].Parameter.Number | Should -Be '+10000000000'
+        $script:sent[0].Parameter.Text | Should -Be 'hello'
+        $script:controls.MessageTextBox.Text | Should -Be 'hello' -Because 'it is not sent yet'
+
+        $done = $view | Select-Object -Property *
+        $done.Messages = $view.Messages | Select-Object -Property *
+        $done.Messages.SentId = 'sent-1'
+        Update-MainWindow -View $done
+        $script:controls.MessageTextBox.Text | Should -Be '' -Because 'the message is sent'
+        $script:controls.MessageToBox.Text | Should -Be ' +10000000000 ' -Because 'the number may serve again'
+    }
+
+    It 'keeps a new text typed while the last message went out' {
+        $view = $script:views['Online']
+        Update-MainWindow -View $view
+        $script:controls.MessageToBox.Text = '+10000000000'
+        $script:controls.MessageTextBox.Text = 'hello'
+        Invoke-Click $script:controls.SendMessageButton
+        $script:controls.MessageTextBox.Text = 'another one'
+        $done = $view | Select-Object -Property *
+        $done.Messages = $view.Messages | Select-Object -Property *
+        $done.Messages.SentId = 'sent-1'
+        Update-MainWindow -View $done
+
+        $script:controls.MessageTextBox.Text | Should -Be 'another one'
+    }
+
+    It 'asks for a number and a text, and sends nothing without them' {
+        Update-MainWindow -View $script:views['Online']
+        $script:controls.MessageTextBox.Text = 'hello'
+        Invoke-Click $script:controls.SendMessageButton
+        $script:controls.MessageCountText.Text | Should -Be 'Enter a phone number and a text.'
+        $script:sent | Should -BeNullOrEmpty
+    }
+
+    It 'counts the characters and the parts as the text is typed' {
+        Update-MainWindow -View $script:views['Online']
+        $script:controls.MessageTextBox.Text = 'x' * 161
+        $script:controls.MessageCountText.Text | Should -Be 'Characters: 161 - parts: 2'
+        $script:controls.MessageTextBox.Text = ''
+        $script:controls.MessageCountText.Text | Should -Be ''
+    }
+
+    It 'says a message is going out, and sends no other meanwhile' {
+        $view = $script:views['Online']
+        $sending = $view | Select-Object -Property *
+        $sending.Messages = $view.Messages | Select-Object -Property *
+        $sending.Messages.SendingText = 'Sending the message...'
+        $sending.Messages.CanSend = $false
+        Update-MainWindow -View $sending
+        $script:controls.MessageCountText.Text | Should -Be 'Sending the message...'
+        $script:controls.SendMessageButton.IsEnabled | Should -BeFalse
+    }
+
+    It 'sends nothing without a modem, and says why' {
+        Update-MainWindow -View $script:views['NoDevice']
+        $script:controls.SendMessageButton.IsEnabled | Should -BeFalse
+        $script:controls.MessagesStateText.Text | Should -Be 'The modem is not connected.'
+        $script:controls.MessagesTab.Header | Should -Be 'Messages'
+    }
+
+    It 'shows the data used, and fills the cycle''s first day and the quota from the settings' {
+        Update-MainWindow -View $script:views['Online']
+        $script:controls.UsageTodayText.Text | Should -Be 'Today: 0 B (received 0 B, sent 0 B)'
+        $script:controls.UsageCycleText.Text | Should -Match '^This cycle, from \d{4}-\d{2}-01 to '
+        $script:controls.UsageQuotaText.Text | Should -Be 'No quota set.'
+        $script:controls.UsageQuotaBar.Visibility | Should -Be 'Collapsed'
+        $script:controls.CycleDayBox.Text | Should -Be '1'
+        $script:controls.QuotaBox.Text | Should -Be '0'
+    }
+
+    It 'shows the quota''s bar, red from a threshold on' {
+        $view = $script:views['Online'] | Select-Object -Property *
+        $view.Usage = [pscustomobject]@{ TodayText = 'today'; CycleText = 'cycle'; QuotaText = 'quota'; Percent = 85.5; Warning = $true }
+        Update-MainWindow -View $view
+        $script:controls.UsageQuotaBar.Visibility | Should -Be 'Visible'
+        $script:controls.UsageQuotaBar.Value | Should -Be 85.5
+        $script:controls.UsageQuotaBar.Foreground.Color.ToString() | Should -Be '#FFC0392B'
+    }
+
+    It 'leaves the Data tab''s form alone while the user types' {
+        Update-MainWindow -View $script:views['Online']
+        $script:controls.CycleDayBox.Text = '9'
+        Update-MainWindow -View $script:views['Online']
+        $script:controls.CycleDayBox.Text | Should -Be '9'
+    }
+
+    It 'saves the cycle''s first day and the quota - a decimal comma as a point -, the other settings as saved' {
+        $view = $script:views['Online'] | Select-Object -Property *
+        $saved = $view.Settings | Select-Object -Property *
+        $saved.Apn = 'internet'
+        $view.Settings = $saved
+        Update-MainWindow -View $view
+        $script:controls.ApnBox.Text = 'typed, not saved'
+        $script:controls.CycleDayBox.Text = '15'
+        $script:controls.QuotaBox.Text = '2,5'
+        Invoke-Click $script:controls.SaveUsageButton
+
+        $script:controls.UsageProblemText.Text | Should -Be ''
+        $script:sent.Kind | Should -Be @('SaveSettings')
+        $settings = $script:sent[0].Parameter.Settings
+        $settings.UsageCycleDay | Should -Be 15
+        $settings.UsageQuotaGB | Should -Be 2.5
+        $settings.Apn | Should -Be 'internet'
+    }
+
+    It 'refuses a cycle day it can''t take, and says so' {
+        Update-MainWindow -View $script:views['Online']
+        $script:controls.CycleDayBox.Text = '32'
+        Invoke-Click $script:controls.SaveUsageButton
+        $script:controls.UsageProblemText.Text | Should -Match 'UsageCycleDay'
+        $script:sent | Should -BeNullOrEmpty
+    }
+
+    It 'keeps the data usage settings as saved when the connection is saved' {
+        $view = $script:views['Online'] | Select-Object -Property *
+        $settings = $view.Settings | Select-Object -Property *
+        $settings.UsageCycleDay = 10
+        $settings.UsageQuotaGB = 5.5
+        $view.Settings = $settings
+        Update-MainWindow -View $view
+        $script:controls.CycleDayBox.Text = '20'
+        Invoke-Click $script:controls.SaveSettingsButton
+
+        $script:sent[0].Parameter.Settings.UsageCycleDay | Should -Be 10
+        $script:sent[0].Parameter.Settings.UsageQuotaGB | Should -Be 5.5
     }
 }

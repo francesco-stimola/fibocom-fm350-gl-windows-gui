@@ -67,6 +67,8 @@ Describe 'New-SimulatedDevice' {
         @($entries | ForEach-Object { (ConvertFrom-SmsPdu -Pdu $_.Pdu).Problem } | Where-Object { $_ }) | Should -BeNullOrEmpty
         $device.Modem.Messaging.Arrivals.Count | Should -Be 1
         $device.Modem.Messaging.Arrivals[0].AtMs | Should -Be 60000
+        $empty = (New-SimulatedDevice -Scenario Connect).Modem.Messaging
+        $empty.Stored.Count + $empty.Arrivals.Count | Should -Be 0 -Because 'a scenario may hold messages of its own, none here'
     }
 
     It 'keeps its messages across a restart, its notices off again' {
