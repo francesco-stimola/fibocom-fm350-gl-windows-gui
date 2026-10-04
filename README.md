@@ -56,9 +56,10 @@ adapter's IP address by hand. And when the link drops — it does — nothing br
   billing cycle has used, with an optional quota warning. Balance codes like `*123#` (USSD) get no
   reply from the FM350-GL on LTE, so they are not offered.
 - **eSIM** (since 1.2) — on modules with an embedded SIM: switch between the physical SIM and the
-  eSIM, each SIM — each eSIM profile — connecting with its own APN settings; list, enable,
-  disable, rename and delete eSIM profiles; download one from its activation
-  code, typed or read from the image of its QR code; the EID at hand, to copy. Through
+  eSIM, each SIM — each eSIM profile — connecting with its own APN settings and listing the
+  messages that came in on it; list, enable, disable, rename and delete eSIM profiles; download
+  one from its activation code, typed or read from the image of its QR code; the EID at hand, to
+  copy. Through
   [lpac](https://github.com/estkme-group/lpac). lpac takes the activation code — and, to rename a
   profile, its ICCID — on its command line: the app never logs them, but on a computer that
   records processes' command lines, as an IT department's may, they are recorded too.

@@ -4,6 +4,32 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-04 — Decided: each message by the SIM it came in on
+
+The profiles on the eUICC's slot share part of its storage (AT-COMMANDS §9, question 6): a profile
+listed messages received under another, and deleting them under one emptied the other's list. The
+maintainer's decision, for 1.2.0: the app remembers the SIM each message came in on, and a profile
+lists only its own (ARCHITECTURE → *SMS*). Rejected: a note that the profiles share the storage,
+which says so without telling which message is whose.
+- **Noted at the reading that marks it read.** A part the modem reports unread came in since the
+  storage was last read, on the SIM in use — the only one registered —, and listing marks it read:
+  it is noted then, with the SIM's fingerprint (as for its APN settings), its kind and an eSIM
+  profile's name, in one file encrypted with DPAPI; the newest 1000 parts. A message carries no
+  trace of its SIM, so what was already read when the app first saw it — the messages stored
+  before 1.2.0 — has no SIM known, and shows with every SIM: never hidden on a guess.
+- **The storage is checked before the SIM in use changes**, and read again only once a pass has
+  identified the next one: a message that came in just before a switch stays the SIM's it came
+  on. Until then the list is empty, not the other SIM's.
+- **Another profile's messages are hidden, not deleted**: they show, and can be deleted, when that
+  profile is in use; the tab says how many it doesn't show, and they are not counted as new. A
+  message of a SIM not there now — a deleted profile, another physical SIM — or not known to be
+  there is listed with a note naming that SIM, a deleted profile by its name as it was last:
+  hidden, it would hold its place in the storage for good.
+
+On the device, before this: `+ICCID` on the eUICC's slot answers the enabled profile's ICCID, as
+lpac lists it, at the first pass after each switch (AT-COMMANDS §8, question 8); each SIM's APN
+settings followed every switch.
+
 ## 2026-10-04 — Decided: each SIM its own APN settings; a button for each SIM
 
 The modem uses one SIM at a time, and a slot switch or an eSIM profile changes the operator: one

@@ -34,7 +34,11 @@ All notable changes to this project are documented here. The format follows
 - A silent message — one the network asks never to show — is listed in the *Messages* tab, marked
   and without its text, so it can be deleted: it takes a place on the SIM. It is never announced.
 - The *Messages* tab names the SIM in use: the modem uses one at a time, a message goes out from
-  it, and the list is what the modem keeps for its slot.
+  it, and the list is what the modem keeps for its slot. On the eSIM's slot, whose profiles share
+  part of that storage, a profile lists only the messages that came in on it — the tab says how
+  many of another profile's it doesn't show —, and a message of a profile deleted since names it.
+  The app notes each message's SIM as it comes in: the messages stored before this version show
+  with every SIM.
 
 ## [1.1.0] - 2026-10-04
 

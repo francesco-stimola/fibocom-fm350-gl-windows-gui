@@ -1074,10 +1074,24 @@ What a prepaid or capped SIM needs day to day (facts: `AT-COMMANDS.md` §9).
   validity period (the centre's own); parts joined by a one-octet reference.
 - **Which SIM** (decided 2026-10-04): the modem uses one SIM at a time, so a message goes out from
   the SIM in use, and the list is what the modem stores for the slot in use — each slot has a
-  storage of its own (`AT-COMMANDS.md` §9). The *Messages* tab names the SIM in use above the list,
-  and says by *Send* that the message goes out from it and where to put the other one in use. A
-  message received carries no trace of the SIM that received it; whether two eSIM profiles share
-  their slot's storage is not known yet (§9).
+  storage of its own, and on the eUICC's slot the profiles share part of it (`AT-COMMANDS.md` §9).
+  The *Messages* tab names the SIM in use above the list, and says by *Send* that the message goes
+  out from it and where to put the other one in use.
+- **Each message by the SIM it came in on** (decided 2026-10-04). A stored message carries no trace
+  of the SIM that received it, so the app remembers it: a part listed unread came in since the
+  storage was last read, on the SIM in use — the only one registered —, and is noted with that SIM
+  (told as for its APN settings: the SHA-256 of its ICCID), the kind of SIM and an eSIM profile's
+  name, in one file encrypted with DPAPI for the user — fingerprints and a name, no text, no
+  number; the newest 1000 parts. Before the SIM in use changes — a slot switched, a profile enabled
+  or disabled — the storage is checked, so what came in on it is not told as the next one's; after,
+  the list is emptied and read again once a pass has identified the new SIM. On a profile, the
+  messages that came in on **another profile still on the eUICC are not listed**: the tab says how
+  many, and they show — and can be deleted — when that profile is in use. A message that came in on
+  a SIM not there now (a deleted profile, another physical SIM), or not known to be there (the
+  eUICC's profiles not read), is listed with a note naming that SIM: a deleted profile by its name
+  as it was last. A part already read when the app first saw it, or one that came in while the SIM
+  in use couldn't be identified, has no SIM known and shows with every SIM. A new message hidden is
+  not counted as new.
 - **The modem stores, then announces.** Once the SIM is ready on a newly opened port, the worker
   sets `AT+CNMI=2,1,0,0,0`, so that a new message is saved on the modem and announced with
   `+CMTI: <storage>,<index>` — on the MD AT port, data up or not (`AT-COMMANDS.md` §9). Notices start
@@ -1246,7 +1260,8 @@ src/
     Usage.ps1            data usage: the adapter's counters accumulated, the cycle, the quota (M8,
                          pure), their reading and file
     Sms.ps1              SMS: the PDU codec, long messages joined and split, the storage's
-                         answers, what is new (M8, pure); the file of what is new
+                         answers, what is new and the SIM each part came in on (M8, M9, pure);
+                         their files
     Sim.ps1              SIM PIN: states, the decision, the encrypted store, removing it (M2)
     Esim.ps1             eSIM: lpac's lines and command lines, the bridge to AT+CCHO/+CGLA/+CCHC
                          (pure), the SIM slot's reads; lpac run to its end; the SM-DP+'s HTTPS (M9)
