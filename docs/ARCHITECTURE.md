@@ -743,7 +743,12 @@ from the logo's geometry at every size an icon file needs, no image file in the 
   process dies after days; a test counts the process's GDI and USER objects over hundreds of
   redraws.
 - Tooltip, 127 characters at most: online, the technology, the operator, the RSRP; otherwise why
-  not, in a few words. Menu: a newer release, only when there is one (M7, *Updates*) — its page —,
+  not, in a few words; on a second line the data used today and in the cycle, against the quota
+  when there is one (M8) — the first line is cut to make room. **Notifications** (M8,
+  `Get-TrayNotice`): new messages — how many, the newest one's sender, never the text; a click
+  opens the *Messages* tab — and a quota threshold, each once: the snapshot's announcement Ids
+  carry over to the next worker, so a restart repeats nothing, and a notice the tray can't show
+  yet waits for the next change. Menu: a newer release, only when there is one (M7, *Updates*) — its page —,
   *Open*, *Check now* (a connect pass now), *Network mode* — the modes the modem supports, its own
   checked, a click tries another one, the bands as the settings have them (M5) —, *Exit*. The menu
   is filled from the latest snapshot as it opens. A left click opens the window.

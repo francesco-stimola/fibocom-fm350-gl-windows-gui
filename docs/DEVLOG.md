@@ -4,6 +4,25 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-04 — M8: the Messages and Data tabs, the tooltip, the notifications
+
+The window and the tray show what the worker reads (ARCHITECTURE → *Tray icon*, *SMS*):
+- **Pure views**, each with its matrix of tests: `Get-MessagesView` (the list, newest first, a
+  message's text or why it has none, the parts missing, why there are no messages),
+  `Get-UsageView`, `Get-TrayNotice`, and the tooltip's second line; sizes in decimal units — a
+  gigabyte is 10^9 bytes, as the quota counts it — in the invariant culture.
+- **Selecting a message opens it**, once: a selection the window restores after a refresh opens
+  nothing. The list is filled again only when it changed, so the selection stays.
+- **The text being written stays until its message is sent**, and a new text typed meanwhile is
+  kept: a failed message is the user's to send again.
+- **Each tab saves its own settings, the others' as saved**: saving the connection used to send
+  the form's fields alone, which would have put the data usage settings back to their defaults.
+  The quota takes a decimal comma as a point.
+- **A notification waits until the tray icon shows**, and each is shown once, by the Ids the
+  worker carries over; a click on one about messages opens their tab.
+- The *Connect* scenario's SIM holds no message: the app's own end-to-end test starts it, and
+  should not leave a notification behind in Windows.
+
 ## 2026-10-04 — M8: messages in the worker
 
 The worker reads, opens, deletes and sends messages (ARCHITECTURE → *SMS*):

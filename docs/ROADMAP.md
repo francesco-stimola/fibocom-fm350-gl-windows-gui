@@ -21,7 +21,7 @@ written `(planned)`.
 | [M5 — Modes & bands](#m5) | ✅ complete |
 | [M6 — Driver installation](#m6) | ✅ complete |
 | [M7 — Packaging & first release](#m7) — tag `v1.0.0` | ✅ complete |
-| [M8 — SMS, USSD & data usage](#m8) — tag `v1.1.0` (planned) | 📋 planned |
+| [M8 — SMS, USSD & data usage](#m8) — tag `v1.1.0` (planned) | 🔨 code-complete |
 | [M9 — eSIM](#m9) — tag `v1.2.0` (planned) | 📋 planned |
 
 ---
@@ -149,12 +149,12 @@ balance codes by USSD were tried and left out (design: ARCHITECTURE → *SMS, US
 
 - [x] Device session: answer the open questions in `AT-COMMANDS.md` §9 — storages, which port gets new-message notices, USSD on LTE / NSA / SA with a real operator. *Answered on LTE: the notices come on the MD AT port, data up or not; sending works; USSD gets no reply. Messages on NSA and SA not seen, written down as open in §9.*
 - [x] SMS codec as pure functions written from 3GPP TS 23.040 and 23.038, with a matrix of tests: PDU decoding, GSM 7-bit (with the extension table) and UCS-2, long messages reassembled from their parts; PDU encoding for sending, splitting long messages (`Sms.ps1`; facts in `AT-COMMANDS.md` §9, *SMS PDUs*).
-- [ ] Receive: new-message notices from the modem, a tray notification, an inbox in the main window; read and delete on the modem's storage. No copy of the messages on disk.
-- [ ] Send a message.
+- [x] Receive: new-message notices from the modem, a tray notification, an inbox in the main window; read and delete on the modem's storage. No copy of the messages on disk. *The worker lists the storage on a notice, after a command and when a pass finds its count changed (`Update-WorkerInbox`); what is new survives restarts as fingerprints in an encrypted file; the tray names the newest sender only.*
+- [x] Send a message. *Part by part (`Send-AtMessagePdu`), never sent again by itself; verified on the device, one part and two.*
 - [x] ~~USSD: send a code, show the reply, answer a menu, cancel.~~ **Left out, as the best-effort rule said**: on the device the modem accepts `AT+CUSD` and never replies, on LTE with two SIMs and either string format (`AT-COMMANDS.md` §9, *USSD*).
-- [ ] Data usage: the modem adapter's byte counters, sampled by the worker, accumulated across counter resets (pure function) and persisted; today and the current billing cycle (start day in settings); an optional quota with a tray warning (at 80% and 100%, once per cycle; decided 2026-10-04). Never disconnects. *Counting, the cycle, the quota and the file are done (`Usage.ps1`, in the worker); the tray warning comes with the UI.*
-- [ ] Phone numbers and message text never logged.
-- [ ] UI: messages in the main window; usage in the window and the tooltip.
+- [x] Data usage: the modem adapter's byte counters, sampled by the worker, accumulated across counter resets (pure function) and persisted; today and the current billing cycle (start day in settings); an optional quota with a tray warning (at 80% and 100%, once per cycle; decided 2026-10-04). Never disconnects. *Counting, the cycle, the quota and the file are done (`Usage.ps1`, in the worker); the tray warning is `Get-TrayNotice`.*
+- [x] Phone numbers and message text never logged. *The worker logs counts and the modem's answers; a failed message command's detail is the error's type; the log's redaction catches quoted numbers and PDUs besides.*
+- [x] UI: messages in the main window; usage in the window and the tooltip. *A Messages tab and a Data tab (decided 2026-10-04), the tooltip's second line, the tray's notifications, in the eight languages.*
 
 <a id="m9"></a>
 ## M9 — eSIM

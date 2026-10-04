@@ -7,6 +7,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Text messages: the messages on the SIM in a *Messages* tab — new ones marked, long messages
+  joined from their parts, any alphabet, emoji included —, opened by selecting them, deleted after
+  a confirmation; a box to write one, with its count of characters and parts, sent part by part
+  and never sent again by itself. New messages are announced in the tray by their sender only, and
+  stay new across restarts (fingerprints in an encrypted file, no text and no number). Phone
+  numbers and texts never reach the log.
+- Data usage: counted from the modem adapter's byte counters across their resets, today and in
+  the billing cycle (its first day a setting), with an optional quota said in the tray at 80% and
+  100%, once per cycle — never a disconnection. In a *Data* tab and in the tooltip.
+- Development mode: the simulated SIM holds messages, and receives one a minute after the start.
+
+### Not added
+- USSD balance codes: on LTE the FM350-GL accepts the request and never answers
+  (`docs/AT-COMMANDS.md` §9).
+
 ## [1.0.0] - 2026-10-03
 
 ### Added
