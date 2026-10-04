@@ -19,6 +19,9 @@ Describe 'Get-AtCommandTimeout' {
         @{ Command = 'AT+CGATT=1'; Expected = 15000 }
         @{ Command = 'AT+CUSD=1,"*100#",15'; Expected = 10000 }
         @{ Command = 'AT+CMGL=4'; Expected = 5000 }
+        # Not in the manual: measured on our eUICC, decided 2026-10-04.
+        @{ Command = 'AT+CGLA=1,16,"81E2910003BF2D00"'; Expected = 10000 }
+        @{ Command = 'AT+CCHO="A0000005591010FFFFFFFF8900000100"'; Expected = 3000 }
         # Documented under 3 s, or not listed: the minimum.
         @{ Command = 'AT+CMGR=1'; Expected = 3000 }
         @{ Command = 'AT+CSQ'; Expected = 3000 }

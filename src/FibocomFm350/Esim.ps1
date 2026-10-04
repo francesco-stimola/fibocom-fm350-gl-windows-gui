@@ -11,12 +11,85 @@
 $script:LpacRelativePath = 'lpac\lpac.exe'
 
 # lpac's settings for every run (AT-COMMANDS section 8), named in full: unset, lpac picks backends
-# of its own - one opens the COM port itself. 120-byte segments make APDUs of 125 bytes at most,
-# below the 131 the device carried intact.
+# of its own - one opens the COM port itself. Both through standard input and output: the APDUs go
+# to the eUICC through the worker, the HTTPS requests to the SM-DP+ are made by the app, which
+# checks the server's certificate (decided 2026-10-04). lpac's ES10 segments are 120 bytes: APDUs
+# of 125 bytes at most, below the 131 the device carried intact.
 $script:LpacEnvironment = [ordered]@{
-    LPAC_APDU             = 'stdio'
-    LPAC_HTTP             = 'curl'
-    LPAC_CUSTOM_ES10X_MSS = '120'
+    LPAC_APDU = 'stdio'
+    LPAC_HTTP = 'stdio'
+}
+
+# What lpac may ask of the network (AT-COMMANDS section 8): a POST to an SM-DP+'s ES9+ function,
+# with lpac's three headers; anything else is refused unsent.
+$script:EsimHttpFunctions = @('initiateAuthentication', 'authenticateClient', 'getBoundProfilePackage', 'cancelSession', 'handleNotification')
+$script:EsimHttpHeaders = @('User-Agent', 'X-Admin-Protocol', 'Content-Type')
+
+# The CI roots an SM-DP+'s TLS certificate may chain to, besides those Windows trusts: the GSMA's,
+# which issues the SM-DP+ servers' certificates (AT-COMMANDS section 8). Loaded once.
+$script:EsimCiFile = 'Data/GsmaRsp2RootCi1.pem'
+$script:EsimCiRoots = $null
+
+# The SM-DP+'s answer is held in memory: a bound profile package is tens of kilobytes; this is far
+# above it, and below what could hurt the process.
+$script:EsimHttpMaxBytes = 8MB
+
+# The HTTPS client: every request its own, no redirect followed, no cookie kept, a certificate
+# Windows doesn't trust taken only when it chains to one of the CI roots given and names its host.
+if (-not ('FibocomFm350.EsimHttp' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Net.Http;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+
+namespace FibocomFm350
+{
+    public static class EsimHttp
+    {
+        public static HttpClient CreateClient(X509Certificate2Collection roots, int timeoutMs, long maxBytes)
+        {
+            var handler = new SocketsHttpHandler();
+            handler.AllowAutoRedirect = false;
+            handler.UseCookies = false;
+            handler.SslOptions.RemoteCertificateValidationCallback = (sender, certificate, chain, errors) => Validate(roots, certificate, chain, errors);
+            var client = new HttpClient(handler, true);
+            client.Timeout = TimeSpan.FromMilliseconds(timeoutMs);
+            client.MaxResponseContentBufferSize = maxBytes;
+            return client;
+        }
+
+        // A certificate Windows trusts, or one with the host's name whose chain ends at one of
+        // the roots given. Revocation is not checked against those roots: their lists are offline.
+        public static bool Validate(X509Certificate2Collection roots, X509Certificate certificate, X509Chain chain, SslPolicyErrors errors)
+        {
+            if (errors == SslPolicyErrors.None)
+            {
+                return true;
+            }
+            if (certificate == null || (errors & ~SslPolicyErrors.RemoteCertificateChainErrors) != SslPolicyErrors.None)
+            {
+                return false;
+            }
+            var leaf = certificate as X509Certificate2 ?? X509CertificateLoader.LoadCertificate(certificate.GetRawCertData());
+            using (var custom = new X509Chain())
+            {
+                custom.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+                custom.ChainPolicy.CustomTrustStore.AddRange(roots);
+                custom.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+                if (chain != null)
+                {
+                    foreach (var element in chain.ChainElements)
+                    {
+                        custom.ChainPolicy.ExtraStore.Add(element.Certificate);
+                    }
+                }
+                return custom.Build(leaf);
+            }
+        }
+    }
+}
+'@
 }
 
 # Variables of lpac's and its library's taken out of what lpac inherits: the user's environment
@@ -76,8 +149,8 @@ function ConvertFrom-LpacLine {
         kind carries:
         - 'Apdu': Function ('connect', 'disconnect', 'logic_channel_open',
           'logic_channel_close', 'transmit') and Parameter (hexadecimal in upper case, or $null).
-        - 'Http': Url - a request for the network, which lpac sends only with its 'stdio' HTTP
-          backend.
+        - 'Http': a request for the network (lpac's 'stdio' HTTP backend): Url, Body (its
+          content in hexadecimal, upper case) and Headers ('<name>: <value>' each).
         - 'Progress': Step, the payload's message. Its data is left out: it can hold the
           profile's ICCID.
         - 'Result': Code (0: success), Message, Data (the payload's data as parsed: an object, a
@@ -124,7 +197,13 @@ function ConvertFrom-LpacLine {
             }
         }
         'http' {
-            [pscustomobject]@{ Kind = 'Http'; Url = [string](Get-LpacField -Object $payload -Name 'url') }
+            $body = Get-LpacField -Object $payload -Name 'tx'
+            [pscustomobject]@{
+                Kind    = 'Http'
+                Url     = [string](Get-LpacField -Object $payload -Name 'url')
+                Body    = if ($body -is [string]) { $body.ToUpperInvariant() } else { $null }
+                Headers = [string[]]@(Get-LpacField -Object $payload -Name 'headers' | Where-Object { $_ -is [string] })
+            }
         }
         { $_ -in 'lpa', 'progress' } {
             $code = Get-LpacField -Object $payload -Name 'code'
@@ -338,6 +417,183 @@ function ConvertTo-LpacAnswerLine {
     [ordered]@{ type = 'apdu'; payload = $payload } | ConvertTo-Json -Compress -Depth 3
 }
 
+function Resolve-LpacHttpRequest {
+    <#
+    .SYNOPSIS
+        Checks one of lpac's requests for the network, and makes it what the app sends.
+    .DESCRIPTION
+        A pure decision (ARCHITECTURE -> eSIM). -Request is ConvertFrom-LpacLine's, of kind
+        'Http'. lpac posts to an SM-DP+'s ES9+ functions (AT-COMMANDS section 8):
+        https://<host>/gsma/rsp2/es9plus/<function>, with three headers. Returns Uri, Host, Body
+        (bytes), Headers (name -> value) and Problem: $null, or 'Url' (another scheme, a host that
+        is no host name, a port, a path that is no ES9+ function, a query), 'Body' (not
+        hexadecimal), 'Header' (another header, or one without a value). A request with a problem
+        is never sent.
+    .EXAMPLE
+        Resolve-LpacHttpRequest -Request (ConvertFrom-LpacLine -Line $line)
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [object] $Request
+    )
+
+    $outcome = {
+        param($problem, $uri, $hostName, $body, $headers)
+        [pscustomobject]@{ Uri = $uri; Host = $hostName; Body = $body; Headers = $headers; Problem = $problem }
+    }
+    $url = [string]$Request.Url
+    $functions = ($script:EsimHttpFunctions | ForEach-Object { [regex]::Escape($_) }) -join '|'
+    $pattern = '^https://((?=.{1,253}/)(?![0-9.]+/)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+)/gsma/rsp2/es9plus/(?:' + $functions + ')$'
+    if ($url -notmatch $pattern) {
+        return & $outcome 'Url' $null $null $null $null
+    }
+    $hostName = $Matches[1].ToLowerInvariant()
+    $hex = [string]$Request.Body
+    if ($hex -and -not (Test-HexText -Text $hex)) {
+        return & $outcome 'Body' $null $hostName $null $null
+    }
+    $headers = [ordered]@{}
+    foreach ($header in @($Request.Headers)) {
+        if ([string]$header -notmatch '^([A-Za-z-]+):\s*(\S.*)$' -or $Matches[1] -notin $script:EsimHttpHeaders) {
+            return & $outcome 'Header' $null $hostName $null $null
+        }
+        $headers[$Matches[1]] = $Matches[2].Trim()
+    }
+    # Never through an if expression: it would make an empty array $null.
+    $body = [byte[]]::new(0)
+    if ($hex) {
+        $body = [Convert]::FromHexString($hex)
+    }
+    & $outcome $null ([uri]$url) $hostName $body $headers
+}
+
+function ConvertTo-LpacHttpAnswerLine {
+    <#
+    .SYNOPSIS
+        Writes the server's answer for lpac as the line its standard input takes.
+    .DESCRIPTION
+        {"type":"http","payload":{"rcode":<Status>,"rx":"<Body in hexadecimal>"}} (AT-COMMANDS
+        section 8). A request that couldn't be made is answered with status 0: lpac reads any
+        status but 2xx as the server's error. No line end: the caller adds it.
+    .EXAMPLE
+        ConvertTo-LpacHttpAnswerLine -Status 200 -Body $bytes
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [int] $Status,
+
+        [AllowNull()]
+        [byte[]] $Body
+    )
+
+    $hex = if ($Body) { [Convert]::ToHexString($Body) } else { '' }
+    [ordered]@{ type = 'http'; payload = [ordered]@{ rcode = $Status; rx = $hex } } | ConvertTo-Json -Compress -Depth 3
+}
+
+function Get-EsimCiRoot {
+    <#
+    .SYNOPSIS
+        Returns the CI roots an SM-DP+'s TLS certificate may chain to: the GSMA's.
+    .DESCRIPTION
+        GSM Association - RSP2 Root CI1, read once from the module's data (AT-COMMANDS section 8
+        says where it comes from and its SHA-256): the CI that issues the SM-DP+ servers'
+        certificates, which Windows doesn't trust.
+    .EXAMPLE
+        Get-EsimCiRoot
+    #>
+    [CmdletBinding()]
+    [OutputType([System.Security.Cryptography.X509Certificates.X509Certificate2Collection])]
+    param()
+
+    if (-not $script:EsimCiRoots) {
+        $roots = [System.Security.Cryptography.X509Certificates.X509Certificate2Collection]::new()
+        $roots.ImportFromPem([System.IO.File]::ReadAllText((Join-Path -Path $PSScriptRoot -ChildPath $script:EsimCiFile)))
+        $script:EsimCiRoots = $roots
+    }
+    # The collection itself, not its certificates one by one.
+    Write-Output -InputObject $script:EsimCiRoots -NoEnumerate
+}
+
+function Invoke-EsimHttpRequest {
+    <#
+    .SYNOPSIS
+        Sends one of lpac's requests to its SM-DP+ over HTTPS, and returns the answer.
+    .DESCRIPTION
+        -Request is Resolve-LpacHttpRequest's, with no problem. A POST of its body with its
+        headers, nothing else - no cookie, no redirect followed -; the server's certificate taken
+        when Windows trusts it, or when it names the host and chains to a CI root
+        (Get-EsimCiRoot). Waits at most -TimeoutMs, -Beat between waits of a second: the worker's
+        heartbeat. Returns Status (the HTTP status; 0 when there was no answer), Body (bytes) and
+        Failure: $null, 'Certificate' (refused), 'Timeout' or 'Network' (anything else - an
+        answer over 8 MB too). Nothing of the request or the answer is logged here.
+    .EXAMPLE
+        $answer = Invoke-EsimHttpRequest -Request $request -TimeoutMs 60000
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [object] $Request,
+
+        [ValidateRange(1, [int]::MaxValue)]
+        [int] $TimeoutMs = 60000,
+
+        [scriptblock] $Beat = {}
+    )
+
+    $outcome = { param($status, $body, $failure) [pscustomobject]@{ Status = $status; Body = $body; Failure = $failure } }
+    $client = [FibocomFm350.EsimHttp]::CreateClient((Get-EsimCiRoot), $TimeoutMs, $script:EsimHttpMaxBytes)
+    $message = $null
+    try {
+        $message = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Post, $Request.Uri)
+        $message.Content = [System.Net.Http.ByteArrayContent]::new([byte[]]$Request.Body)
+        foreach ($name in $Request.Headers.Keys) {
+            # Never through an if expression: a header collection is enumerable, and would unroll.
+            if ($name -eq 'Content-Type') {
+                [void]$message.Content.Headers.TryAddWithoutValidation($name, [string]$Request.Headers[$name])
+            }
+            else {
+                [void]$message.Headers.TryAddWithoutValidation($name, [string]$Request.Headers[$name])
+            }
+        }
+        $send = $client.SendAsync($message)
+        while (-not $send.Wait(1000)) {
+            & $Beat
+        }
+        $response = $send.Result
+        try {
+            $read = $response.Content.ReadAsByteArrayAsync()
+            while (-not $read.Wait(1000)) {
+                & $Beat
+            }
+            & $outcome ([int]$response.StatusCode) $read.Result $null
+        }
+        finally {
+            $response.Dispose()
+        }
+    }
+    catch {
+        # The cause is somewhere among the inner exceptions: a refused certificate, a timeout, or
+        # anything else on the way - the network, an answer over the limit.
+        $failure = 'Network'
+        $exception = $_.Exception
+        while ($exception) {
+            if ($exception -is [System.Security.Authentication.AuthenticationException]) { $failure = 'Certificate'; break }
+            if ($exception -is [System.TimeoutException] -or $exception -is [System.Threading.Tasks.TaskCanceledException]) { $failure = 'Timeout'; break }
+            $exception = $exception.InnerException
+        }
+        & $outcome 0 $null $failure
+    }
+    finally {
+        if ($message) { $message.Dispose() }
+        $client.Dispose()
+    }
+}
+
 function ConvertFrom-AtLogicalChannel {
     <#
     .SYNOPSIS
@@ -497,7 +753,7 @@ function ConvertFrom-EsimActivationCode {
         return & $outcome 'Format' $fields
     }
     # A host name: lpac puts it in https://<address>/... as it is.
-    if ($fields[1] -notmatch '^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$') {
+    if ($fields[1] -notmatch '^(?=.{1,253}$)(?![0-9.]+$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$') {
         return & $outcome 'Address' $fields
     }
     if ($fields[2] -notmatch '^[A-Za-z0-9-]*$') {
@@ -841,10 +1097,11 @@ function Invoke-LpacOperation {
     .DESCRIPTION
         -Lpac is a running lpac: Start-LpacProcess's, or a simulated one of the same shape
         (ReadLine, WriteLine, Ended, ExitCode, Stop, Dispose). This function owns it from here:
-        it is stopped and disposed whatever happens. Each request lpac writes is translated
+        it is stopped and disposed whatever happens. Each APDU request lpac writes is translated
         (Resolve-LpacApduRequest), carried on -Channel, and answered (Resolve-LpacApduAnswer);
-        each step of its progress noted; its result kept. A request for the network is answered
-        as a failure: the app runs lpac with its own HTTP backend.
+        each request for the network is checked (Resolve-LpacHttpRequest) and sent by -Http -
+        Invoke-EsimHttpRequest, unless the tests give another -, one that fails the check never
+        sent and answered as a failure; each step of its progress noted; its result kept.
 
         It ends when lpac's output ends, or after -TimeoutMs (lpac stopped), or when the AT port
         is lost (likewise). Channels left open - lpac stopped, a close that went unanswered - are
@@ -854,7 +1111,9 @@ function Invoke-LpacOperation {
         Returns Outcome - 'Done' (lpac gave its result: Code 0 or not), 'NoResult' (it ended
         without one), 'Timeout' or 'PortLost' -, Code, Message and Data (lpac's result; on a
         failure Data is lpac's short reason), Steps (the progress, in order), Requests (how many
-        APDU requests) and ElapsedMs. Nothing of the APDUs or of lpac's lines is logged here.
+        APDU requests), HttpRequests, HttpFailure (the last request for the network that failed:
+        its check's problem, or Invoke-EsimHttpRequest's failure, and the host) and ElapsedMs.
+        Nothing of the APDUs, the requests or lpac's lines is logged here.
     .EXAMPLE
         $run = Invoke-LpacOperation -Channel $channel -Lpac (Start-LpacProcess -Argument (Get-LpacArgument -Operation ProfileList))
     #>
@@ -870,7 +1129,11 @@ function Invoke-LpacOperation {
         [ValidateRange(1, [int]::MaxValue)]
         [int] $TimeoutMs = 300000,
 
-        [scriptblock] $Beat = {}
+        [scriptblock] $Beat = {},
+
+        # Sends a checked request: param($request, $timeoutMs, $beat); returns Status, Body,
+        # Failure.
+        [scriptblock] $Http = { param($request, $timeoutMs, $beat) Invoke-EsimHttpRequest -Request $request -TimeoutMs $timeoutMs -Beat $beat }
     )
 
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
@@ -878,6 +1141,8 @@ function Invoke-LpacOperation {
     $steps = [System.Collections.Generic.List[string]]::new()
     $result = $null
     $requests = 0
+    $httpRequests = 0
+    $httpFailure = $null
     $outcome = $null
     try {
         while (-not $outcome) {
@@ -915,7 +1180,19 @@ function Invoke-LpacOperation {
                     }
                 }
                 'Http' {
-                    $Lpac.WriteLine('{"type":"http","payload":{"rcode":500,"rx":""}}')
+                    $httpRequests++
+                    $request = Resolve-LpacHttpRequest -Request $read
+                    if ($request.Problem) {
+                        $httpFailure = "$($request.Problem)$(if ($request.Host) { " $($request.Host)" })"
+                        $Lpac.WriteLine((ConvertTo-LpacHttpAnswerLine -Status 0))
+                    }
+                    else {
+                        $reply = & $Http $request ([int][Math]::Max(1, $TimeoutMs - $clock.ElapsedMilliseconds)) $Beat
+                        if ($reply.Failure) {
+                            $httpFailure = "$($reply.Failure) $($request.Host)"
+                        }
+                        $Lpac.WriteLine((ConvertTo-LpacHttpAnswerLine -Status $reply.Status -Body $reply.Body))
+                    }
                 }
                 'Progress' {
                     $steps.Add($read.Step)
@@ -936,12 +1213,14 @@ function Invoke-LpacOperation {
         }
     }
     [pscustomobject]@{
-        Outcome   = $outcome
-        Code      = if ($result) { $result.Code } else { $null }
-        Message   = if ($result) { $result.Message } else { $null }
-        Data      = if ($result) { $result.Data } else { $null }
-        Steps     = [string[]]$steps
-        Requests  = $requests
-        ElapsedMs = $clock.ElapsedMilliseconds
+        Outcome      = $outcome
+        Code         = if ($result) { $result.Code } else { $null }
+        Message      = if ($result) { $result.Message } else { $null }
+        Data         = if ($result) { $result.Data } else { $null }
+        Steps        = [string[]]$steps
+        Requests     = $requests
+        HttpRequests = $httpRequests
+        HttpFailure  = $httpFailure
+        ElapsedMs    = $clock.ElapsedMilliseconds
     }
 }

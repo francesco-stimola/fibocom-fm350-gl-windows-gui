@@ -70,7 +70,8 @@ $script:DriverCommandKinds = @('CheckDriverPackage', 'InstallDriver', 'Uninstall
 $script:EsimCommandKinds = @('ReadEsim', 'SelectSimSlot', 'EnableProfile', 'DisableProfile', 'SetProfileNickname', 'DeleteProfile', 'DownloadProfile')
 
 # How long one run of lpac may take, in ms: a download talks to the operator's server, the rest
-# to the eUICC alone. Provisional: the maintainer's decision (ROADMAP -> Open decisions).
+# to the eUICC alone. On the device a download took 16.5 s, the rest under 3 s (decided
+# 2026-10-04).
 $script:EsimTimeoutMs = @{ Download = 300000; Other = 60000 }
 
 # A DoH server named by its template: how long its first lookup is waited for before a pass (most
@@ -2028,14 +2029,16 @@ function Invoke-WorkerLpac {
 
 function Get-WorkerLpacFailure {
     # What went wrong in a run of lpac, in a few words for the log and the window: its outcome,
-    # or the step that failed and lpac's reason. $null when it succeeded.
+    # or the step that failed and lpac's reason - and the last request for the network that
+    # failed, with its host. $null when it succeeded.
     param([object] $Run)
 
+    $network = if ($Run.PSObject.Properties['HttpFailure'] -and $Run.HttpFailure) { " (HTTPS: $($Run.HttpFailure))" } else { '' }
     if ($Run.Outcome -ne 'Done') {
-        return $Run.Outcome
+        return "$($Run.Outcome)$network"
     }
     if ($Run.Code -ne 0) {
-        return "$($Run.Message)$(if ($Run.Data -is [string] -and $Run.Data) { ": $($Run.Data)" })"
+        return "$($Run.Message)$(if ($Run.Data -is [string] -and $Run.Data) { ": $($Run.Data)" })$network"
     }
     $null
 }

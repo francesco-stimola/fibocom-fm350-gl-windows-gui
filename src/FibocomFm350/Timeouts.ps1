@@ -2,13 +2,16 @@
 # design: docs/ARCHITECTURE.md -> AT channel.
 
 # Commands the vendor manual documents as taking longer than the minimum, with their worst case in
-# ms. Every other command is documented under 3 s.
+# ms. Every other command is documented under 3 s - but +CGLA, which the manual doesn't document:
+# an APDU of a profile's installation took up to 1.7 s on our eUICC (AT-COMMANDS section 8), and a
+# timeout halfway fails the download (decided 2026-10-04).
 $script:AtCommandDurations = @{
     '+COPS'  = 180000
     '+CMGS'  = 60000
     '+CGACT' = 30000
     '+CGATT' = 15000
     '+CUSD'  = 10000
+    '+CGLA'  = 10000
     '+CMGL'  = 5000
 }
 

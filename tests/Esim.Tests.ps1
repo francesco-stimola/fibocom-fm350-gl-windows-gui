@@ -257,6 +257,186 @@ Describe 'ConvertTo-LpacAnswerLine' {
     }
 }
 
+Describe 'Resolve-LpacHttpRequest' {
+    It 'takes <Name>' -ForEach @(
+        @{ Name = 'initiateAuthentication'; Url = 'https://smdp.example.com/gsma/rsp2/es9plus/initiateAuthentication'; Body = '7B7D'; HostName = 'smdp.example.com' }
+        @{ Name = 'authenticateClient'; Url = 'https://smdp.example.com/gsma/rsp2/es9plus/authenticateClient'; Body = ''; HostName = 'smdp.example.com' }
+        @{ Name = 'getBoundProfilePackage'; Url = 'https://smdp.example.com/gsma/rsp2/es9plus/getBoundProfilePackage'; Body = '00'; HostName = 'smdp.example.com' }
+        @{ Name = 'cancelSession'; Url = 'https://smdp.example.com/gsma/rsp2/es9plus/cancelSession'; Body = '00'; HostName = 'smdp.example.com' }
+        @{ Name = 'handleNotification'; Url = 'https://smdp.example.com/gsma/rsp2/es9plus/handleNotification'; Body = '00'; HostName = 'smdp.example.com' }
+        @{ Name = 'a host in capitals, read in lower case'; Url = 'https://RSP.Example.ORG/gsma/rsp2/es9plus/initiateAuthentication'; Body = ''; HostName = 'rsp.example.org' }
+    ) {
+        $request = Resolve-LpacHttpRequest -Request ([pscustomobject]@{ Url = $Url; Body = $Body; Headers = [string[]]@('User-Agent: gsma-rsp-lpad', 'X-Admin-Protocol: gsma/rsp/v2.2.0', 'Content-Type: application/json') })
+        $request.Problem | Should -BeNullOrEmpty
+        $request.Host | Should -Be $HostName
+        [Convert]::ToHexString($request.Body) | Should -Be $Body
+        @($request.Headers.Keys) | Should -Be @('User-Agent', 'X-Admin-Protocol', 'Content-Type')
+        $request.Headers['X-Admin-Protocol'] | Should -Be 'gsma/rsp/v2.2.0'
+    }
+
+    It 'refuses <Name>' -ForEach @(
+        @{ Name = 'plain HTTP'; Url = 'http://smdp.example.com/gsma/rsp2/es9plus/initiateAuthentication'; Body = ''; Header = 'User-Agent: gsma-rsp-lpad'; Problem = 'Url' }
+        @{ Name = 'a port'; Url = 'https://smdp.example.com:8443/gsma/rsp2/es9plus/initiateAuthentication'; Body = ''; Header = 'User-Agent: gsma-rsp-lpad'; Problem = 'Url' }
+        @{ Name = 'an address for a host'; Url = 'https://192.0.2.10/gsma/rsp2/es9plus/initiateAuthentication'; Body = ''; Header = 'User-Agent: gsma-rsp-lpad'; Problem = 'Url' }
+        @{ Name = 'a host without a domain'; Url = 'https://localhost/gsma/rsp2/es9plus/initiateAuthentication'; Body = ''; Header = 'User-Agent: gsma-rsp-lpad'; Problem = 'Url' }
+        @{ Name = 'a user in the address'; Url = 'https://me@smdp.example.com/gsma/rsp2/es9plus/initiateAuthentication'; Body = ''; Header = 'User-Agent: gsma-rsp-lpad'; Problem = 'Url' }
+        @{ Name = 'another function'; Url = 'https://smdp.example.com/gsma/rsp2/es9plus/getProfile'; Body = ''; Header = 'User-Agent: gsma-rsp-lpad'; Problem = 'Url' }
+        @{ Name = 'a query'; Url = 'https://smdp.example.com/gsma/rsp2/es9plus/initiateAuthentication?x=1'; Body = ''; Header = 'User-Agent: gsma-rsp-lpad'; Problem = 'Url' }
+        @{ Name = 'a body that is not hexadecimal'; Url = 'https://smdp.example.com/gsma/rsp2/es9plus/initiateAuthentication'; Body = '7B7'; Header = 'User-Agent: gsma-rsp-lpad'; Problem = 'Body' }
+        @{ Name = 'another header'; Url = 'https://smdp.example.com/gsma/rsp2/es9plus/initiateAuthentication'; Body = ''; Header = 'Authorization: x'; Problem = 'Header' }
+        @{ Name = 'a header without a value'; Url = 'https://smdp.example.com/gsma/rsp2/es9plus/initiateAuthentication'; Body = ''; Header = 'User-Agent:'; Problem = 'Header' }
+    ) {
+        (Resolve-LpacHttpRequest -Request ([pscustomobject]@{ Url = $Url; Body = $Body; Headers = [string[]]@($Header) })).Problem | Should -Be $Problem
+    }
+
+    It 'reads lpac''s line whole' {
+        $read = ConvertFrom-LpacLine -Line '{"type":"http","payload":{"url":"https://smdp.example.com/gsma/rsp2/es9plus/handleNotification","tx":"7b7d","headers":["Content-Type: application/json"]}}'
+        $read.Body | Should -Be '7B7D'
+        $read.Headers | Should -Be @('Content-Type: application/json')
+        (Resolve-LpacHttpRequest -Request $read).Problem | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'ConvertTo-LpacHttpAnswerLine' {
+    It '<Name>' -ForEach @(
+        @{ Name = 'an answer'; Status = 200; Body = @(0x7B, 0x7D); Line = '{"type":"http","payload":{"rcode":200,"rx":"7B7D"}}' }
+        @{ Name = 'no content'; Status = 204; Body = @(); Line = '{"type":"http","payload":{"rcode":204,"rx":""}}' }
+        @{ Name = 'no answer'; Status = 0; Body = $null; Line = '{"type":"http","payload":{"rcode":0,"rx":""}}' }
+    ) {
+        ConvertTo-LpacHttpAnswerLine -Status $Status -Body ([byte[]]@($Body)) | Should -BeExactly $Line
+    }
+}
+
+Describe 'Get-EsimCiRoot' {
+    It 'is the GSMA''s production root, the one our eUICC trusts (AT-COMMANDS section 8)' {
+        $roots = Get-EsimCiRoot
+        $roots.Count | Should -Be 1
+        [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($roots[0].RawData)) | Should -Be '5E3E91FD454327C3AF5D32A7A73BBC59FE43AA7D85FD32D5DB44423F80A56BB3'
+        $roots[0].Subject | Should -Be 'CN=GSM Association - RSP2 Root CI1, O=GSM Association'
+        ($roots[0].Extensions | Where-Object { $_ -is [System.Security.Cryptography.X509Certificates.X509SubjectKeyIdentifierExtension] }).SubjectKeyIdentifier | Should -Be '81370F5125D0B1D408D4C3B232E6D25E795BEBFB'
+    }
+}
+
+Describe 'The SM-DP+ certificate check' {
+    BeforeAll {
+        # A CI of the test's own, a server certificate it issues, and another CI.
+        function Get-TestCa {
+            param([string] $Name)
+            $key = [System.Security.Cryptography.ECDsa]::Create([System.Security.Cryptography.ECCurve+NamedCurves]::nistP256)
+            $request = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new("CN=$Name", $key, [System.Security.Cryptography.HashAlgorithmName]::SHA256)
+            $request.CertificateExtensions.Add([System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension]::new($true, $false, 0, $true))
+            $request.CertificateExtensions.Add([System.Security.Cryptography.X509Certificates.X509KeyUsageExtension]::new('KeyCertSign, CrlSign', $true))
+            $request.CreateSelfSigned([DateTimeOffset]::Now.AddDays(-1), [DateTimeOffset]::Now.AddYears(5))
+        }
+        $script:ci = Get-TestCa -Name 'Test CI'
+        $script:otherCi = Get-TestCa -Name 'Other CI'
+        $key = [System.Security.Cryptography.ECDsa]::Create([System.Security.Cryptography.ECCurve+NamedCurves]::nistP256)
+        $request = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new('CN=smdp.example.com', $key, [System.Security.Cryptography.HashAlgorithmName]::SHA256)
+        $names = [System.Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder]::new()
+        $names.AddDnsName('smdp.example.com')
+        $request.CertificateExtensions.Add($names.Build())
+        $script:server = $request.Create($script:ci, [DateTimeOffset]::Now.AddHours(-1), [DateTimeOffset]::Now.AddYears(1), [byte[]]@(1, 2, 3, 4))
+        $script:roots = { param($certificate) $c = [System.Security.Cryptography.X509Certificates.X509Certificate2Collection]::new(); [void]$c.Add($certificate); , $c }
+    }
+
+    It '<Name>' -ForEach @(
+        @{ Name = 'a certificate Windows trusts is taken'; Root = 'other'; Errors = 'None'; Taken = $true }
+        @{ Name = 'one that chains to the CI given is taken'; Root = 'ci'; Errors = 'RemoteCertificateChainErrors'; Taken = $true }
+        @{ Name = 'one that chains to another CI is refused'; Root = 'other'; Errors = 'RemoteCertificateChainErrors'; Taken = $false }
+        @{ Name = 'one for another host is refused, even from the CI'; Root = 'ci'; Errors = 'RemoteCertificateChainErrors, RemoteCertificateNameMismatch'; Taken = $false }
+        @{ Name = 'none is refused'; Root = 'ci'; Errors = 'RemoteCertificateNotAvailable'; Taken = $false }
+    ) {
+        $root = if ($Root -eq 'ci') { $script:ci } else { $script:otherCi }
+        $certificate = if ($Errors -eq 'RemoteCertificateNotAvailable') { $null } else { $script:server }
+        [FibocomFm350.EsimHttp]::Validate((& $script:roots $root), $certificate, $null, [System.Net.Security.SslPolicyErrors]$Errors) | Should -Be $Taken
+    }
+}
+
+Describe 'Invoke-EsimHttpRequest, on this computer only' {
+    It 'says the network failed when nothing listens' {
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        $listener.Start()
+        $port = $listener.LocalEndpoint.Port
+        $listener.Stop()
+        $request = [pscustomobject]@{ Uri = [uri]"https://127.0.0.1:$port/gsma/rsp2/es9plus/initiateAuthentication"; Body = [byte[]]@(0x7B, 0x7D); Headers = [ordered]@{ 'Content-Type' = 'application/json' } }
+        $reply = Invoke-EsimHttpRequest -Request $request -TimeoutMs 5000
+        $reply.Status | Should -Be 0
+        $reply.Failure | Should -Be 'Network'
+    }
+
+    It 'posts the body with lpac''s headers, and reads the answer' {
+        # A server of one request, over plain HTTP: it answers with what it received.
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        $listener.Start()
+        try {
+            $port = $listener.LocalEndpoint.Port
+            $server = Start-ThreadJob -ScriptBlock {
+                # $using: takes a variable alone, never a member of it.
+                $listening = $using:listener
+                $client = $listening.AcceptTcpClient()
+                try {
+                    $stream = $client.GetStream()
+                    $stream.ReadTimeout = 10000
+                    $received = [System.Collections.Generic.List[byte]]::new()
+                    $buffer = [byte[]]::new(4096)
+                    do {
+                        $count = $stream.Read($buffer, 0, $buffer.Length)
+                        $received.AddRange([byte[]]$buffer[0..($count - 1)])
+                        $text = [System.Text.Encoding]::ASCII.GetString($received.ToArray())
+                        $end = $text.IndexOf("`r`n`r`n")
+                        $length = if ($text -match '(?im)^Content-Length:\s*(\d+)') { [int]$Matches[1] } else { 0 }
+                    } while ($count -gt 0 -and ($end -lt 0 -or $received.Count -lt $end + 4 + $length))
+                    $echo = [System.Text.Encoding]::ASCII.GetBytes($text)
+                    $head = [System.Text.Encoding]::ASCII.GetBytes("HTTP/1.1 200 OK`r`nContent-Length: $($echo.Length)`r`nConnection: close`r`n`r`n")
+                    $stream.Write($head, 0, $head.Length)
+                    $stream.Write($echo, 0, $echo.Length)
+                }
+                finally {
+                    $client.Dispose()
+                }
+            }
+            $request = [pscustomobject]@{
+                Uri     = [uri]"http://127.0.0.1:$port/gsma/rsp2/es9plus/initiateAuthentication"
+                Body    = [System.Text.Encoding]::ASCII.GetBytes('{"a":1}')
+                Headers = [ordered]@{ 'User-Agent' = 'gsma-rsp-lpad'; 'X-Admin-Protocol' = 'gsma/rsp/v2.2.0'; 'Content-Type' = 'application/json' }
+            }
+            $reply = Invoke-EsimHttpRequest -Request $request -TimeoutMs 10000
+            # Stopped first: a server still waiting for its client is let go, never waited on.
+            $listener.Stop()
+            [void](Wait-Job -Job $server -Timeout 15)
+            Remove-Job -Job $server -Force
+            $reply.Failure | Should -BeNullOrEmpty
+            $reply.Status | Should -Be 200
+            $echo = [System.Text.Encoding]::ASCII.GetString($reply.Body)
+            $echo | Should -Match '^POST /gsma/rsp2/es9plus/initiateAuthentication HTTP/1\.1'
+            $echo | Should -Match '(?m)^User-Agent: gsma-rsp-lpad\r$'
+            $echo | Should -Match '(?m)^X-Admin-Protocol: gsma/rsp/v2\.2\.0\r$'
+            $echo | Should -Match '(?m)^Content-Type: application/json\r$'
+            $echo | Should -Not -Match '(?mi)^Cookie:'
+            $echo | Should -Match '\{"a":1\}$'
+        }
+        finally {
+            $listener.Stop()
+        }
+    }
+
+    It 'gives up after its time, beating meanwhile, when the server never answers' {
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        $listener.Start()
+        try {
+            $port = $listener.LocalEndpoint.Port
+            $request = [pscustomobject]@{ Uri = [uri]"https://127.0.0.1:$port/gsma/rsp2/es9plus/initiateAuthentication"; Body = [byte[]]@(); Headers = [ordered]@{} }
+            $beats = [System.Collections.Generic.List[int]]::new()
+            $reply = Invoke-EsimHttpRequest -Request $request -TimeoutMs 2500 -Beat { $beats.Add(1) }
+            $reply.Failure | Should -Be 'Timeout'
+            $beats.Count | Should -BeGreaterThan 0
+        }
+        finally {
+            $listener.Stop()
+        }
+    }
+}
+
 Describe 'ConvertFrom-AtLogicalChannel' {
     It '<Name>' -ForEach @(
         @{ Name = 'the ID alone, as the FM350 answers'; Lines = @('1'); Session = 1 }
@@ -302,6 +482,7 @@ Describe 'ConvertFrom-EsimActivationCode' {
         @{ Name = 'an address with a path'; Text = 'LPA:1$smdp.example.com/x$ABC'; Code = $null; Address = 'smdp.example.com/x'; Confirmation = $false; Problem = 'Address' }
         @{ Name = 'an address with a port'; Text = 'LPA:1$smdp.example.com:8443$ABC'; Code = $null; Address = 'smdp.example.com:8443'; Confirmation = $false; Problem = 'Address' }
         @{ Name = 'a host without a domain'; Text = 'LPA:1$localhost$ABC'; Code = $null; Address = 'localhost'; Confirmation = $false; Problem = 'Address' }
+        @{ Name = 'an address for a host'; Text = 'LPA:1$192.0.2.10$ABC'; Code = $null; Address = '192.0.2.10'; Confirmation = $false; Problem = 'Address' }
         @{ Name = 'a matching ID with a blank'; Text = 'LPA:1$smdp.example.com$AB C'; Code = $null; Address = 'smdp.example.com'; Confirmation = $false; Problem = 'MatchingId' }
         @{ Name = 'a matching ID with a quote'; Text = 'LPA:1$smdp.example.com$AB"C'; Code = $null; Address = 'smdp.example.com'; Confirmation = $false; Problem = 'MatchingId' }
     ) {
@@ -506,11 +687,39 @@ Describe 'Invoke-LpacOperation' {
         $script:device.Modem.Received | Should -Not -Contain 'AT+CCHC=1'
     }
 
-    It 'answers a request for the network as a failure' {
+    It 'sends a request for the network, checked, and hands the answer back' {
+        $script:sent = [System.Collections.Generic.List[object]]::new()
+        $http = { $script:sent.Add($args[0]); [pscustomobject]@{ Status = 200; Body = [System.Text.Encoding]::ASCII.GetBytes('{}'); Failure = $null } }
+        $lpac = Get-ScriptedLpac -Request @('{"type":"http","payload":{"url":"https://SMDP.example.com/gsma/rsp2/es9plus/initiateAuthentication","tx":"7b7d","headers":["User-Agent: gsma-rsp-lpad","X-Admin-Protocol: gsma/rsp/v2.2.0","Content-Type: application/json"]}}')
+        $run = Invoke-LpacOperation -Channel $script:device.Channel -Lpac $lpac -TimeoutMs 10000 -Http $http
+        $run.HttpRequests | Should -Be 1
+        $run.HttpFailure | Should -BeNullOrEmpty
+        $lpac.Answers | Should -Be @('{"type":"http","payload":{"rcode":200,"rx":"7B7D"}}')
+        $script:sent[0].Uri.AbsoluteUri | Should -Be 'https://smdp.example.com/gsma/rsp2/es9plus/initiateAuthentication'
+        [System.Text.Encoding]::ASCII.GetString($script:sent[0].Body) | Should -Be '{}'
+        $script:sent[0].Headers['Content-Type'] | Should -Be 'application/json'
+    }
+
+    It 'never sends a request that fails the check: <Name>' -ForEach @(
+        @{ Name = 'another address'; Line = '{"type":"http","payload":{"url":"https://smdp.example.com/elsewhere","tx":"","headers":[]}}'; Failure = 'Url' }
+        @{ Name = 'plain HTTP'; Line = '{"type":"http","payload":{"url":"http://smdp.example.com/gsma/rsp2/es9plus/initiateAuthentication","tx":"","headers":[]}}'; Failure = 'Url' }
+        @{ Name = 'another header'; Line = '{"type":"http","payload":{"url":"https://smdp.example.com/gsma/rsp2/es9plus/initiateAuthentication","tx":"","headers":["Cookie: a=b"]}}'; Failure = 'Header smdp.example.com' }
+    ) {
+        $script:sent = [System.Collections.Generic.List[object]]::new()
+        $http = { $script:sent.Add($args[0]); [pscustomobject]@{ Status = 200; Body = $null; Failure = $null } }
+        $lpac = Get-ScriptedLpac -Request @($Line)
+        $run = Invoke-LpacOperation -Channel $script:device.Channel -Lpac $lpac -TimeoutMs 10000 -Http $http
+        $script:sent.Count | Should -Be 0
+        $run.HttpFailure | Should -Be $Failure
+        $lpac.Answers | Should -Be @('{"type":"http","payload":{"rcode":0,"rx":""}}')
+    }
+
+    It 'says a request that failed on the way, with its host' {
+        $http = { [pscustomobject]@{ Status = 0; Body = $null; Failure = 'Certificate' } }
         $lpac = Get-ScriptedLpac -Request @('{"type":"http","payload":{"url":"https://smdp.example.com/gsma/rsp2/es9plus/initiateAuthentication","tx":"","headers":[]}}')
-        $run = Invoke-LpacOperation -Channel $script:device.Channel -Lpac $lpac -TimeoutMs 10000
-        $run.Outcome | Should -Be 'Done'
-        $lpac.Answers | Should -Be @('{"type":"http","payload":{"rcode":500,"rx":""}}')
+        $run = Invoke-LpacOperation -Channel $script:device.Channel -Lpac $lpac -TimeoutMs 10000 -Http $http
+        $run.HttpFailure | Should -Be 'Certificate smdp.example.com'
+        $lpac.Answers | Should -Be @('{"type":"http","payload":{"rcode":0,"rx":""}}')
     }
 }
 
@@ -851,9 +1060,9 @@ Describe 'Start-LpacProcess' {
         $run.Data.arguments | Should -Be @('echo', 'Lavoro è "mio" $x', 'LPA:1$a.b$C')
         $run.Data.answer | Should -BeExactly '{"type":"apdu","payload":{"ecode":0}}'
         $names = @($run.Data.environment.PSObject.Properties.Name)
-        $names | Should -Be @('LPAC_APDU', 'LPAC_CUSTOM_ES10X_MSS', 'LPAC_HTTP')
+        $names | Should -Be @('LPAC_APDU', 'LPAC_HTTP')
         $run.Data.environment.LPAC_APDU | Should -Be 'stdio'
-        $run.Data.environment.LPAC_CUSTOM_ES10X_MSS | Should -Be '120'
+        $run.Data.environment.LPAC_HTTP | Should -Be 'stdio'
     }
 
     It 'is stopped when it hangs' {
