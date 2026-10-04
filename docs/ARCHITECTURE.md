@@ -933,8 +933,15 @@ What a prepaid or capped SIM needs day to day (facts: `AT-COMMANDS.md` §9).
 - **PDU mode only.** Text mode depends on the modem's character-set setting and hides the header
   that ties the parts of a long message together; a PDU carries everything, and its format is a
   public standard (3GPP TS 23.040, alphabets in TS 23.038). Decoding and encoding are **pure
-  functions** with a matrix of tests: GSM 7-bit with its extension table, UCS-2, long messages
-  reassembled from their parts, long messages split for sending.
+  functions** with a matrix of tests (`Sms.ps1`): GSM 7-bit with its extension table, UCS-2, long
+  messages reassembled from their parts, long messages split for sending.
+- **What the codec does with the edges.** A PDU that can't be read is still listed, as malformed,
+  so it can be deleted. 8-bit data and compressed text have no text to show, and say so. A message
+  that names a national language table is read with the default tables and flagged: the tables
+  of 23.038 annex A are not carried. UCS2 is read and written as UTF-16, so the emoji that phones
+  send in surrogate pairs come out whole, and a pair is never split between two parts. Sending:
+  GSM 7-bit when the alphabet holds every character, else UCS2; the SIM's service centre; no
+  validity period (the centre's own); parts joined by a one-octet reference.
 - **The modem stores, then announces.** On every connect the worker sets `+CNMI` so that a new
   message is saved on the modem and announced with `+CMTI: <storage>,<index>`. Direct delivery
   (`+CMT`) is never used: it hands the message to the port without storing it, so one arriving
@@ -947,28 +954,49 @@ What a prepaid or capped SIM needs day to day (facts: `AT-COMMANDS.md` §9).
 - **Messages stay on the modem.** The inbox is read from the modem's storage at start and on each
   notice; delete acts there. The app keeps no copy on disk. A full storage is shown in the UI,
   since new messages can't be stored.
+- **What is new is remembered by the message, not its place** (decided 2026-10-04). The modem marks
+  a message read as soon as it is listed (`AT-COMMANDS.md` §9), so a message that comes in unread
+  is noted at once and stays new until the user opens it, across app restarts and a modem that
+  comes back under another storage index: each of its parts by a fingerprint (SHA-256 of its type,
+  sender, time stamp, long-message reference and text), kept in one file encrypted with DPAPI for
+  the user — no text, no number. A fingerprint leaves when its message is opened or deleted, or is
+  no longer in the storage: the file holds at most what the storage can, and is rewritten whole.
+- **The tray says who wrote** (decided 2026-10-04): a notification with the sender alone; the text
+  only in the window.
 
 ### USSD
 One session at a time. The request is `AT+CUSD`; the reply arrives later as a `+CUSD` code, often
-after the command's `OK`, and may ask for an answer (a menu). The worker waits for it up to a
-timeout (**TBD**), decodes it by its data coding scheme (pure function), and the UI shows it with
+after the command's `OK`, and may ask for an answer (a menu). The worker waits for it up to 30 s
+(decided 2026-10-04) — then says there was no answer and ends the session with `AT+CUSD=2` —,
+decodes it by its data coding scheme (pure function), and the UI shows it with
 an answer box when the network expects one. **Best effort:** whether USSD works over LTE/NR
 depends on the operator's network; if the FM350 can't do it, the feature is dropped, not
 emulated.
 
 ### Data usage
-- **Counted on the Windows side.** The modem has no traffic counter (`AT-COMMANDS.md` §9); the
-  worker samples the byte counters of the modem's network adapter on its regular loop.
-- **Accumulated across resets, as a pure function.** The counters restart from zero whenever the
-  adapter is re-created (modem reset, device restart, replug). For each sample: if the new value
-  is below the previous one, the counter restarted and the new value is the delta; otherwise the
-  delta is the difference.
-- **Persisted** under `%LOCALAPPDATA%\fibocom-fm350-gl-windows-gui\`, periodically and on exit.
-  Traffic while the app is closed is still counted at the next start, unless the counters were
-  reset in between: the totals are approximate, and the UI says so.
-- **Today and the billing cycle**, whose start day is a setting (a day the month doesn't have
-  means its last day). An optional quota raises tray warnings at thresholds (**TBD**). **The quota
-  never disconnects** — the app does not break a working connection.
+- **Counted on the Windows side.** The modem has no traffic counter (`AT-COMMANDS.md` §10); the
+  worker reads the byte counters of the modem's network adapter every 30 s (decided 2026-10-04),
+  port open or not (`Update-WorkerUsage`). Reading them never stops the worker's cycle: a failure
+  is logged once and the next reading tries again — data usage is no reason to touch the
+  connection.
+- **Accumulated across resets, as a pure function** (`Update-DataUsage`). The counters restart
+  from zero whenever the adapter is re-created (modem reset, device restart, replug). For each
+  sample: if the new value is below the previous one, the counter restarted and the new value is
+  the delta; otherwise the delta is the difference. Another adapter counts its whole value; the
+  very first sample, with nothing before it, only sets where counting starts. What a sample adds
+  goes to its local calendar day; the last 100 days are kept.
+- **Persisted** under `%LOCALAPPDATA%\fibocom-fm350-gl-windows-gui\usage.json`: at most every
+  5 minutes, at once when a quota threshold is said, and when the worker ends (decided
+  2026-10-04). A save missed — a crash — loses nothing: the next sample counts from the counters
+  last saved. Traffic while the app is closed is still counted at the next start, unless the
+  counters were reset in between; at a reset, what came since the last reading (30 s at most) is
+  lost: the totals are approximate, and the UI says so.
+- **Today and the billing cycle**, whose start day is a setting — day 1 by default, a day the
+  month doesn't have meaning its last day (decided 2026-10-04) — (`Measure-DataUsage`). An
+  optional quota, in gigabytes, off by default, is said in the tray at **80% and 100%**, each once
+  per cycle: a new cycle or another quota starts over, and what was said is kept in the same file,
+  so a restart never says it again (`Resolve-UsageWarning`; decided 2026-10-04). **The quota never
+  disconnects** — the app does not break a working connection.
 
 ### Identifiers
 Phone numbers, message text and USSD replies are personal data: never logged, and replaced by fake
@@ -986,7 +1014,9 @@ values of the same shape in fixtures.
   5 to 1440), `CheckForUpdates` (on: the update
   notice, *Updates*), `InterfaceMetric` (500:
   the modem as a backup), `NetworkMode` (empty: not managed; `Automatic`, `LteOnly`,
-  `NrOnly`) with `LteBands` and `NrBands` (empty: every band). Read leniently — an invalid value falls back to its default and is
+  `NrOnly`) with `LteBands` and `NrBands` (empty: every band), and from M8 `UsageCycleDay` (1: the
+  day of the month the billing cycle starts on, 1 to 31) and `UsageQuotaGB` (0: none; gigabytes,
+  decimals allowed, up to 10000). Read leniently — an invalid value falls back to its default and is
   reported, an unknown one is ignored: a bad file never stops the app — and written strictly: an
   invalid value is refused. The file is replaced whole (a temporary file, then a move).
 - Secrets — the SIM PIN, an APN password — never go in the settings file: each is kept
@@ -1002,7 +1032,8 @@ values of the same shape in fixtures.
   and `AT+CLCK=`, the credentials of `+CGAUTH`. The file is opened for each line: the log holds no
   handle. The worker writes it; the UI thread only for rare events (start, a worker replaced,
   exit). A log that can't be written (a full disk) never stops the worker or a pass.
-- Data usage totals (M8): a JSON file under `%LOCALAPPDATA%\fibocom-fm350-gl-windows-gui\`.
+- Data usage totals (M8): `usage.json` under `%LOCALAPPDATA%\fibocom-fm350-gl-windows-gui\` —
+  the counters last read, bytes per day, the quota thresholds said this cycle (*Data usage*).
 
 ## Module layout
 
@@ -1023,6 +1054,10 @@ src/
     Arfcn.ps1            channel number -> frequency and band (M1, pure)
     Contexts.ps1         data context: definition, activation, address, DNS, authentication (M2, pure)
     Settings.ps1         settings file, APN password (M2)
+    Usage.ps1            data usage: the adapter's counters accumulated, the cycle, the quota (M8,
+                         pure), their reading and file
+    Sms.ps1              SMS: the PDU codec, long messages joined and split, the storage's
+                         answers (M8, pure)
     Sim.ps1              SIM PIN: states, the decision, the encrypted store, removing it (M2)
     Fcc.ps1              FCC lock: reads, diagnosis, unlock (M2)
     Modes.ps1            network mode and bands: reads, what to write (pure), a choice on trial (M5)
@@ -1046,7 +1081,8 @@ src/
     Worker.ps1           the worker: link, cadence (pure), snapshots (pure), commands, loop (M3)
     Data/                3GPP band tables, transcribed (EutraBands.psd1, NrBands.psd1); the
                          simulated modem's answers (Simulation.psd1); the driver packages the
-                         app knows (Drivers.psd1)
+                         app knows (Drivers.psd1); the GSM 7 bit default alphabet
+                         (GsmAlphabet.psd1)
   install.cmd            installs or updates the app (M7): runs Start-Fm350.ps1 -Mode Install
   uninstall.cmd          removes it (M7)
   Start-Fm350.ps1        the launcher, in Windows PowerShell 5.1: finds PowerShell 7, starts the

@@ -4,6 +4,57 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-04 — M8: data usage counted
+
+The worker reads the modem adapter's byte counters every 30 s, port open or not, and keeps
+bytes per day across the counters' resets (`Usage.ps1`; ARCHITECTURE → *Data usage*):
+- **Pure where it decides**: accumulating a sample (`Update-DataUsage`), the cycle's first day
+  (`Get-UsageCycleStart`), today and the cycle against the quota (`Measure-DataUsage`), and which
+  threshold to say (`Resolve-UsageWarning`), each with a matrix of tests.
+- **The file holds what a restart needs**: the counters last read, so a save missed loses nothing,
+  and the thresholds said this cycle, so a restart never says one again.
+- **Never in the connection's way**: reading or saving that fails is logged once, by the
+  exception's type — its text may name the user's folder —, and stops nothing.
+- The simulated adapter counts traffic while it carries the app's address, and starts over when
+  its USB device restarts, as a real adapter is created anew then.
+- Two settings, `UsageCycleDay` and `UsageQuotaGB` (decimals read in the invariant culture),
+  with the rule's text in the eight languages.
+
+## 2026-10-04 — M8: the SMS codec
+
+Messages are decoded and encoded as PDUs by pure functions written from 3GPP TS 23.040, 23.038,
+24.011 and 27.005, V19.0.0, whose facts and clauses are now in `AT-COMMANDS.md` §9 (*SMS PDUs*):
+SMS-DELIVER, SMS-SUBMIT and SMS-STATUS-REPORT; addresses, alphanumeric senders included; the time
+stamp with its quarter-hour time zone; the data coding scheme; the user data header, long messages
+joined (`Join-SmsPart`) and split (`ConvertTo-SmsPdu`, `Measure-SmsText`); GSM 7-bit with the
+extension table (`Data/GsmAlphabet.psd1`), UCS2 and 8-bit data. Choices where the standard leaves
+room:
+- **UCS2 as UTF-16**: phones send emoji as surrogate pairs; they decode whole, and a pair is never
+  split between parts — as an escaped GSM character never is.
+- **A PDU that can't be read is listed as malformed**, never dropped: the user can still delete it.
+- **National language tables are not carried**: a message naming one is read with the default
+  tables and flagged. The year of a time stamp is taken in 2000–2099.
+- **The tests build their PDUs by hand** from the specifications' layouts, and pack GSM 7-bit text
+  with a reference that draws 23.038's figure as a string of bits — independent of the codec's
+  arithmetic, checked on the usual `hello` → `E8329BFD06`.
+- **Fixtures with PDUs are checked too**: the identifier check decodes them, and their service
+  centre and sender must be the documented fakes (`fakes.psd1` gains two sender names).
+
+## 2026-10-04 — Decided: M8's defaults, its quota warnings and what is new
+
+Taken by the maintainer:
+- **Billing cycle from day 1** by default; a day the month lacks means its last day.
+- **Quota warnings at 80% and 100%**, each once per cycle, in the tray; the quota in gigabytes with
+  decimals, off by default; never a disconnection.
+- **A new message's notification names the sender only**; its text stays in the window.
+- **What is new survives restarts**: remembered on disk, encrypted, by the message rather than its
+  storage index, so a re-enumerated modem doesn't mix it up — every unread message, not only the
+  last one. The design: a fingerprint per part (no text, no number), in a DPAPI file bounded by
+  what the storage holds (ARCHITECTURE → *SMS*). Rejected: keeping it in memory only (lost at every
+  restart); no "new" state at all.
+- **Counters read every 30 s, the totals saved at most every 5 minutes** (and at a threshold, and
+  on exit); **a USSD reply waited 30 s**.
+
 ## 2026-10-04 — CI: the linter counts the analyzer's failures per file
 
 CI on main failed at the lint step with ten files "the analyzer could not finish" and no

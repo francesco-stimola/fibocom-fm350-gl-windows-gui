@@ -148,11 +148,11 @@ What a prepaid or capped SIM needs day to day: the operator's messages, balance 
 data is left (design: ARCHITECTURE → *SMS, USSD and data usage*; facts: `AT-COMMANDS.md` §9–§10).
 
 - [ ] Device session: answer the open questions in `AT-COMMANDS.md` §9 — storages, which port gets new-message notices, USSD on LTE / NSA / SA with a real operator.
-- [ ] SMS codec as pure functions written from 3GPP TS 23.040 and 23.038, with a matrix of tests: PDU decoding, GSM 7-bit (with the extension table) and UCS-2, long messages reassembled from their parts; PDU encoding for sending, splitting long messages.
+- [x] SMS codec as pure functions written from 3GPP TS 23.040 and 23.038, with a matrix of tests: PDU decoding, GSM 7-bit (with the extension table) and UCS-2, long messages reassembled from their parts; PDU encoding for sending, splitting long messages (`Sms.ps1`; facts in `AT-COMMANDS.md` §9, *SMS PDUs*).
 - [ ] Receive: new-message notices from the modem, a tray notification, an inbox in the main window; read and delete on the modem's storage. No copy of the messages on disk.
 - [ ] Send a message.
 - [ ] USSD: send a code, show the reply, answer a menu, cancel. **Best effort**: if the device session shows that USSD does not work on the FM350 over LTE/NR, it leaves this milestone and the finding is recorded in `AT-COMMANDS.md`.
-- [ ] Data usage: the modem adapter's byte counters, sampled by the worker, accumulated across counter resets (pure function) and persisted; today and the current billing cycle (start day in settings); an optional quota with a tray warning (thresholds: **human decision**). Never disconnects.
+- [ ] Data usage: the modem adapter's byte counters, sampled by the worker, accumulated across counter resets (pure function) and persisted; today and the current billing cycle (start day in settings); an optional quota with a tray warning (at 80% and 100%, once per cycle; decided 2026-10-04). Never disconnects. *Counting, the cycle, the quota and the file are done (`Usage.ps1`, in the worker); the tray warning comes with the UI.*
 - [ ] Phone numbers, message text and USSD replies never logged.
 - [ ] UI: messages and USSD in the main window; usage in the window and the tooltip.
 
