@@ -1,0 +1,5 @@
+# Source: captured 2026-10-04, FM350-GL firmware 81600.0000.00.29.22.06; a test message just come in (unread), read at its index with a data context active; sender, service centre and time stamp faked, the test text kept.
+AT+CMGR=2
++CMGR: 0,, 48
+07910100000000F0040B910100000000F00000620140210000802150F9DB1E064D9B53104D071ABFDDA034881CA6A741E1F1B83C4FBB1A0A
+OK

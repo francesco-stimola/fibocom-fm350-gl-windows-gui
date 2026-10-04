@@ -326,3 +326,102 @@ Describe 'Unsolicited code queue' {
         }
     }
 }
+
+Describe 'Send-AtMessagePdu' {
+    BeforeEach {
+        $script:modem = New-SimulatedModem -PortName 'COM5' -Messaging
+        $script:channel = New-AtChannel -Transport $script:modem
+        $null = Initialize-AtChannel -Channel $script:channel -TimeoutMs 5000
+        $script:part = @(ConvertTo-SmsPdu -Number '+10000000000' -Text 'hello')[0]
+    }
+
+    AfterEach {
+        Close-AtChannel -Channel $script:channel
+    }
+
+    It 'gives the PDU after the prompt, ended by Ctrl-Z, and returns the message reference' {
+        $sent = Send-AtMessagePdu -Channel $script:channel -Length $script:part.Length -Pdu $script:part.Pdu
+
+        $sent.Command | Should -Be 'AT+CMGS=18'
+        $sent.Status | Should -Be 'OK'
+        $sent.Reference | Should -Be 1
+        $script:modem.Messaging.Sent | Should -Be @($script:part.Pdu)
+        (Invoke-AtCommand -Channel $script:channel -Command 'AT+CPMS?' -TimeoutMs 5000).Status | Should -Be 'OK' -Because 'the channel is in step after the PDU''s echo'
+    }
+
+    It 'sends the parts of a long message one after the other' {
+        $references = foreach ($part in ConvertTo-SmsPdu -Number '+10000000000' -Text ('x' * 400) -Reference 9) {
+            (Send-AtMessagePdu -Channel $script:channel -Length $part.Length -Pdu $part.Pdu).Reference
+        }
+
+        $references | Should -Be @(1, 2, 3)
+        $script:modem.Messaging.Sent.Count | Should -Be 3
+    }
+
+    It 'reports a refusal before the prompt, giving no PDU' {
+        $script:modem.Script('AT+CMGS=18', @{ Lines = @('+CMS ERROR: 304') })
+        $sent = Send-AtMessagePdu -Channel $script:channel -Length 18 -Pdu $script:part.Pdu
+
+        $sent.Status | Should -Be 'CmsError'
+        $sent.ErrorCode | Should -Be 304
+        $sent.Reference | Should -BeNullOrEmpty
+        $script:modem.Messaging.Sent.Count | Should -Be 0
+    }
+
+    It 'reports a refusal of the PDU: no network service' {
+        $script:modem.Messaging.SendError = '331'
+        $sent = Send-AtMessagePdu -Channel $script:channel -Length 18 -Pdu $script:part.Pdu
+
+        $sent.Status | Should -Be 'CmsError'
+        $sent.ErrorCode | Should -Be 331
+    }
+
+    It 'leaves the input mode with ESC when the prompt doesn''t come, and stays in step' {
+        $script:modem.Script('AT+CMGS=18', @{ Lines = @() })
+        $sent = Send-AtMessagePdu -Channel $script:channel -Length 18 -Pdu $script:part.Pdu -PromptTimeoutMs 300
+
+        $sent.Status | Should -Be 'NoPrompt'
+        $script:modem.Messaging.Sent.Count | Should -Be 0
+        $script:channel.LateCommands | Should -Contain 'AT+CMGS=18'
+        (Invoke-AtCommand -Channel $script:channel -Command 'AT+CPMS?' -TimeoutMs 5000).Status | Should -Be 'OK'
+    }
+
+    It 'leaves the input mode with ESC when the answer doesn''t come' {
+        $script:modem.Messaging.SendSilently = $true
+        $sent = Send-AtMessagePdu -Channel $script:channel -Length 18 -Pdu $script:part.Pdu -TimeoutMs 300
+
+        $sent.Status | Should -Be 'Timeout'
+        $script:channel.LateCommands | Should -Contain 'AT+CMGS=18'
+        (Invoke-AtCommand -Channel $script:channel -Command 'AT+CPMS?' -TimeoutMs 5000).Status | Should -Be 'OK'
+    }
+
+    It 'queues a code that arrives meanwhile' {
+        $script:modem.EmitUnsolicited('+CMTI: "MT",1', 0)
+        $sent = Send-AtMessagePdu -Channel $script:channel -Length 18 -Pdu $script:part.Pdu
+
+        $sent.Status | Should -Be 'OK'
+        Receive-AtUrc -Channel $script:channel | Should -Be @('+CMTI: "MT",1')
+    }
+
+    It 'reports a port lost without touching it again' {
+        $script:modem.Vanish()
+        $sent = Send-AtMessagePdu -Channel $script:channel -Length 18 -Pdu $script:part.Pdu
+
+        $sent.Status | Should -Be 'PortLost'
+        (Send-AtMessagePdu -Channel $script:channel -Length 18 -Pdu $script:part.Pdu).Status | Should -Be 'PortLost'
+    }
+
+    It 'refuses <Name>' -ForEach @(
+        @{ Name = 'a PDU that is not hexadecimal'; Pdu = '00ZZ'; Length = 1 }
+        @{ Name = 'an odd count of digits'; Pdu = '001'; Length = 1 }
+        @{ Name = 'a length of 0'; Pdu = '0011'; Length = 0 }
+    ) {
+        { Send-AtMessagePdu -Channel $script:channel -Length $Length -Pdu $Pdu -ErrorAction Stop } | Should -Throw
+        $script:modem.Received | Should -Not -Contain "AT+CMGS=$Length"
+    }
+
+    It 'refuses a closed channel' {
+        Close-AtChannel -Channel $script:channel
+        { Send-AtMessagePdu -Channel $script:channel -Length 18 -Pdu $script:part.Pdu -ErrorAction Stop } | Should -Throw -ExceptionType ([System.InvalidOperationException])
+    }
+}

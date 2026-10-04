@@ -212,6 +212,140 @@ class SimulatedNetworkMode {
     }
 }
 
+# The simulated modem's messages (27.005, AT-COMMANDS section 9): its storage, the notices it
+# sends when one comes in, sending one with AT+CMGS's prompt. Like the device, it starts in PDU
+# mode with notices off (+CNMI 0,0,0,0,0) and one storage, "MT", of 70 places; a message read or
+# listed is marked read.
+[NoRunspaceAffinity()]
+class SimulatedMessaging {
+    [string] $Memory = 'MT'
+    [int] $Capacity = 70
+    [string] $Format = '0'
+    [string[]] $Notices = @('0', '0', '0', '0', '0')
+    # The stored messages: Index, Status (0 unread, 1 read, 2 unsent, 3 sent), Pdu.
+    [System.Collections.Generic.List[object]] $Stored = [System.Collections.Generic.List[object]]::new()
+    # The PDUs it was given to send, and the reference of the next.
+    [System.Collections.Generic.List[string]] $Sent = [System.Collections.Generic.List[string]]::new()
+    [int] $NextReference = 1
+    # A +CMS ERROR code every send answers with ('331': no network service), or '' to send;
+    # SendSilently: a send that is never answered.
+    [string] $SendError = ''
+    [bool] $SendSilently = $false
+    # Messages that come in on their own, once the modem's clock reaches AtMs: AtMs, Pdu.
+    [System.Collections.Generic.List[object]] $Arrivals = [System.Collections.Generic.List[object]]::new()
+
+    # The answer to a messages command, or $null for any other command.
+    [string[]] Answer([string] $command, [object] $modem) {
+        $used = $this.Stored.Count
+        switch -Regex ($command) {
+            '^AT\+CMGF\?$' { return @("+CMGF: $($this.Format)", 'OK') }
+            '^AT\+CMGF=([01])$' {
+                $this.Format = $Matches[1]
+                return @('OK')
+            }
+            '^AT\+CPMS\?$' { return @("+CPMS: `"$($this.Memory)`", $used, $($this.Capacity), `"$($this.Memory)`", $used, $($this.Capacity), `"$($this.Memory)`", $used, $($this.Capacity)", 'OK') }
+            '^AT\+CNMI\?$' { return @("+CNMI: $($this.Notices -join ', ')", 'OK') }
+            '^AT\+CNMI=([0-3]),([0-3]),([0-3]),([01]),([01])$' {
+                $this.Notices = @($Matches[1], $Matches[2], $Matches[3], $Matches[4], $Matches[5])
+                return @('OK')
+            }
+            '^AT\+CMGL=([0-4])$' {
+                $wanted = [int]$Matches[1]
+                $lines = [System.Collections.Generic.List[string]]::new()
+                foreach ($entry in @($this.Stored | Sort-Object -Property Index)) {
+                    if ($wanted -eq 4 -or $entry.Status -eq $wanted) {
+                        $lines.Add("+CMGL: $($entry.Index),$($entry.Status),,$($this.TpduLength($entry.Pdu))")
+                        $lines.Add($entry.Pdu)
+                        if ($entry.Status -eq 0) {
+                            $entry.Status = 1
+                        }
+                    }
+                }
+                $lines.Add('OK')
+                return $lines.ToArray()
+            }
+            '^AT\+CMGR=(\d+)$' {
+                $index = [int]$Matches[1]
+                $entry = @($this.Stored | Where-Object Index -EQ $index)
+                if ($entry.Count -eq 0) {
+                    return @('+CMS ERROR: 321')
+                }
+                $lines = @("+CMGR: $($entry[0].Status),,$($this.TpduLength($entry[0].Pdu))", $entry[0].Pdu, 'OK')
+                if ($entry[0].Status -eq 0) {
+                    $entry[0].Status = 1
+                }
+                return $lines
+            }
+            '^AT\+CMGD=(\d+)(?:,([0-4]))?$' {
+                $index = [int]$Matches[1]
+                $flag = if ($Matches[2]) { [int]$Matches[2] } else { 0 }
+                if ($flag -eq 0 -and @($this.Stored | Where-Object Index -EQ $index).Count -eq 0) {
+                    return @('+CMS ERROR: 321')
+                }
+                $left = [System.Collections.Generic.List[object]]::new()
+                foreach ($entry in $this.Stored) {
+                    $drop = switch ($flag) {
+                        0 { $entry.Index -eq $index }
+                        1 { $entry.Status -eq 1 }
+                        2 { $entry.Status -in 1, 3 }
+                        3 { $entry.Status -in 1, 2, 3 }
+                        default { $true }
+                    }
+                    if (-not $drop) {
+                        $left.Add($entry)
+                    }
+                }
+                $this.Stored = $left
+                return @('OK')
+            }
+        }
+        return $null
+    }
+
+    # A message that comes in: stored at the lowest free place, and announced with +CMTI when
+    # the notices are on (+CNMI's second value 1). A full storage keeps nothing.
+    [void] Deliver([string] $pdu, [object] $modem) {
+        if ($this.Stored.Count -ge $this.Capacity) {
+            return
+        }
+        $index = 1
+        while (@($this.Stored | Where-Object Index -EQ $index).Count -gt 0) {
+            $index++
+        }
+        $this.Stored.Add([pscustomobject]@{ Index = $index; Status = 0; Pdu = $pdu.ToUpperInvariant() })
+        if ($this.Notices[1] -eq '1') {
+            $modem.EmitUnsolicited("+CMTI: `"$($this.Memory)`",$index", 0)
+        }
+    }
+
+    # The answer to a PDU given after AT+CMGS's prompt.
+    [string[]] Submit([string] $pdu) {
+        if ($this.SendSilently) {
+            return @()
+        }
+        if ($this.SendError) {
+            return @("+CMS ERROR: $($this.SendError)")
+        }
+        $this.Sent.Add($pdu.ToUpperInvariant())
+        $reference = $this.NextReference
+        $this.NextReference = ($this.NextReference + 1) % 256
+        return @("+CMGS: $reference", 'OK')
+    }
+
+    # The messages whose time has come, delivered.
+    [void] Tick([long] $nowMs, [object] $modem) {
+        foreach ($arrival in @($this.Arrivals | Where-Object { $_.AtMs -le $nowMs })) {
+            [void]$this.Arrivals.Remove($arrival)
+            $this.Deliver($arrival.Pdu, $modem)
+        }
+    }
+
+    hidden [int] TpduLength([string] $pdu) {
+        $centre = [Convert]::ToInt32($pdu.Substring(0, 2), 16)
+        return $pdu.Length / 2 - 1 - $centre
+    }
+}
+
 [NoRunspaceAffinity()]
 class SimulatedModem {
     [string] $PortName
@@ -229,6 +363,8 @@ class SimulatedModem {
     [System.Collections.Generic.Dictionary[string, string]] $Flags = [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     # Its network mode and bands (SimulatedNetworkMode), or $null: AT+GTACT answered from fixtures.
     [object] $NetworkMode
+    # Its messages (SimulatedMessaging), or $null: the messages commands answered from fixtures.
+    [object] $Messaging
 
     hidden [System.Collections.Generic.Dictionary[string, string[]]] $Answers
     hidden [System.Collections.Generic.Dictionary[string, System.Collections.Generic.Queue[hashtable]]] $Behaviors
@@ -239,6 +375,9 @@ class SimulatedModem {
     # A modem runs one command at a time: a command's output (echo included) can't come out before
     # the previous command's answer. Delay of the next command's output, in ms from now.
     hidden [long] $BusyUntil = 0
+    # After AT+CMGS's prompt: the PDU is taken until Ctrl-Z (sent) or ESC (cancelled).
+    hidden [bool] $AwaitingPdu = $false
+    hidden [string] $PduInput = ''
 
     SimulatedModem([string] $portName) {
         $this.PortName = $portName
@@ -329,9 +468,28 @@ class SimulatedModem {
         if (-not $this.IsUsable()) {
             return
         }
+        if ($this.AwaitingPdu) {
+            $this.PduInput += $text
+            $end = $this.PduInput.IndexOfAny([char[]]@([char]0x1A, [char]0x1B))
+            if ($end -lt 0) {
+                return
+            }
+            $pdu = $this.PduInput.Substring(0, $end)
+            $cancelled = $this.PduInput[$end] -eq [char]0x1B
+            $text = $this.PduInput.Substring($end + 1)
+            $this.AwaitingPdu = $false
+            $this.PduInput = ''
+            $lines = if ($cancelled) { @('OK') } else { $this.Messaging.Submit($pdu) }
+            $answer = if ($this.Echo) { $pdu } else { '' }
+            foreach ($line in $lines) {
+                $answer += "`r`n$line`r`n"
+            }
+            $this.Enqueue($answer, 0)
+        }
         foreach ($command in $text.Split("`r")) {
             $command = $command.Trim()
-            if ($command) {
+            # Control characters alone (an ESC outside AT+CMGS's input) are no command.
+            if ($command -match '[^\x00-\x1F]') {
                 $this.Handle($command)
             }
         }
@@ -341,6 +499,9 @@ class SimulatedModem {
         $deadline = $this.Clock.ElapsedMilliseconds + [Math]::Max(0, $timeoutMs)
         while ($true) {
             $now = $this.Clock.ElapsedMilliseconds
+            if ($this.Messaging -and -not $this.Lost -and -not $this.Closed) {
+                $this.Messaging.Tick($now, $this)
+            }
             if ($this.Output.Count -gt 0 -and $this.Output[0]['Due'] -le $now) {
                 $text = $this.Output[0]['Text']
                 $this.Output.RemoveAt(0)
@@ -393,9 +554,20 @@ class SimulatedModem {
 
         # The echo reflects the setting in force when the command arrives.
         $echoText = if ($this.Echo) { "$command`r" } else { '' }
+        # AT+CMGS in PDU mode: the prompt, then the PDU (Write takes it).
+        if ($this.Messaging -and $this.Messaging.Format -eq '0' -and $command -match '^AT\+CMGS=\d+$' -and -not $behavior.ContainsKey('Lines')) {
+            $wait = [Math]::Max(0, $this.BusyUntil - $this.Clock.ElapsedMilliseconds)
+            $this.Enqueue("$echoText`r`n> ", $wait)
+            $this.AwaitingPdu = $true
+            $this.PduInput = ''
+            return
+        }
         $lines = [System.Collections.Generic.List[string]]::new()
         # A scripted answer stands in for the network mode's own: the command then changes nothing.
         $own = if ($this.NetworkMode -and -not $behavior.ContainsKey('Lines')) { $this.NetworkMode.Answer($command) } else { $null }
+        if ($null -eq $own -and $this.Messaging -and -not $behavior.ContainsKey('Lines')) {
+            $own = $this.Messaging.Answer($command, $this)
+        }
         if ($behavior.ContainsKey('Lines')) {
             $lines.AddRange([string[]]$behavior['Lines'])
         }
@@ -576,6 +748,11 @@ function New-SimulatedModem {
         the port again after a channel closed it. Received lists the commands written to it.
         Hung makes it answer nothing until it reappears; Flags is device state that scripted
         commands change (the simulated device reads DataPath).
+
+        -Messaging gives it a storage of messages, as the FM350 has (SimulatedMessaging): the
+        messages commands answered from it, AT+CMGS's prompt and the PDU after it, and
+        Messaging.Deliver($pdu, $modem) for a message that comes in - announced with +CMTI once
+        +CNMI asks for it.
     .EXAMPLE
         $modem = New-SimulatedModem -Fixture (Get-ChildItem tests/fixtures/documented)
         $modem.Script('AT+COPS=0', @{ DelayMs = 500 })
@@ -588,11 +765,16 @@ function New-SimulatedModem {
         [string] $PortName = 'SIMULATED',
 
         [Parameter(ValueFromPipeline)]
-        [object[]] $Fixture = @()
+        [object[]] $Fixture = @(),
+
+        [switch] $Messaging
     )
 
     begin {
         $modem = [SimulatedModem]::new($PortName)
+        if ($Messaging) {
+            $modem.Messaging = [SimulatedMessaging]::new()
+        }
         $seen = @{}
     }
 

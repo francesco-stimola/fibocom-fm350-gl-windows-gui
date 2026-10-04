@@ -646,6 +646,40 @@ Describe 'ConvertFrom-AtMessageList' {
 
     It 'gives nothing for an empty storage' {
         @(ConvertFrom-AtMessageList -Lines @()).Count | Should -Be 0
+        @(ConvertFrom-AtMessageList -Lines (Get-FixtureAnswer -Name 'cmgl.empty.txt' -Folder device)).Count | Should -Be 0
+    }
+
+    It 'reads the device''s messages, with its blanks, and gives back the texts sent' {
+        $listed = @(ConvertFrom-AtMessageList -Lines (Get-FixtureAnswer -Name 'cmgl.device.txt' -Folder device))
+        $entries = foreach ($entry in $listed) {
+            [pscustomobject]@{ Index = $entry.Index; Status = $entry.Status; Pdu = $entry.Pdu; Sms = ConvertFrom-SmsPdu -Pdu $entry.Pdu }
+        }
+        $joined = @(Join-SmsPart -Entry @($entries) | Sort-Object { $_.Indexes[0] })
+
+        $listed.Count | Should -Be 4
+        @($listed | ForEach-Object Status) | Should -Be @('Read', 'Read', 'Read', 'Read')
+        @($listed | ForEach-Object Length) | Should -Be @(62, 159, 74, 105)
+        $joined.Count | Should -Be 3
+        # As the phone sent them: the first without its last full stop, the others with a line end.
+        $joined[0].Text | Should -BeExactly 'Prova SMS 1: testo semplice per il test del modem'
+        $joined[1].Text | Should -BeExactly ('Prova SMS 2: messaggio lungo per verificare la ricomposizione delle parti. Contiene lettere accentate come è, à, ù, ò e il simbolo €, oltre a parentesi [quadre] e {graffe}. Fine della prova numero due.' + "`r`n")
+        $joined[1].Indexes | Should -Be @(2, 3)
+        $joined[2].Text | Should -BeExactly ("Prova SMS 3: emoji $([char]::ConvertFromUtf32(0x1F600)) e cirillico Привет." + "`r`n")
+        $joined[2].Indexes | Should -Be @(4)
+        foreach ($message in $joined) {
+            $message.Address | Should -Be '+10000000000'
+            $message.Complete | Should -BeTrue
+            $message.Time.Offset | Should -Be ([TimeSpan]::FromHours(2))
+        }
+    }
+
+    It 'reads the device''s answer to AT+CMGR' {
+        $entry = @(ConvertFrom-AtMessageList -Lines (Get-FixtureAnswer -Name 'cmgr.device.txt' -Folder device) -Index 2)
+
+        $entry.Count | Should -Be 1
+        $entry[0].Status | Should -Be 'Unread'
+        $entry[0].Length | Should -Be 48
+        (ConvertFrom-SmsPdu -Pdu $entry[0].Pdu).Text | Should -BeExactly ('Prova SMS 4: con i dati accesi.' + "`r`n")
     }
 }
 
@@ -684,6 +718,8 @@ Describe 'ConvertFrom-AtNewMessage' {
         @{ Line = '+CMTI: "ME",3'; Memory = 'ME'; Index = 3 }
         @{ Line = '+CMTI: "SM", 12'; Memory = 'SM'; Index = 12 }
         @{ Line = '+CMTI:"MT",0'; Memory = 'MT'; Index = 0 }
+        # As the device sends it (AT-COMMANDS section 9).
+        @{ Line = '+CMTI: "SM", 2'; Memory = 'SM'; Index = 2 }
     ) {
         $notice = ConvertFrom-AtNewMessage -Line $Line
 
@@ -698,5 +734,85 @@ Describe 'ConvertFrom-AtNewMessage' {
         @{ Line = '' }
     ) {
         ConvertFrom-AtNewMessage -Line $Line | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'What is new' {
+    BeforeAll {
+        $script:one = Get-TestDeliverPdu -UserData '05E8329BFD06'
+        $script:two = Get-TestDeliverPdu -Time '62014021436680' -UserData '05E8329BFD06'
+        $script:three = Get-TestDeliverPdu -Time '62014021436780' -UserData '05E8329BFD06'
+        $script:f1 = Get-SmsFingerprint -Pdu $script:one
+        $script:f2 = Get-SmsFingerprint -Pdu $script:two
+        $script:f3 = Get-SmsFingerprint -Pdu $script:three
+    }
+
+    It 'fingerprints a part by its whole PDU, in any case, telling nothing of it' {
+        $script:f1 | Should -Match '^[0-9A-F]{64}$'
+        Get-SmsFingerprint -Pdu $script:one.ToLowerInvariant() | Should -Be $script:f1
+        Get-SmsFingerprint -Pdu " $($script:one)`r`n" | Should -Be $script:f1 -Because 'blanks around a PDU are no part of it'
+        $script:f2 | Should -Not -Be $script:f1 -Because 'another time stamp is another message'
+        $script:f1 | Should -Not -Match '0100000000'
+    }
+
+    It 'keeps <Name>' -ForEach @(
+        @{ Name = 'what the modem reports unread'; Before = @(); Stored = @(@('one', 'Unread'), @('two', 'Read')); Opened = @(); After = @('f1') }
+        @{ Name = 'what was new and is still stored, though the listing marked it read'; Before = @('f2'); Stored = @(@('one', 'Read'), @('two', 'Read')); Opened = @(); After = @('f2') }
+        @{ Name = 'nothing of what is no longer stored'; Before = @('f3'); Stored = @(, @('one', 'Read')); Opened = @(); After = @() }
+        @{ Name = 'nothing the user opened, unread or not'; Before = @('f2'); Stored = @(@('one', 'Unread'), @('two', 'Read')); Opened = @('f1', 'f2'); After = @() }
+        @{ Name = 'nothing for an empty storage'; Before = @('f1', 'f2'); Stored = @(); Opened = @(); After = @() }
+        @{ Name = 'what was new, whatever the case of its fingerprint'; Before = @('f2 lower'); Stored = @(@('one', 'Read'), @('two', 'Read')); Opened = @('f2 lower'); After = @() }
+        @{ Name = 'what was new and still stored, its fingerprint in lower case'; Before = @('f2 lower'); Stored = @(, @('two', 'Read')); Opened = @(); After = @('f2') }
+    ) {
+        $names = @{ one = $script:one; two = $script:two; three = $script:three }
+        $prints = @{ f1 = $script:f1; f2 = $script:f2; f3 = $script:f3; 'f2 lower' = $script:f2.ToLowerInvariant() }
+        $entries = foreach ($pair in $Stored) { [pscustomobject]@{ Pdu = $names[$pair[0]]; Status = $pair[1] } }
+        $result = Update-SmsUnread -Unread @($Before | ForEach-Object { $prints[$_] }) -Entry @($entries) -Opened @($Opened | ForEach-Object { $prints[$_] })
+
+        @($result) | Should -Be @(@($After | ForEach-Object { $prints[$_] }) | Sort-Object)
+    }
+
+    It 'joins a message''s fingerprints, part by part' {
+        $entries = @(
+            [pscustomobject]@{ Index = 1; Status = 'Unread'; Pdu = $script:one; Sms = ConvertFrom-SmsPdu -Pdu $script:one }
+        )
+        @(Join-SmsPart -Entry $entries)[0].Fingerprints | Should -Be @($script:f1)
+    }
+
+    It 'reads back the fingerprints it wrote, encrypted for the user' {
+        $path = Join-Path $TestDrive 'sms-new.dat'
+        Export-SmsUnread -Fingerprint @($script:f1, $script:f2) -Path $path -Confirm:$false
+
+        @(Import-SmsUnread -Path $path) | Should -Be @($script:f1, $script:f2)
+        Get-Content -LiteralPath $path -Raw | Should -Not -Match $script:f1 -Because 'the file is encrypted'
+        Export-SmsUnread -Fingerprint @() -Path $path -Confirm:$false
+        @(Import-SmsUnread -Path $path).Count | Should -Be 0
+    }
+
+    It 'gives none without a file' {
+        $warnings = $null
+        @(Import-SmsUnread -Path (Join-Path $TestDrive 'none.dat') -WarningVariable warnings -WarningAction SilentlyContinue).Count | Should -Be 0
+        $warnings.Count | Should -Be 0 -Because 'no list yet is nothing to warn about'
+    }
+
+    It 'gives none, with a warning, for <Name>' -ForEach @(
+        @{ Name = 'a file that is not encrypted'; Content = '["AB"]'; Failure = 'CryptographicException' }
+        @{ Name = 'a damaged file'; Content = '01000000d08c9ddf'; Failure = 'CryptographicException' }
+        @{ Name = 'a list that is not of fingerprints'; Written = @('AB'); Failure = 'FormatException' }
+        @{ Name = 'a fingerprint too short'; Written = @('0123456789ABCDEF'); Failure = 'FormatException' }
+    ) {
+        $path = Join-Path $TestDrive 'bad.dat'
+        if ($Written) {
+            Export-SmsUnread -Fingerprint $Written -Path $path -Confirm:$false
+        }
+        else {
+            Set-Content -LiteralPath $path -Value $Content
+        }
+        $warnings = $null
+        $result = @(Import-SmsUnread -Path $path -WarningVariable warnings -WarningAction SilentlyContinue)
+
+        $result.Count | Should -Be 0
+        $warnings.Count | Should -Be 1
+        "$warnings" | Should -Match $Failure
     }
 }

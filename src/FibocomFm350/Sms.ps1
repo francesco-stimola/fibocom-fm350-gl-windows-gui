@@ -631,12 +631,13 @@ function Join-SmsPart {
         message's parts joined, in order.
     .DESCRIPTION
         A pure function. -Entry: the stored messages, each with Index, Status ('Unread', 'Read',
-        'Unsent', 'Sent') and Sms (ConvertFrom-SmsPdu's). The parts of one long message share its
+        'Unsent', 'Sent'), Sms (ConvertFrom-SmsPdu's) and, optionally, Pdu. The parts of one long message share its
         type, address, reference and count (23.040 clause 9.2.3.24.1; the service centre is not
         compared); a part stored twice counts once, both indexes kept.
 
         Returns one object per message, newest first: Indexes (every place it takes in the
-        storage, in part order - what deleting it deletes), Status ('Unread' when a part is),
+        storage, in part order - what deleting it deletes), Fingerprints (its parts', from their
+        PDUs: Get-SmsFingerprint), Status ('Unread' when a part is),
         Type, Address, AddressType, Time (the first part's, else the earliest), Text (the parts
         received, in order, with an ellipsis where parts are missing; $null when no part has text),
         Content, Class, Silent, Waiting, NationalLanguage, Problem, Count (the parts it has in
@@ -700,6 +701,7 @@ function Join-SmsPart {
         $anyText = @($items | Where-Object { $null -ne $_.Sms.Text }).Count -gt 0
         [pscustomobject]@{
             Indexes          = [int[]]@($ordered | ForEach-Object Index)
+            Fingerprints     = [string[]]@($ordered | Where-Object { $_.PSObject.Properties['Pdu'] -and $_.Pdu } | ForEach-Object { Get-SmsFingerprint -Pdu $_.Pdu })
             Status           = if (@($items | Where-Object Status -EQ 'Unread').Count) { 'Unread' } else { $items[0].Status }
             Type             = $first.Type
             Address          = $first.Address
@@ -849,4 +851,140 @@ function ConvertFrom-AtNewMessage {
         return $null
     }
     [pscustomobject]@{ Memory = $values[0]; Index = $index }
+}
+
+function Get-SmsFingerprint {
+    <#
+    .SYNOPSIS
+        Returns a stored message part's fingerprint: the SHA-256 of its PDU.
+    .DESCRIPTION
+        A pure function. The PDU holds the sender, the time stamp, the long message's reference
+        and the text, so the fingerprint names the part wherever the storage keeps it, and tells
+        nothing of it (ARCHITECTURE -> SMS: what is new is remembered by the message).
+    .EXAMPLE
+        Get-SmsFingerprint -Pdu $entry.Pdu
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [string] $Pdu
+    )
+
+    $bytes = [System.Text.Encoding]::ASCII.GetBytes($Pdu.Trim().ToUpperInvariant())
+    [System.Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($bytes))
+}
+
+function Update-SmsUnread {
+    <#
+    .SYNOPSIS
+        Decides which stored message parts are new, after a reading of the whole storage.
+    .DESCRIPTION
+        A pure function. -Unread: the fingerprints new before; -Entry: what AT+CMGL=4 listed
+        (Pdu, Status); -Opened: the fingerprints of the parts the user opened since. A part the
+        modem reports unread is new - the listing has just marked it read on the modem -; a part
+        new before stays new while it is stored; a part opened is new no more. Returns the
+        fingerprints, sorted: never more than the storage holds.
+    .EXAMPLE
+        $unread = Update-SmsUnread -Unread $unread -Entry $entries
+    #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Pure: returns the new list and changes nothing.')]
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [AllowEmptyCollection()]
+        [string[]] $Unread = @(),
+
+        [AllowEmptyCollection()]
+        [object[]] $Entry = @(),
+
+        [AllowEmptyCollection()]
+        [string[]] $Opened = @()
+    )
+
+    $stored = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $new = [System.Collections.Generic.SortedSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($item in $Entry) {
+        $fingerprint = Get-SmsFingerprint -Pdu $item.Pdu
+        [void]$stored.Add($fingerprint)
+        if ($item.Status -eq 'Unread') {
+            [void]$new.Add($fingerprint)
+        }
+    }
+    foreach ($fingerprint in $Unread) {
+        if ($fingerprint -and $stored.Contains($fingerprint)) {
+            [void]$new.Add($fingerprint)
+        }
+    }
+    foreach ($fingerprint in $Opened) {
+        if ($fingerprint) {
+            [void]$new.Remove($fingerprint)
+        }
+    }
+    [string[]]@($new)
+}
+
+function Import-SmsUnread {
+    <#
+    .SYNOPSIS
+        Reads the fingerprints of the message parts still new.
+    .DESCRIPTION
+        The file holds them encrypted with DPAPI for the current user (Export-SmsUnread). No
+        file gives none; a file that can't be read or decrypted gives none too, with a warning:
+        the messages then show as read.
+    .EXAMPLE
+        $unread = Import-SmsUnread -Path $path
+    #>
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [Parameter(Mandatory)]
+        [string] $Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return
+    }
+    try {
+        $secret = ConvertFrom-ProtectedText -Text (Get-Content -LiteralPath $Path -Raw -ErrorAction Stop).Trim()
+        if (-not $secret) {
+            throw [System.Security.Cryptography.CryptographicException]::new('Not decrypted.')
+        }
+        $json = [System.Net.NetworkCredential]::new('', $secret).Password
+        $fingerprints = @($json | ConvertFrom-Json -ErrorAction Stop)
+        if (@($fingerprints | Where-Object { $_ -isnot [string] -or $_ -notmatch '^[0-9A-F]{64}$' }).Count) {
+            throw [System.FormatException]::new('Not a list of fingerprints.')
+        }
+        [string[]]$fingerprints
+    }
+    catch {
+        Write-Warning "The list of new messages can't be read ($($_.Exception.GetType().Name)); they show as read."
+    }
+}
+
+function Export-SmsUnread {
+    <#
+    .SYNOPSIS
+        Writes the fingerprints of the message parts still new, encrypted for the current user.
+    .DESCRIPTION
+        One file, rewritten whole (a temporary file, then a move), encrypted with DPAPI: no text,
+        no number - fingerprints only (Get-SmsFingerprint).
+    .EXAMPLE
+        Export-SmsUnread -Fingerprint $unread -Path $path
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [string[]] $Fingerprint,
+
+        [Parameter(Mandatory)]
+        [string] $Path
+    )
+
+    $json = ConvertTo-Json -InputObject ([string[]]@($Fingerprint)) -Compress
+    if ($PSCmdlet.ShouldProcess($Path, 'Write the list of new messages')) {
+        Write-AppFile -Path $Path -Content (ConvertTo-ProtectedText -Text $json)
+    }
 }

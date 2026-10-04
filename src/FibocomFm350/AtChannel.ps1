@@ -228,6 +228,154 @@ function Invoke-AtCommand {
     }
 }
 
+function Send-AtMessagePdu {
+    <#
+    .SYNOPSIS
+        Sends one message PDU with AT+CMGS: the command, the modem's '> ' prompt, then the PDU
+        ended by Ctrl-Z.
+    .DESCRIPTION
+        27.005 clause 4.3 (docs/AT-COMMANDS.md section 9): AT+CMGS=<length> ends with CR, the
+        modem answers CR LF '> ', takes the PDU in hexadecimal on one line ended by Ctrl-Z, and
+        answers '+CMGS: <mr>' and OK, or '+CMS ERROR: <err>'. -Length counts the TPDU's octets
+        and -Pdu is the PDU in hexadecimal, as ConvertTo-SmsPdu gives them.
+
+        The prompt is awaited up to -PromptTimeoutMs; the answer up to -TimeoutMs, the command's
+        documented worst case by default. When either doesn't come, ESC is sent, so the modem
+        leaves its input mode instead of taking the next command for a PDU, and the channel
+        remembers the command: its late answer is discarded. Unsolicited codes meanwhile are
+        queued, as Invoke-AtCommand queues them; the echo of the command and of the PDU is left
+        out.
+
+        Returns Command ('AT+CMGS=<length>'), Status ('OK', 'CmsError', 'CmeError', 'Error',
+        'NoPrompt', 'Timeout' or 'PortLost'), Reference (the message reference, or $null),
+        ErrorCode, ElapsedMs.
+    .EXAMPLE
+        foreach ($part in ConvertTo-SmsPdu -Number $number -Text $text) { Send-AtMessagePdu -Channel $channel -Length $part.Length -Pdu $part.Pdu }
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [AtChannel] $Channel,
+
+        [Parameter(Mandatory)]
+        [ValidateRange(1, 255)]
+        [int] $Length,
+
+        [Parameter(Mandatory)]
+        [ValidatePattern('^(?:[0-9A-Fa-f]{2})+$')]
+        [string] $Pdu,
+
+        [ValidateRange(1, [int]::MaxValue)]
+        [int] $PromptTimeoutMs = 5000,
+
+        [ValidateRange(1, [int]::MaxValue)]
+        [int] $TimeoutMs = (Get-AtCommandTimeout -Command 'AT+CMGS=1')
+    )
+
+    if ($Channel.State -eq 'Closed') {
+        throw [System.InvalidOperationException]::new('The AT channel is closed.')
+    }
+    $command = "AT+CMGS=$Length"
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $final = $null
+    $reference = $null
+    $echoSeen = $false
+    $prompted = $false
+    $status = 'NoPrompt'
+    if ($Channel.State -eq 'Lost') {
+        $status = 'PortLost'
+    }
+    else {
+        $Channel.Transport.Write("$command`r")
+        if ($Channel.Transport.Lost) {
+            $Channel.State = 'Lost'
+        }
+        # The command's echo, then the prompt - or a final result: refused at once.
+        while (-not $prompted -and -not $final -and $Channel.State -eq 'Open') {
+            $remaining = $PromptTimeoutMs - $clock.ElapsedMilliseconds
+            if ($remaining -le 0) {
+                break
+            }
+            foreach ($line in @(Read-AtChannelLine -Channel $Channel -TimeoutMs $remaining)) {
+                $resolved = Resolve-AtLine -Line $line -Command $command -EchoSeen:$echoSeen -LateCommand $Channel.LateCommands.ToArray()
+                switch ($resolved.Kind) {
+                    'Echo' {
+                        $echoSeen = $true
+                        $Channel.LateCommands.Clear()
+                    }
+                    'Urc' { Add-AtQueuedUrc -Channel $Channel -Line $line }
+                    'Final' { $final = $resolved }
+                }
+            }
+            # The prompt ends with no line end: it is what is left in the buffer.
+            if ($echoSeen -and -not $final -and $Channel.Buffer.TrimStart().StartsWith('>')) {
+                $prompted = $true
+                $Channel.Buffer = ''
+            }
+        }
+        if ($prompted) {
+            $Channel.Transport.Write("$Pdu$([char]0x1A)")
+            if ($Channel.Transport.Lost) {
+                $Channel.State = 'Lost'
+            }
+            # The answer: the PDU's echo is left out, the reference kept.
+            while (-not $final -and $Channel.State -eq 'Open') {
+                $remaining = $TimeoutMs - $clock.ElapsedMilliseconds
+                if ($remaining -le 0) {
+                    break
+                }
+                foreach ($line in @(Read-AtChannelLine -Channel $Channel -TimeoutMs $remaining)) {
+                    if ($final) {
+                        if ((Resolve-AtLine -Line $line).Kind -eq 'Urc') {
+                            Add-AtQueuedUrc -Channel $Channel -Line $line
+                        }
+                        continue
+                    }
+                    $resolved = Resolve-AtLine -Line $line -Command $command -EchoSeen
+                    switch ($resolved.Kind) {
+                        'Urc' { Add-AtQueuedUrc -Channel $Channel -Line $line }
+                        'Final' { $final = $resolved }
+                        'Response' {
+                            if ($line -match '^\s*\+CMGS\s*:\s*(\d+)') {
+                                $reference = [int]$Matches[1]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if ($final) {
+            $status = $final.Status
+        }
+        elseif ($Channel.State -eq 'Lost') {
+            $status = 'PortLost'
+        }
+        else {
+            $status = if ($prompted) { 'Timeout' } else { 'NoPrompt' }
+            # ESC cancels the input; a late answer is discarded, and so is what is left of the
+            # PDU's echo, which no line end closed.
+            $Channel.Buffer = ''
+            $Channel.Transport.Write([string][char]0x1B)
+            if ($Channel.Transport.Lost) {
+                $Channel.State = 'Lost'
+            }
+            $Channel.LateCommands.Add($command)
+            if ($Channel.LateCommands.Count -gt $script:AtMaxLateCommands) {
+                $Channel.LateCommands.RemoveAt(0)
+            }
+        }
+    }
+
+    [pscustomobject]@{
+        Command   = $command
+        Status    = $status
+        Reference = $reference
+        ErrorCode = if ($final) { $final.ErrorCode } else { $null }
+        ElapsedMs = $clock.ElapsedMilliseconds
+    }
+}
+
 function Initialize-AtChannel {
     <#
     .SYNOPSIS

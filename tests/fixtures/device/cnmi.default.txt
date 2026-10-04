@@ -1,0 +1,4 @@
+# Source: captured 2026-10-04, FM350-GL firmware 81600.0000.00.29.22.06; SIM ready on slot 0, before anything set: no new-message notices.
+AT+CNMI?
++CNMI: 0, 0, 0, 0, 0
+OK
