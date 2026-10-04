@@ -25,7 +25,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Fails when the tag doesn't name the modules' version, the CHANGELOG has no section for
-      # it, or a file of lpac's doesn't match its pinned SHA-256 (tools/Lpac.psd1).
+      # it, or a file of lpac's or ZXing.Net's doesn't match its pinned SHA-256 (tools/Lpac.psd1,
+      # tools/ZXing.psd1).
       - name: Build the package
         shell: pwsh
         run: |

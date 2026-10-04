@@ -1,7 +1,7 @@
 # The release package (tools/New-ReleasePackage.ps1): the version a tag may release, the
-# CHANGELOG section that becomes the notes, lpac's pin, and the zip itself - built into TestDrive
-# from this repository with a stand-in for lpac's release (no download), extracted, and found to
-# be a package the installer takes.
+# CHANGELOG section that becomes the notes, lpac's and ZXing.Net's pins, and the zip itself -
+# built into TestDrive from this repository with stand-ins for both (no download), extracted, and
+# found to be a package the installer takes.
 
 BeforeAll {
     $script:root = (Resolve-Path "$PSScriptRoot/..").Path
@@ -37,7 +37,24 @@ BeforeAll {
             "    Build = @{ Name = 'lpac-test.zip'; Url = 'https://example.invalid/build.zip'; Sha256 = '$buildHash' }"
             "    Source = @{ Name = 'lpac-9.9.9-source.tar.gz'; Url = 'https://example.invalid/source.tar.gz'; Sha256 = '$sourceHash' } }"
         )
-        [pscustomobject]@{ Pin = $pin; Cache = $cache; Build = $build; Source = $source }
+        # ZXing.Net's stand-in in the same cache: a package with the library and another one, its
+        # license, and a pin that takes the library.
+        $nuget = Join-Path $Folder 'nuget'
+        New-Item -ItemType Directory -Path (Join-Path $nuget 'lib/net9.0') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $nuget 'lib/net8.0') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $nuget 'lib/net9.0/zxing.dll') -Value 'not a library'
+        Set-Content -LiteralPath (Join-Path $nuget 'lib/net8.0/zxing.dll') -Value 'not this one'
+        $package = Join-Path $cache 'zxing.test.nupkg'
+        [System.IO.Compression.ZipFile]::CreateFromDirectory($nuget, $package)
+        $license = Join-Path $cache 'COPYING'
+        Set-Content -LiteralPath $license -Value 'Apache License 2.0'
+        $zxingPin = Join-Path $Folder 'ZXing.psd1'
+        Set-Content -LiteralPath $zxingPin -Value @(
+            "@{ Version = '9.9.9'; Page = 'https://example.invalid/zxing'; Files = @{ 'lib/net9.0/zxing.dll' = 'zxing.dll' }"
+            "    Package = @{ Name = 'zxing.test.nupkg'; Url = 'https://example.invalid/zxing.nupkg'; Sha256 = '$((Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash)' }"
+            "    License = @{ Name = 'COPYING'; Url = 'https://example.invalid/COPYING'; Sha256 = '$((Get-FileHash -LiteralPath $license -Algorithm SHA256).Hash)' } }"
+        )
+        [pscustomobject]@{ Pin = $pin; ZxingPin = $zxingPin; Cache = $cache; Build = $build; Source = $source }
     }
 
     $script:changelog = @'
@@ -123,7 +140,7 @@ Describe 'New-ReleasePackage.ps1' {
     It 'builds the zip from this repository: the package at its top, lpac in its folder, nothing else' {
         $out = Join-Path $TestDrive 'dist'
         $lpac = Get-TestLpac -Folder (Join-Path $TestDrive 'lpac')
-        $result = & $script:builder -OutputFolder $out -LpacPin $lpac.Pin -LpacCache $lpac.Cache
+        $result = & $script:builder -OutputFolder $out -LpacPin $lpac.Pin -ZxingPin $lpac.ZxingPin -Cache $lpac.Cache
         $result.Zip | Should -Exist
         $result.Notes | Should -Exist
         Split-Path -Leaf $result.Zip | Should -Be "fibocom-fm350-gl-windows-gui-$($result.Version).zip"
@@ -142,6 +159,7 @@ Describe 'New-ReleasePackage.ps1' {
         $entries -match '\\' | Should -BeNullOrEmpty -Because 'zip entries use forward slashes'
         $entries -match '^(tests|docs|tools|captures|\.github)/' | Should -BeNullOrEmpty
         @($entries -like 'lpac/*') | Should -Be @('lpac/lpac.exe', 'lpac/LICENSE-lpac', 'lpac/SOURCE.txt')
+        @($entries -like 'zxing/*') | Should -Be @('zxing/zxing.dll', 'zxing/COPYING', 'zxing/README.txt')
         $result.LpacSource | Should -Exist
         Split-Path -Leaf $result.LpacSource | Should -Be 'lpac-9.9.9-source.tar.gz'
 
@@ -160,14 +178,14 @@ Describe 'New-ReleasePackage.ps1' {
     It 'refuses a tag that doesn''t name the version, and builds nothing' {
         $out = Join-Path $TestDrive 'refused'
         $lpac = Get-TestLpac -Folder (Join-Path $TestDrive 'lpac-refused')
-        { & $script:builder -Tag 'v0.0.1' -OutputFolder $out -LpacPin $lpac.Pin -LpacCache $lpac.Cache } | Should -Throw '*doesn''t match*'
+        { & $script:builder -Tag 'v0.0.1' -OutputFolder $out -LpacPin $lpac.Pin -ZxingPin $lpac.ZxingPin -Cache $lpac.Cache } | Should -Throw '*doesn''t match*'
         Test-Path $out | Should -BeFalse
     }
 
     It 'refuses lpac''s files when a SHA-256 doesn''t match: deleted, nothing built' {
         $out = Join-Path $TestDrive 'wrong'
         $lpac = Get-TestLpac -Folder (Join-Path $TestDrive 'lpac-wrong') -Wrong
-        { & $script:builder -OutputFolder $out -LpacPin $lpac.Pin -LpacCache $lpac.Cache } | Should -Throw '*SHA-256*'
+        { & $script:builder -OutputFolder $out -LpacPin $lpac.Pin -ZxingPin $lpac.ZxingPin -Cache $lpac.Cache } | Should -Throw '*SHA-256*'
         $lpac.Build | Should -Not -Exist
         Test-Path $out | Should -BeFalse
     }
@@ -175,13 +193,13 @@ Describe 'New-ReleasePackage.ps1' {
     It 'refuses a build without a file the pin lists, and leaves no zip' {
         $out = Join-Path $TestDrive 'nested'
         $lpac = Get-TestLpac -Folder (Join-Path $TestDrive 'lpac-missing') -Missing
-        { & $script:builder -OutputFolder $out -LpacPin $lpac.Pin -LpacCache $lpac.Cache } | Should -Throw '*has no LICENSE-cjson*'
+        { & $script:builder -OutputFolder $out -LpacPin $lpac.Pin -ZxingPin $lpac.ZxingPin -Cache $lpac.Cache } | Should -Throw '*has no LICENSE-cjson*'
         @(Get-ChildItem -LiteralPath $out -Filter '*.zip') | Should -BeNullOrEmpty
     }
 
-    It 'never packages a lpac folder put in src' {
+    It 'never packages a lpac or zxing folder put in src' {
         $fake = Join-Path $TestDrive 'fake-root'
-        foreach ($file in 'src/App/a.ps1', 'src/lpac/lpac.exe', 'src/lpacx/b.txt', 'LICENSE', 'README.md', 'CHANGELOG.md') {
+        foreach ($file in 'src/App/a.ps1', 'src/lpac/lpac.exe', 'src/lpacx/b.txt', 'src/zxing/zxing.dll', 'LICENSE', 'README.md', 'CHANGELOG.md') {
             New-Item -ItemType File -Path (Join-Path $fake $file) -Force | Out-Null
         }
         @(Get-ReleaseFile -Root $fake | ForEach-Object Entry) | Should -Be @('App/a.ps1', 'lpacx/b.txt', 'LICENSE', 'README.md', 'CHANGELOG.md')
@@ -211,6 +229,30 @@ Describe 'lpac''s pin' {
         @{ Name = 'files with plain names'; Pin = @{ Files = @('lpac.exe', '../x.dll'); Version = '1.0.0'; Build = @{ Name = 'a.zip'; Url = 'https://x/a'; Sha256 = ('a' * 64) }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
     ) {
         { Test-LpacPin -Pin $Pin } | Should -Throw "*lpac's pin*"
+    }
+
+    It 'pins this repository''s ZXing.Net: its nuget.org package, the .NET 9 library, its license at its tag' {
+        $pin = Import-PowerShellDataFile -LiteralPath (Join-Path $script:root 'tools/ZXing.psd1')
+        Test-ZxingPin -Pin $pin | Should -BeTrue
+        $pin.Package.Url | Should -Be "https://api.nuget.org/v3-flatcontainer/zxing.net/$($pin.Version)/zxing.net.$($pin.Version).nupkg"
+        $pin.License.Url | Should -Be "https://raw.githubusercontent.com/micjahn/ZXing.Net/v$($pin.Version).0/COPYING"
+        @($pin.Files.Keys) | Should -Be @('lib/net9.0/zxing.dll')
+    }
+
+    It 'refuses a ZXing.Net pin without <Name>' -ForEach @(
+        @{ Name = 'a version'; Pin = @{ Version = ''; Files = @{ 'lib/net9.0/zxing.dll' = 'zxing.dll' }; Package = @{ Name = 'a.nupkg'; Url = 'https://x/a'; Sha256 = ('a' * 64) }; License = @{ Name = 'COPYING'; Url = 'https://x/c'; Sha256 = ('c' * 64) } } }
+        @{ Name = 'its license'; Pin = @{ Version = '1.0.0'; Files = @{ 'lib/net9.0/zxing.dll' = 'zxing.dll' }; Package = @{ Name = 'a.nupkg'; Url = 'https://x/a'; Sha256 = ('a' * 64) } } }
+        @{ Name = 'zxing.dll among its files'; Pin = @{ Version = '1.0.0'; Files = @{ 'lib/net9.0/other.dll' = 'other.dll' }; Package = @{ Name = 'a.nupkg'; Url = 'https://x/a'; Sha256 = ('a' * 64) }; License = @{ Name = 'COPYING'; Url = 'https://x/c'; Sha256 = ('c' * 64) } } }
+        @{ Name = 'plain names in the zip'; Pin = @{ Version = '1.0.0'; Files = @{ 'lib/net9.0/zxing.dll' = '../zxing.dll' }; Package = @{ Name = 'a.nupkg'; Url = 'https://x/a'; Sha256 = ('a' * 64) }; License = @{ Name = 'COPYING'; Url = 'https://x/c'; Sha256 = ('c' * 64) } } }
+        @{ Name = 'an https address'; Pin = @{ Version = '1.0.0'; Files = @{ 'lib/net9.0/zxing.dll' = 'zxing.dll' }; Package = @{ Name = 'a.nupkg'; Url = 'http://x/a'; Sha256 = ('a' * 64) }; License = @{ Name = 'COPYING'; Url = 'https://x/c'; Sha256 = ('c' * 64) } } }
+    ) {
+        { Test-ZxingPin -Pin $Pin } | Should -Throw "*ZXing.Net's pin*"
+    }
+
+    It 'says what ZXing.Net is, and its license' {
+        $note = Get-ZxingNote -Pin @{ Version = '0.16.11'; Page = 'https://example.invalid/p' }
+        $note | Should -Match 'ZXing\.Net 0\.16\.11'
+        $note | Should -Match 'Apache License 2\.0 \(COPYING\)'
     }
 
     It 'says where lpac''s source is, beside it' {

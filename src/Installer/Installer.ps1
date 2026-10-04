@@ -24,7 +24,7 @@ $script:AppExitWaitMs = 30000
 # What a package holds, and nothing else is copied: an "extract here" into a busy folder never
 # takes the folder along.
 $script:PackageEntries = @('install.cmd', 'uninstall.cmd', 'Start-Fm350.ps1', 'App', 'FibocomFm350', 'Installer')
-$script:OptionalPackageEntries = @('LICENSE', 'README.md', 'CHANGELOG.md', 'lpac')
+$script:OptionalPackageEntries = @('LICENSE', 'README.md', 'CHANGELOG.md', 'lpac', 'zxing')
 
 # The files that tell a package from any folder.
 $script:PackageMarkers = @('Start-Fm350.ps1', 'App\Start-Fm350App.ps1', 'FibocomFm350\FibocomFm350.psd1', 'Installer\Invoke-Fm350Setup.ps1')

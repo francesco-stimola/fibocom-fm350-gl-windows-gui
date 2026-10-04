@@ -8,8 +8,10 @@
 # Release build output
 /dist/
 
-# lpac is never committed: the release workflow takes its pinned release (tools/Lpac.psd1).
+# lpac and ZXing.Net are never committed: the release workflow takes their pins (tools/Lpac.psd1,
+# tools/ZXing.psd1).
 /src/lpac/
+/src/zxing/
 
 # Pester output
 testResults.xml

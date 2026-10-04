@@ -1,8 +1,8 @@
 name: CI
 
 # Lint + tests on every push to main and every pull request: the same two commands as
-# docs/SETUP.md, on a Windows runner, because the project is Windows-only. Then the release zip is
-# built, as a release would build it, and not published. The release workflow runs this one first.
+# docs/SETUP.md, on a Windows runner, because the project is Windows-only. The release zip is built
+# too, as a release would build it, and not published. The release workflow runs this one first.
 on:
   push:
     branches: [main]
@@ -38,6 +38,17 @@ jobs:
         shell: pwsh
         run: ./tools/Invoke-Lint.ps1
 
+      # The zip and the notes a release would publish, built from this commit and thrown away: the
+      # packaging is proven at every push, long before a tag. A notice says what was built. Built
+      # before the tests: they run the programs it bundles, lpac and ZXing.Net
+      # (tests/Bundled.Tests.ps1).
+      - name: Package (not published)
+        shell: pwsh
+        run: |
+          $package = ./tools/New-ReleasePackage.ps1 -OutputFolder "$env:RUNNER_TEMP/package"
+          "FM350_PACKAGE=$($package.Zip)" >> $env:GITHUB_ENV
+          "::notice title=Package::$(Split-Path -Leaf $package.Zip), $($package.Files) files, notes of $((Get-Content -LiteralPath $package.Notes).Count) lines"
+
       - name: Test
         shell: pwsh
         run: |
@@ -59,10 +70,3 @@ jobs:
           # Explicit either way: a native command run by a test must not decide the step's result.
           exit [int]($result.Result -ne 'Passed')
 
-      # The zip and the notes a release would publish, built from this commit and thrown away: the
-      # packaging is proven at every push, long before a tag. A notice says what was built.
-      - name: Package (not published)
-        shell: pwsh
-        run: |
-          $package = ./tools/New-ReleasePackage.ps1 -OutputFolder "$env:RUNNER_TEMP/package"
-          "::notice title=Package::$(Split-Path -Leaf $package.Zip), $($package.Files) files, notes of $((Get-Content -LiteralPath $package.Notes).Count) lines"
