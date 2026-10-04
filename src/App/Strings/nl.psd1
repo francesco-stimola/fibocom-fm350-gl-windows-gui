@@ -424,6 +424,8 @@ Windows verwijdert het van de seriële poorten van de modem en uit de stuurprogr
     'Messages.Compressed'           = 'Dit bericht is gecomprimeerd: de app kan het niet tonen.'
     'Messages.Malformed'            = 'Dit bericht kan niet worden gelezen.'
     'Messages.NationalLanguage'     = 'Het gebruikt een nationale taaltabel die de app niet heeft: sommige tekens kunnen onjuist zijn.'
+    'Messages.Silent'               = 'Een stil bericht: het netwerk heeft gevraagd het nooit te tonen.'
+    'Messages.SilentNote'           = 'Het neemt een plaats op de simkaart in tot het wordt verwijderd.'
     'Messages.Sending'              = 'Het bericht wordt verzonden...'
     'Messages.Count'                = 'Tekens: {0} - delen: {1}'
     'Messages.CountUnicode'         = 'Tekens: {0} - delen: {1} (met speciale tekens {2} per deel)'

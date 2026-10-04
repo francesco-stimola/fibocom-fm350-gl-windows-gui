@@ -766,9 +766,13 @@ function Get-SnapshotValue {
 }
 
 function Get-MessageBody {
-    # A message's text as the window shows it; for one without text, a sentence that says why.
+    # A message's text as the window shows it; for one without text, a sentence that says why. A
+    # silent message's text is never shown (23.040: a short message type 0).
     param([object] $Message)
 
+    if ($Message.Silent) {
+        return Get-AppText 'Messages.Silent'
+    }
     if ($Message.Problem) {
         return Get-AppText 'Messages.Malformed'
     }
@@ -838,7 +842,10 @@ function Get-MessagesView {
         if (-not $item.Complete -and @($item.Missing).Count -gt 0) {
             $notes.Add((Get-AppText 'Messages.Missing' (@($item.Missing) -join ', ')))
         }
-        if ($item.NationalLanguage) {
+        if ($item.Silent) {
+            $notes.Add((Get-AppText 'Messages.SilentNote'))
+        }
+        elseif ($item.NationalLanguage) {
             $notes.Add((Get-AppText 'Messages.NationalLanguage'))
         }
         [pscustomobject]@{

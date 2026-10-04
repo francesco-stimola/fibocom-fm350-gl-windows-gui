@@ -425,6 +425,8 @@ Windows lo quita de los puertos serie del módem y de su almacén de controlador
     'Messages.Compressed'           = 'Este mensaje está comprimido: la aplicación no puede mostrarlo.'
     'Messages.Malformed'            = 'Este mensaje no se puede leer.'
     'Messages.NationalLanguage'     = 'Usa una tabla de idioma nacional que la aplicación no tiene: algunos caracteres pueden ser incorrectos.'
+    'Messages.Silent'               = 'Un mensaje silencioso: la red pidió que nunca se mostrara.'
+    'Messages.SilentNote'           = 'Ocupa una posición en la SIM hasta que se elimine.'
     'Messages.Sending'              = 'Enviando el mensaje...'
     'Messages.Count'                = 'Caracteres: {0} - partes: {1}'
     'Messages.CountUnicode'         = 'Caracteres: {0} - partes: {1} (con caracteres especiales, {2} por parte)'

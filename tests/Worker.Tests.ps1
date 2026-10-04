@@ -1416,15 +1416,25 @@ Describe 'Messages on the simulated modem' {
         $script:link['Snapshot'].MessageNotice.Id | Should -Be 2
     }
 
-    It 'leaves out a silent message' {
+    It 'lists a silent message, so it can be deleted, but never as new nor announced' {
         $device = New-SimulatedDevice -Scenario Online
-        [void]$device.Modem.Messaging.Store(0, $script:silent)
+        $place = $device.Modem.Messaging.Store(0, $script:silent)
         $worker = Get-TestWorker -Device $device
         Invoke-ModemWorkerCycle -Worker $worker
 
-        $script:link['Snapshot'].Messages.Items.Count | Should -Be 3
-        $script:link['Snapshot'].Messages.Used | Should -Be 5
-        $script:link['Snapshot'].MessageNotice.Count | Should -Be 2
+        $snapshot = $script:link['Snapshot']
+        $snapshot.Messages.Items.Count | Should -Be 4
+        $snapshot.Messages.Used | Should -Be 5
+        $silent = @($snapshot.Messages.Items | Where-Object Silent)
+        $silent.Count | Should -Be 1
+        $silent[0].New | Should -BeFalse -Because 'the modem had it unread, but it is never to be shown'
+        $snapshot.Messages.New | Should -Be 2
+        $snapshot.MessageNotice.Count | Should -Be 2
+        $worker.SmsUnread | Should -Not -Contain (Get-SmsFingerprint -Pdu $script:silent)
+
+        (Invoke-TestCommand -Worker $worker -Kind DeleteMessage -Parameter @{ Fingerprints = $silent[0].Fingerprints }).Result | Should -Be 'Done'
+        $device.Modem.Received | Should -Contain "AT+CMGD=$place"
+        @($script:link['Snapshot'].Messages.Items | Where-Object Silent).Count | Should -Be 0
     }
 
     It 'says when the storage is full' {

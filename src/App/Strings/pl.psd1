@@ -425,6 +425,8 @@ Windows usunie go z portów szeregowych modemu i ze swojego magazynu sterownikó
     'Messages.Compressed'           = 'Ta wiadomość jest skompresowana: aplikacja nie może jej pokazać.'
     'Messages.Malformed'            = 'Tej wiadomości nie można odczytać.'
     'Messages.NationalLanguage'     = 'Używa narodowej tabeli językowej, której aplikacja nie ma: niektóre znaki mogą być błędne.'
+    'Messages.Silent'               = 'Cicha wiadomość: sieć poprosiła, aby nigdy jej nie pokazywać.'
+    'Messages.SilentNote'           = 'Zajmuje miejsce na karcie SIM, dopóki nie zostanie usunięta.'
     'Messages.Sending'              = 'Wysyłanie wiadomości...'
     'Messages.Count'                = 'Znaki: {0} - części: {1}'
     'Messages.CountUnicode'         = 'Znaki: {0} - części: {1} (ze znakami specjalnymi {2} na część)'

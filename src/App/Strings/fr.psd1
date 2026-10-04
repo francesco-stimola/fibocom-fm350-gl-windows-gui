@@ -425,6 +425,8 @@ Windows le supprime des ports série du modem et du magasin de pilotes. La conne
     'Messages.Compressed'           = 'Ce message est compressé : l''application ne peut pas l''afficher.'
     'Messages.Malformed'            = 'Ce message ne peut pas être lu.'
     'Messages.NationalLanguage'     = 'Il utilise une table de langue nationale que l''application n''a pas : certains caractères peuvent être faux.'
+    'Messages.Silent'               = 'Un message silencieux : le réseau a demandé qu''il ne soit jamais affiché.'
+    'Messages.SilentNote'           = 'Il occupe un emplacement sur la SIM jusqu''à ce qu''il soit supprimé.'
     'Messages.Sending'              = 'Envoi du message...'
     'Messages.Count'                = 'Caractères : {0} - parties : {1}'
     'Messages.CountUnicode'         = 'Caractères : {0} - parties : {1} (avec des caractères spéciaux, {2} par partie)'

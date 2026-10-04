@@ -425,6 +425,8 @@ O Windows remove-o das portas série do modem e do arquivo de controladores. A l
     'Messages.Compressed'           = 'Esta mensagem está comprimida: a aplicação não a pode mostrar.'
     'Messages.Malformed'            = 'Esta mensagem não pode ser lida.'
     'Messages.NationalLanguage'     = 'Usa uma tabela de idioma nacional que a aplicação não tem: alguns caracteres podem estar errados.'
+    'Messages.Silent'               = 'Uma mensagem silenciosa: a rede pediu que nunca fosse mostrada.'
+    'Messages.SilentNote'           = 'Ocupa uma posição no SIM até ser eliminada.'
     'Messages.Sending'              = 'A enviar a mensagem...'
     'Messages.Count'                = 'Caracteres: {0} - partes: {1}'
     'Messages.CountUnicode'         = 'Caracteres: {0} - partes: {1} (com caracteres especiais, {2} por parte)'

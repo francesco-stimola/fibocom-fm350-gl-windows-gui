@@ -385,6 +385,7 @@ function Get-WorkerMessageView {
             Text             = $message.Text
             Content          = $message.Content
             Class            = $message.Class
+            Silent           = [bool]$message.Silent
             Waiting          = $message.Waiting
             NationalLanguage = $message.NationalLanguage
             Problem          = $message.Problem
@@ -860,7 +861,8 @@ function Read-WorkerInbox {
     # Reads the modem's whole storage - AT+CMGL=4, which marks every message read there - and how
     # full it is, keeps which parts are new (Update-SmsUnread, and its file when that changed),
     # and announces the messages new since the last reading: how many, and the newest one's
-    # sender. Silent messages (23.040: never shown) are left out. A listing cut short still
+    # sender. A silent message (23.040: never shown) is listed - it takes a place in the storage,
+    # which only deleting it frees -, but never new nor announced. A listing cut short still
     # marked what it listed read: its unread parts are kept new, the messages shown left as they
     # were. Returns the listing's status.
     param([hashtable] $Worker)
@@ -882,8 +884,8 @@ function Read-WorkerInbox {
         })
     $storage = ConvertFrom-AtMessageStorage -Lines (Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+CPMS?').Lines
     $before = [string[]]@($Worker.SmsUnread)
-    $unread = [string[]]@(Update-SmsUnread -Unread $before -Entry $entries)
-    $messages = @(Join-SmsPart -Entry $entries | Where-Object { -not $_.Silent })
+    $unread = [string[]]@(Update-SmsUnread -Unread $before -Entry @($entries | Where-Object { -not $_.Sms.Silent }))
+    $messages = @(Join-SmsPart -Entry $entries)
     # New since the last reading: a part new now, and none of it new before - a long message's
     # second part, coming after the first, is not announced again.
     $fresh = @($messages | Where-Object {

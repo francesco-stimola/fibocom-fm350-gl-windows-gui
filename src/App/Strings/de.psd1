@@ -425,6 +425,8 @@ Windows entfernt ihn von den seriellen Ports des Modems und aus dem Treiberspeic
     'Messages.Compressed'           = 'Diese Nachricht ist komprimiert: Die App kann sie nicht anzeigen.'
     'Messages.Malformed'            = 'Diese Nachricht kann nicht gelesen werden.'
     'Messages.NationalLanguage'     = 'Sie verwendet eine nationale Sprachtabelle, die die App nicht hat: Einige Zeichen können falsch sein.'
+    'Messages.Silent'               = 'Eine stille Nachricht: Das Netz hat verlangt, dass sie nie angezeigt wird.'
+    'Messages.SilentNote'           = 'Sie belegt einen Platz auf der SIM, bis sie gelöscht wird.'
     'Messages.Sending'              = 'Nachricht wird gesendet...'
     'Messages.Count'                = 'Zeichen: {0} - Teile: {1}'
     'Messages.CountUnicode'         = 'Zeichen: {0} - Teile: {1} (mit Sonderzeichen {2} pro Teil)'

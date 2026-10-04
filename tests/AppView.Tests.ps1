@@ -701,7 +701,7 @@ Describe 'The Messages tab' {
             $message = [ordered]@{
                 Fingerprints = [string[]]@('AA'); New = $false; Address = '+10000000000'; AddressType = 'International'
                 Time = [DateTimeOffset]::new(2026, 10, 4, 9, 30, 0, [timespan]::FromHours(2)); Text = 'hello'; Content = 'Text'; Class = $null
-                Waiting = $null; NationalLanguage = $false; Problem = $null; Count = 1; Missing = [int[]]@(); Complete = $true
+                Silent = $false; Waiting = $null; NationalLanguage = $false; Problem = $null; Count = 1; Missing = [int[]]@(); Complete = $true
             }
             foreach ($key in $Change.Keys) {
                 $message[$key] = $Change[$key]
@@ -760,7 +760,8 @@ Describe 'The Messages tab' {
         @{ Name = 'malformed in its first part, the others read'; Change = @{ Text = 'the rest'; Problem = 'Malformed' }; Text = 'This message can''t be read.'; Note = $null }
         @{ Name = 'parts missing'; Change = @{ Text = "one $([char]0x2026)"; Count = 3; Missing = [int[]]@(2, 3); Complete = $false }; Text = "one $([char]0x2026)"; Note = 'Parts not received (yet): 2, 3.' }
         @{ Name = 'a national language table'; Change = @{ NationalLanguage = $true }; Text = 'hello'; Note = 'It uses a national language table the app doesn''t have: some characters may be wrong.' }
-    ) {
+        @{ Name = 'silent, its text never shown'; Change = @{ Silent = $true }; Text = 'A silent message: the network asked that it never be shown.'; Note = 'It takes a place on the SIM until it is deleted.' }
+        @{ Name = 'silent, its text''s language table not mentioned'; Change = @{ Silent = $true; NationalLanguage = $true }; Text = 'A silent message: the network asked that it never be shown.'; Note = 'It takes a place on the SIM until it is deleted.' }    ) {
         $view = Get-MessagesView -Snapshot (Copy-Snapshot $script:online @{ Messages = (Get-TestMessageList -Item @(Get-TestMessage -Change $Change)) })
         $view.Items[0].Text | Should -Be $Text
         $view.Items[0].Note | Should -Be $Note

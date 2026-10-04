@@ -425,6 +425,8 @@ Windows removes it from the modem's serial ports and from its driver store. The 
     'Messages.Compressed'           = 'This message is compressed: the app can''t show it.'
     'Messages.Malformed'            = 'This message can''t be read.'
     'Messages.NationalLanguage'     = 'It uses a national language table the app doesn''t have: some characters may be wrong.'
+    'Messages.Silent'               = 'A silent message: the network asked that it never be shown.'
+    'Messages.SilentNote'           = 'It takes a place on the SIM until it is deleted.'
     'Messages.Sending'              = 'Sending the message...'
     'Messages.Count'                = 'Characters: {0} - parts: {1}'
     'Messages.CountUnicode'         = 'Characters: {0} - parts: {1} (with special characters, {2} per part)'
