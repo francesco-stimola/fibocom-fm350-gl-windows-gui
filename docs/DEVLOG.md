@@ -4,6 +4,56 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-04 — M9: lpac pinned, the bridge, the eSIM in the worker, lpac in the zip
+
+lpac's facts read from its release `v2.3.0` — the latest —, at the tag, before the bridge was
+written (`AT-COMMANDS.md` §8). What they changed:
+- **Each of lpac's five APDU requests waits for exactly one answer line**, `disconnect` and
+  `logic_channel_close` too: the bridge answers every request, and never one it wasn't asked.
+- **The refresh flag defaults to 0 in lpac's code**, though its usage page says 1: without it the
+  eUICC asks for no REFRESH and the modem wouldn't reset the SIM. The app always passes `1`.
+- **lpac reads `61xx` itself, and any `9xxx` as success** — the `910B` of a profile switch
+  included: the bridge carries status words as they come.
+- **Its HTTP backend on Windows is `curl`**, not `winhttp` as §8 said from the main branch, with
+  peer and host verification turned off; the build ships `libcurl.dll` 8.6.0 with OpenSSL and six
+  other libraries built in, and their licenses missing. The SM-DP+ servers' TLS certificates are
+  issued by the GSMA's CI, which Windows doesn't trust. An open decision (ROADMAP).
+- **`v2.3.0`'s `stdio` APDU backend doesn't work**, found by running the release's own binary
+  through the bridge against the simulated eUICC: a refactor made `json_request` return `true` on
+  success, which three of its callers still read as a failure, so lpac ends at `connect` with
+  `euicc_init`. Fixed on lpac's `main` in November 2025, unreleased; `v2.2.1` works and differs
+  in nothing the bridge relies on, but GitHub lists no SHA-256 for its assets. Which lpac to ship
+  is an open decision (ROADMAP); the device sessions wait for it.
+
+Built on them, with the simulated modem (ARCHITECTURE → *eSIM*):
+- **The bridge as pure functions** — a request to its AT command or its answer, the modem's answer
+  to lpac's — and a thin loop that owns lpac's process and takes any AT channel, whatever the
+  transport: M10 changes the transport under it, not the bridge. The modem routes by session ID,
+  so the bridge gives lpac channel numbers of its own and reads the class byte only to pick among
+  several channels; a close answered with an error is a channel the SIM's reset closed already.
+- **lpac's environment and path are the app's**: `LPAC_APDU`, `LPAC_HTTP` and the segment size
+  named, lpac's other variables taken out of what it inherits — an elevated child inherits the
+  user's environment, where one could name the `at` backend (the COM port) or another ISD-R —;
+  arguments passed one by one; its path in one function (`Get-LpacPath`), which M10 will make
+  choose by architecture.
+- **`+CPIN: EMPTY_EUICC` is `NoProfile`**: blocked, never escalated — no reset enables a profile —;
+  before, it read as *Other*, a code the app doesn't handle.
+- **The worker** reads the slot and the kind of SIM once per port, reads the eUICC through lpac
+  when it is the SIM in use and a read is due, sends pending notifications at each read (not in
+  observe-only mode), and carries out the eSIM commands — switches in a maintenance window, none
+  while a network mode is on trial, a profile enabled never deleted. The EID and the ICCIDs stay
+  in the worker; the snapshot names profiles by their ISD-P AID, which `lpac profile nickname`
+  can't take: the worker maps it to the ICCID.
+- **The log** redacts `AT+CGLA`'s APDUs and activation codes.
+- **The simulated modem has an eUICC**, its channels and the reset a switch causes, and a
+  simulated lpac speaks lpac's protocol in development mode (`EsimEmpty`, `Esim`). The real process
+  plumbing — the environment cleaned, arguments with quotes and non-ASCII letters, a run that
+  hangs, one that ends without a result — is tested with a stand-in script for lpac.
+- **lpac in the zip**: `tools/Lpac.psd1` pins the release, `New-ReleasePackage.ps1` takes each file
+  from a cache or downloads it and uses it only when its SHA-256 matches, puts the build in the
+  zip's `lpac` folder as published with a `SOURCE.txt`, and writes the source archive beside the
+  zip for the release to attach. The tests build the package from a stand-in, offline.
+
 ## 2026-10-04 — Decided: silent messages listed, the sender kept in the notification
 
 The two open decisions from M8's review, taken by the maintainer:

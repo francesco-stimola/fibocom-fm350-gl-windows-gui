@@ -68,8 +68,8 @@ user reopens it and monitoring resumes.
 - **Commands** (`Send-ModemCommand`): check now (a connect pass, which never breaks a connection
   that works), save settings and the APN password, set the network mode (tried, *Modes and*
   *bands*), store or forget the SIM PIN, remove the PIN from the SIM, lift the FCC lock, enable
-  the adapter, check a driver package, install it, uninstall the AT port's driver (*Drivers*).
-  Secrets travel as `SecureString`s and stay
+  the adapter, check a driver package, install it, uninstall the AT port's driver (*Drivers*),
+  the messages' (*SMS*), the eSIM's (*eSIM*). Secrets travel as `SecureString`s and stay
   in the process. Each command's outcome comes back in the next snapshots (the last ten).
 - **Cadence** (`Resolve-WorkerSchedule`, pure; decided 2026-10-01): a connect pass every 30 s
   online, every 10 s while the connection is on its way, every 30 s while it waits for the user
@@ -108,8 +108,8 @@ user reopens it and monitoring resumes.
   an APN needed, a PIN required, an FCC lock and its unlock, a disabled adapter, no modem, no
   driver; and M4's faults — a path that settles, a data path down, a network that drops ICMP, a
   registration lost, a modem that doesn't answer, a network that refuses it for good; and M5's
-  modem in LTE-only mode, in NR-only mode where there is no 5G SA, and a network with 5G SA) — no
-  device, no administrator rights,
+  modem in LTE-only mode, in NR-only mode where there is no 5G SA, and a network with 5G SA; and
+  M9's eUICC in use, with no profile enabled and with one) — no device, no administrator rights,
   nothing changed on the system. The recovery steps act on the simulated modem as on a real one,
   every time they run; so do the driver's install and uninstall, while a package chosen is copied
   and checked for real, in the development folder. Its settings,
@@ -535,8 +535,8 @@ window ends, or until the modem is healthy again after the operation broke the l
 reading taken before it did doesn't close it; then a failing check gets its grace time from the
 window's end. A window lasts 3 min; the FCC unlock, which restarts the modem as a reset does,
 opens one of 5 min (decided 2026-10-02). A network mode written — by the pass, by the user's
-choice, by its undoing — opens one of 3 min (*Modes and bands*); M9's profile and slot switches
-will open one too.
+choice, by its undoing — opens one of 3 min (*Modes and bands*), and so does a SIM slot or an
+eSIM profile switched (*eSIM*).
 
 ## Modes and bands (M5)
 
@@ -913,25 +913,79 @@ runs as an external process, one invocation per operation (facts: `AT-COMMANDS.m
 
 - **lpac never touches the AT port.** Its `stdio` backend hands every APDU to the worker, which
   carries it with `AT+CCHO`/`AT+CGLA`/`AT+CCHC` on the port it already owns (invariant 1). lpac
-  talks to the SM-DP+ over HTTPS on its own (`winhttp`).
-- **The bridge is a translation** — lpac request → AT command, AT response → lpac answer — written
-  as pure functions and tested with a matrix; the lpac side is simulated in the tests.
-- **Operations:** chip info; profile list, enable, disable, nickname; download from an activation
-  code or QR code; delete behind a strong confirmation; notifications processed automatically after
-  each operation. `chip purge` is never exposed.
+  talks to the SM-DP+ over HTTPS on its own, with its `curl` backend (`AT-COMMANDS.md` §8 says
+  what it checks and what it doesn't).
+- **The bridge is a translation** — lpac request → AT command, AT answer → lpac answer — written
+  as pure functions with a matrix of tests (`Resolve-LpacApduRequest`, `Resolve-LpacApduAnswer`,
+  `ConvertFrom-LpacLine`, `ConvertTo-LpacAnswerLine`), and a thin loop around them
+  (`Invoke-LpacOperation`) that takes any AT channel, whatever transport is under it:
+  - `connect` and `disconnect` are answered at once: the port is the worker's, open already.
+  - `logic_channel_open` is `AT+CCHO`; the modem's session ID gets a channel number of the
+    bridge's — the lowest free from 1 —, which lpac writes into each request's class byte. The
+    modem routes by the session ID whatever the class byte says (`AT-COMMANDS.md` §8), so
+    `transmit` goes as `AT+CGLA` on the channel the class byte names, or on the only one open.
+  - `logic_channel_close` is `AT+CCHC` for a channel the bridge opened. An error in answer is a
+    channel the SIM closed already: **a profile switch resets the SIM**, and the logical channels
+    with it. Channels left open — lpac stopped, a close unanswered — are closed at the end of the
+    run.
+  - Every request gets one answer line: lpac reads one per request. A request for the network
+    (lpac's `stdio` HTTP backend, unused) is answered as a failure.
+  - A run ends with lpac's output, at its time limit (lpac stopped), or on a lost port. The loop
+    owns the process from its start and disposes it whatever happens.
+- **lpac runs with the app's settings, nothing else of its own**: `LPAC_APDU=stdio`, the HTTP
+  backend and 120-byte ES10 segments are named, and lpac's and its library's other variables
+  are taken out of the environment it inherits — the user's environment reaches the elevated
+  app's children, and a variable could name another backend (one opens the COM port itself),
+  another ISD-R, or debug output carrying the APDUs. Its arguments are passed one by one, never
+  joined into a command line; no window. **Its path is named in one place** (`Get-LpacPath`):
+  the `lpac` folder beside the app's modules, under Program Files (invariant 10). No setting
+  names it.
+- **lpac's command lines** (`Get-LpacArgument`, pure): `chip info`; `profile list`; `profile
+  enable|disable <AID> 1` — the refresh flag always given: lpac's code defaults to none, and the
+  modem resets the SIM only on the refresh —; `profile nickname <ICCID>`; `profile delete <AID>`;
+  `profile download -a <activation code> [-c <confirmation code>]`, never `-p` (a preview read
+  from standard input, which the APDUs use) nor `-i` (the IMEI); `notification list`;
+  `notification process -a -r`. `chip purge` has no operation.
+- **The SIM slot in use** (`AT+GTDUALSIM?`) and the kind of SIM in it (`AT+SIMTYPE?`) are read
+  once per port and after a switch. lpac reaches the eUICC only while its slot is the one in
+  use.
+- **The eUICC is read** — `chip info`, `profile list`, `notification list` — when it is the SIM in
+  use, its SIM ready or with no profile enabled (never while it resets), and a read is due: on the
+  first port, after an eSIM command, at the user's request, and when the connection comes back
+  online with notifications waiting.
+- **Notifications are processed automatically**: each read sends what the eUICC holds, each to
+  its server, then removes it from the eUICC — never in observe-only mode. What can't be sent (no
+  internet yet, through a profile just enabled) stays for the next read.
+- **Commands** (`Send-ModemCommand`): read the eSIM again, select the slot, enable, disable,
+  nickname, delete — a profile by its ISD-P AID —, download. Refused in observe-only mode
+  (reading excepted), while the eUICC's slot is not the one in use (`NotEuicc`), without lpac
+  (`NoLpac`), and for a switch while a network mode is on trial (`TrialOn`): its undoing needs the
+  registration the switch drops. A profile enabled is never deleted (`ProfileEnabled`). The
+  activation and confirmation codes travel as `SecureString`s, are checked first
+  (`ConvertFrom-EsimActivationCode`), and are never logged nor shown back.
 - **Switching** the SIM slot (`AT+GTDUALSIM`) or the enabled profile disrupts the link, so it runs
   inside a **maintenance window** (see *Maintenance windows*). The slot setting is **persistent**
   modem state (`AT-COMMANDS.md` §4): the app writes it only after a confirmation saying that the
   choice stays in the modem across restarts, and always shows the active slot.
-- **A profile switch resets the SIM** (`AT-COMMANDS.md` §8): the eUICC's logical channels close with
-  it, so a session that fails after a switch is treated as closed, and a new one is opened.
-- **Identifiers:** EID and ICCIDs are redacted like IMEI and IMSI; activation codes are secrets and
-  are never logged.
+- **An eUICC with no profile enabled** (`+CPIN: EMPTY_EUICC`) is a SIM state of its own,
+  `NoProfile`: blocked, never escalated — no reset enables a profile; the user does.
+- **Identifiers:** the EID and the ICCIDs stay in the worker; a snapshot carries the profiles' ISD-P
+  AIDs, providers, names, nicknames, classes and states. The log redacts `AT+CGLA`'s APDUs, in a
+  command and in its answer, and activation codes; an eSIM command's failure is logged by the step
+  that failed and lpac's reason.
+- **Development mode** (`-Scenario EsimEmpty`, `Esim`): the simulated modem has two slots, as our
+  module has them — the physical SIM, and an eUICC holding a test profile (`SimulatedEuicc`): its
+  logical channels, the STORE DATA requests that change it told by their tag, the SIM reset after
+  a switch. A simulated lpac (`SimulatedLpac`) speaks lpac's `stdio` protocol for one operation
+  and gives lpac's result from what the eUICC holds. Nothing of the eSIM ships proven on it alone
+  (decided 2026-10-03).
 - **lpac ships with the app.** lpac is AGPL-3.0, so unlike the modem driver it may be
   redistributed. The release workflow downloads the pinned version from lpac's official GitHub
-  releases, checks its SHA-256, and puts `lpac.exe` and its license in the release zip; lpac's
-  source archive for the same tag is attached to the GitHub Release as the corresponding source.
-  The binary is never committed to git.
+  release (`tools/Lpac.psd1`), checks the SHA-256 of each file, and puts the Windows build in the
+  zip's `lpac` folder as published — `lpac.exe`, `libcurl.dll`, its README and licenses — with
+  `SOURCE.txt`, which says where the source is; lpac's source archive for the same tag is attached
+  to the GitHub Release as the corresponding source. The binaries are never committed to git; a
+  `lpac` folder in `src/` is never packaged.
 
 ## SMS, USSD and data usage (M8)
 
@@ -1087,7 +1141,7 @@ src/
     Timeouts.ps1         each command's documented worst case (M2, pure)
     Transport.ps1        the serial transport, and the shape every transport has (M1)
     SimulatedModem.ps1   the simulated modem: fixtures + scripted faults; fixture import (M1); its network mode (M5);
-                         its message storage, notices and sending (M8)
+                         its message storage, notices and sending (M8); its SIM slots and eUICC (M9)
     AtChannel.ps1        the AT channel: commands, answers, unsolicited codes (M1); sending a PDU (M8)
     Measurements.ps1     measurement index -> dBm/dB (M1, pure)
     Parsers.ps1          identity, SIM, registration, operator, signal, temperature (M1, pure)
@@ -1100,6 +1154,8 @@ src/
     Sms.ps1              SMS: the PDU codec, long messages joined and split, the storage's
                          answers, what is new (M8, pure); the file of what is new
     Sim.ps1              SIM PIN: states, the decision, the encrypted store, removing it (M2)
+    Esim.ps1             eSIM: lpac's lines and command lines, the bridge to AT+CCHO/+CGLA/+CCHC
+                         (pure), the SIM slot's reads; lpac run to its end (M9)
     Fcc.ps1              FCC lock: reads, diagnosis, unlock (M2)
     Modes.ps1            network mode and bands: reads, what to write (pure), a choice on trial (M5)
     Connection.ps1       state machine (pure), observation and connect pass (M2)
@@ -1116,7 +1172,7 @@ src/
     Radio.ps1            technology, bars, cells for display (M3, pure), and their reads
     Health.ps1           which check fails, the data path's verdict (M4, pure); the probe
     Recovery.ps1         the recovery decision (M4, pure), maintenance windows, the steps
-    Simulation.ps1       development mode: the simulated device and adapter (M3)
+    Simulation.ps1       development mode: the simulated device and adapter (M3); lpac (M9)
     Updates.ps1          the update notice: what GitHub's answer means (pure), the request (M7)
     Startup.ps1          the start at sign-in: the installer's logon task, read and turned on or off (M7)
     Worker.ps1           the worker: link, cadence (pure), snapshots (pure), commands, loop (M3)
@@ -1152,7 +1208,8 @@ tools/
   Invoke-Lint.ps1        the linter, as CI runs it (docs/SETUP.md)
   LintRetry.ps1          when the linter starts another analyzer process, and gives a file up (pure)
   New-ReleasePackage.ps1 the release zip and its notes (M7): CI builds them at every push, the
-                         release workflow publishes them
+                         release workflow publishes them; lpac in the zip, its source beside (M9)
+  Lpac.psd1              lpac's pinned release: addresses and SHA-256 (M9)
 assets/                  logo (source: logo.html)
 ```
 
@@ -1162,8 +1219,8 @@ None beyond **PowerShell 7.6+ on Windows**. Everything the app uses ships with i
 (serial), WPF and WinForms (UI), `System.Drawing` (icon), `System.Net.Http` (the update notice),
 and the Windows modules `PnpDevice`, `NetAdapter`, `NetTCPIP`, `DnsClient`, `ScheduledTasks`.
 Windows PowerShell 5.1 and its `Appx` module, part of Windows, run the launcher. From `v1.2.0`
-the release zip also carries `lpac.exe` for eSIM (see *eSIM*); nothing has to be installed
-separately.
+the release zip also carries lpac for eSIM — `lpac.exe` and the `libcurl.dll` it loads, in the
+`lpac` folder (see *eSIM*); nothing has to be installed separately.
 
 ## Invariants
 
