@@ -132,6 +132,24 @@ Describe 'Resolve-WorkerSchedule' {
         $schedule.Probe | Should -BeFalse
         $schedule.WaitMs | Should -Be 4000
     }
+
+    It 'reads data usage: <Name>' -ForEach @(
+        # Pass and status read just done: the next of those 5 s away.
+        @{ Name = 'the adapter known, never read: now'; Arguments = @{ UsageWanted = $true }; Usage = $true; Wait = 0 }
+        @{ Name = 'read 28 s ago: in 2 s'; Arguments = @{ UsageWanted = $true; LastUsage = 72000 }; Usage = $false; Wait = 2000 }
+        @{ Name = 'read 30 s ago: now'; Arguments = @{ UsageWanted = $true; LastUsage = 70000 }; Usage = $true; Wait = 0 }
+        @{ Name = 'no adapter: never'; Arguments = @{ LastUsage = 0 }; Usage = $false; Wait = 5000 }
+    ) {
+        $schedule = Resolve-WorkerSchedule -Now 100000 -LastPass 100000 -LastStatus 100000 -State 'Online' -PortOpen @Arguments
+        $schedule.Usage | Should -Be $Usage
+        $schedule.WaitMs | Should -Be $Wait
+    }
+
+    It 'reads data usage with no port open too' {
+        $schedule = Resolve-WorkerSchedule -Now 100000 -LastScan 99000 -UsageWanted
+        $schedule.Usage | Should -BeTrue
+        $schedule.WaitMs | Should -Be 0
+    }
 }
 
 Describe 'Invoke-ModemWorkerCycle' {
@@ -1167,6 +1185,123 @@ Describe 'The network mode on the simulated modem' {
     }
 }
 
+Describe 'Data usage on the simulated modem' {
+    BeforeEach {
+        $script:folder = Join-Path $TestDrive ([guid]::NewGuid())
+        $script:now = 100000
+    }
+
+    BeforeAll {
+        # Cycles until -Reads more readings of the counters were taken, the clock moving on.
+        function Invoke-UsageRead {
+            param([hashtable] $Worker, [int] $Reads = 1)
+            for ($i = 0; $i -lt $Reads; $i++) {
+                $script:now += 30000
+                Invoke-ModemWorkerCycle -Worker $Worker
+            }
+        }
+    }
+
+    It 'counts the adapter''s traffic from the first reading on: today and the cycle' {
+        $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario Online)
+        Invoke-ModemWorkerCycle -Worker $worker
+        $first = $script:link['Snapshot'].Usage
+        Invoke-UsageRead -Worker $worker
+
+        $first.Today.Total | Should -Be 0 -Because 'the first reading only says where counting starts'
+        $usage = $script:link['Snapshot'].Usage
+        $usage.Today.Received | Should -Be 2000000
+        $usage.Today.Sent | Should -Be 200000
+        $usage.Cycle.Total | Should -Be 2200000
+        $usage.Quota | Should -BeNullOrEmpty
+        $script:link['Snapshot'].UsageNotice | Should -BeNullOrEmpty
+    }
+
+    It 'says each quota threshold once, never touching the connection' {
+        Export-AppSetting -Settings @{ UsageQuotaGB = 0.01 } -Path (Join-Path $script:folder 'settings.json') -Confirm:$false
+        $device = New-SimulatedDevice -Scenario Online
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $notices = foreach ($i in 1..6) {
+            Invoke-UsageRead -Worker $worker
+            $script:link['Snapshot'].UsageNotice
+        }
+
+        # 2.2 MB a reading against 10 MB: 80% at the fourth, 100% at the fifth.
+        $notices[2] | Should -BeNullOrEmpty
+        $notices[3].Threshold | Should -Be 80
+        $notices[3].Id | Should -Be 1
+        $notices[4].Threshold | Should -Be 100
+        $notices[4].Id | Should -Be 2
+        $notices[5].Id | Should -Be 2
+        $script:link['Snapshot'].State | Should -Be 'Online'
+        Get-WriteCommand -Modem $device.Modem | Should -BeNullOrEmpty
+        @(Get-TestLog | Where-Object { $_ -match 'Data usage: (80|100)% of the quota reached' }).Count | Should -Be 2
+    }
+
+    It 'carries the totals and the thresholds said to the next worker, which says none again' {
+        # 5 readings of 2.2 MB against 13.5 MB: 81%; one more, 98%.
+        Export-AppSetting -Settings @{ UsageQuotaGB = 0.0135 } -Path (Join-Path $script:folder 'settings.json') -Confirm:$false
+        $device = New-SimulatedDevice -Scenario Online
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        Invoke-UsageRead -Worker $worker -Reads 5
+        $before = $script:link['Snapshot']
+        Close-ModemWorker -Worker $worker
+        $next = Get-TestWorker -Device $device -Extra @{ Previous = $before; Generation = 2 }
+        Invoke-ModemWorkerCycle -Worker $next
+
+        $after = $script:link['Snapshot']
+        $before.UsageNotice.Threshold | Should -Be 80
+        $after.UsageNotice.Id | Should -Be 1 -Because 'the threshold was said already this cycle'
+        $after.Usage.Today.Total | Should -Be (6 * 2200000) -Because 'the next worker counts on from the counters the first one saved'
+    }
+
+    It 'counts across a restart of the modem''s USB device, its counters starting over' {
+        $device = New-SimulatedDevice -Scenario Online
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        Invoke-UsageRead -Worker $worker -Reads 2
+        $device.Adapter.ResetCounters()
+        Invoke-UsageRead -Worker $worker
+
+        $script:link['Snapshot'].Usage.Today.Received | Should -Be 6000000
+    }
+
+    It 'measures again at once when the cycle or the quota change' {
+        $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario Online)
+        Invoke-ModemWorkerCycle -Worker $worker
+        $null = Invoke-TestCommand -Worker $worker -Kind SaveSettings -Parameter @{ Settings = @{ UsageQuotaGB = 5; UsageCycleDay = 31 } }
+
+        $script:link['Snapshot'].Usage.Quota | Should -Be 5000000000
+    }
+
+    It 'never stops the cycle when the counters can''t be read: said once, tried again' {
+        $device = New-SimulatedDevice -Scenario Online
+        $device.Adapter | Add-Member -MemberType ScriptMethod -Name ReadCounters -Value { throw 'not readable' } -Force
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        Invoke-UsageRead -Worker $worker -Reads 2
+
+        $script:link['Snapshot'].State | Should -Be 'Online'
+        $script:link['Snapshot'].Usage | Should -BeNullOrEmpty
+        @(Get-TestLog | Where-Object { $_ -match 'Data usage not counted' }).Count | Should -Be 1
+        @(Get-TestLog | Where-Object { $_ -match 'Cycle failed' }).Count | Should -Be 0
+    }
+
+    It 'saves what it counted when it ends' {
+        $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario Online)
+        Invoke-ModemWorkerCycle -Worker $worker
+        Invoke-UsageRead -Worker $worker
+        $path = Join-Path $script:folder 'usage.json'
+        $saved = Import-DataUsage -Path $path
+        Close-ModemWorker -Worker $worker
+
+        $saved.Days.Count | Should -Be 0 -Because 'saved at the first reading, then not again within the interval'
+        @((Import-DataUsage -Path $path).Days.Values)[0].Received | Should -Be 2000000
+    }
+}
+
 Describe 'The worker and the AT port' {
     BeforeAll {
         # The PnP records of one modem, its AT port on -PortName; -Instance tells the device
@@ -1188,6 +1323,7 @@ Describe 'The worker and the AT port' {
         Mock -ModuleName FibocomFm350 Get-ModemPnpRecord { $script:records }
         Mock -ModuleName FibocomFm350 Open-SerialAtTransport { $script:modems[$PortName] }
         Mock -ModuleName FibocomFm350 Get-ModemAdapterState { $script:configured }
+        Mock -ModuleName FibocomFm350 Get-ModemAdapterCounter { }
         Mock -ModuleName FibocomFm350 Test-AppElevation { $true }
         $script:link = New-ModemWorkerLink
         $script:worker = New-ModemWorker -Link $script:link -DataFolder $script:folder -Clock { $script:now }
@@ -1226,6 +1362,16 @@ Describe 'The worker and the AT port' {
         Invoke-ModemWorkerCycle -Worker $script:worker
         Should -Invoke -ModuleName FibocomFm350 Open-SerialAtTransport -Times 2 -Exactly
         @(Get-TestLog | Where-Object { $_ -match "can't be opened" }).Count | Should -Be 1 -Because 'the same failure is logged once'
+    }
+
+    It 'reads data usage while another program holds the AT port' {
+        Mock -ModuleName FibocomFm350 Open-SerialAtTransport { throw [System.UnauthorizedAccessException]::new("Access to the port '$PortName' is denied.") }
+        Mock -ModuleName FibocomFm350 Get-ModemAdapterCounter { [pscustomobject]@{ Interface = 'x'; Received = [uint64]10; Sent = [uint64]1; Time = [DateTimeOffset]::Now } }
+        Invoke-ModemWorkerCycle -Worker $script:worker
+
+        $script:link['Snapshot'].Reason | Should -Be 'PortInUse'
+        $script:link['Snapshot'].Usage | Should -Not -BeNullOrEmpty
+        Should -Invoke -ModuleName FibocomFm350 Get-ModemAdapterCounter -ParameterFilter { $InstanceId -eq 'USB\VID_0E8D&PID_7127&MI_00\8&00000000&1&0000' }
     }
 
     It 'finds the network adapter a PnP read missed, without closing the port' {
@@ -1469,6 +1615,7 @@ Describe 'The AT port''s driver' {
             Mock -ModuleName FibocomFm350 Get-ModemPnpRecord { $script:records }
             Mock -ModuleName FibocomFm350 Open-SerialAtTransport { $script:modem }
             Mock -ModuleName FibocomFm350 Get-ModemAdapterState { (New-SimulatedDevice -Scenario Online).Adapter.Read() }
+            Mock -ModuleName FibocomFm350 Get-ModemAdapterCounter { }
             Mock -ModuleName FibocomFm350 Test-AppElevation { $true }
             # pnputil working: the heartbeat as it beats meanwhile.
             Mock -ModuleName FibocomFm350 Install-ModemDriver { $script:link['Heartbeat'] = 0; if ($Beat) { & $Beat }; $script:beaten = $script:link['Heartbeat']; $script:pnputil }

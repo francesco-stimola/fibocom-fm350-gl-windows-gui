@@ -19,7 +19,14 @@ $script:WorkerIntervals = @{
     Status      = 5000
     # Looking for the modem by PnP, while there is none or its port can't be opened.
     Scan        = 5000
+    # The modem adapter's byte counters, for data usage.
+    Usage       = 30000
 }
+
+# The data usage totals are saved at most this often, at once when a quota threshold is said, and
+# when the worker ends. Nothing is lost between two saves: the next sample counts from the
+# counters last saved, unless they restarted meanwhile.
+$script:WorkerUsageSaveMs = 300000
 
 # The longest the worker goes without a sign of life, a wait for the modem's answer included
 # (WorkerTransport): the supervisor's hang timeout is far above it.
@@ -234,6 +241,8 @@ function Resolve-WorkerSchedule {
           last data-path round older than the probe interval - the retry interval after a round
           that failed or could not be sent (-ProbeFailed) - and -ProbeNotBefore reached: the
           settle time after the address was set.
+        - Usage: the modem's network adapter known (-UsageWanted), port open or not, and the
+          last reading of its byte counters (-LastUsage) older than the usage interval.
         - WaitMs: until the next of those falls due, or -RecoveryAt (when the recovery decision
           may change), or -TrialAt (when a network mode on trial is undone); 0 when one is due
           now.
@@ -274,7 +283,11 @@ function Resolve-WorkerSchedule {
 
         [Nullable[long]] $RecoveryAt,
 
-        [Nullable[long]] $TrialAt
+        [Nullable[long]] $TrialAt,
+
+        [switch] $UsageWanted,
+
+        [Nullable[long]] $LastUsage
     )
 
     $intervals = $script:WorkerIntervals
@@ -287,6 +300,12 @@ function Resolve-WorkerSchedule {
     $status = $false
     $adapterLook = $false
     $probe = $false
+    $usage = $false
+    if ($UsageWanted) {
+        $wait = Get-WorkerDueTime -Now $Now -Last $LastUsage -Interval $intervals.Usage
+        $usage = $wait -eq 0
+        $waits.Add($wait)
+    }
     if (-not $PortOpen) {
         $wait = Get-WorkerDueTime -Now $Now -Last $LastScan -Interval $intervals.Scan
         $scan = $wait -eq 0
@@ -326,6 +345,7 @@ function Resolve-WorkerSchedule {
         Status      = $status
         AdapterLook = $adapterLook
         Probe       = $probe
+        Usage       = $usage
         WaitMs      = [int]($waits | Measure-Object -Minimum).Minimum
     }
 }
@@ -357,7 +377,9 @@ function New-ModemSnapshot {
         'Done' -, Result, Version and Url of a newer release, Detail, Time); Dns (the adapter's
         encrypted DNS: Supported, Encrypted - the servers encrypted now -, Known - the servers
         Windows has a DoH template for -, Name - a DoH server named by its template: Host,
-        Addresses, LookedUp, Via, Next, Failure); AppVersion; Settings, ApnPasswordStored,
+        Addresses, LookedUp, Via, Next, Failure); Usage (Measure-DataUsage's: today, the cycle,
+        the quota) and UsageNotice (the last quota threshold said: Threshold, Id - one more for
+        each, across worker restarts -, Time); AppVersion; Settings, ApnPasswordStored,
         SettingsProblems and SettingsIssues (ConvertTo-AppSetting's Problems and Issues); Results
         (the last commands' outcomes: Id, Kind, Result, Detail, AttemptsLeft, Time).
     .EXAMPLE
@@ -456,6 +478,8 @@ function New-ModemSnapshot {
             }
         }
         Update            = $Worker.Update
+        Usage             = $Worker.UsageView
+        UsageNotice       = $Worker.UsageNotice
         AppVersion        = if ($Worker.AppVersion) { $Worker.AppVersion.ToString() } else { $null }
         StartAtLogon      = $Worker.StartAtLogon
         Settings          = if ($Worker.Settings) { $Worker.Settings | Select-Object -Property * } else { $null }
@@ -520,6 +544,7 @@ function New-ModemWorker {
             ApnSecret        = Join-Path -Path $DataFolder -ChildPath 'apn-password.dat'
             Log              = Join-Path -Path $DataFolder -ChildPath 'logs'
             DriverStaging    = Join-Path -Path $DataFolder -ChildPath 'driver-staging'
+            Usage            = Join-Path -Path $DataFolder -ChildPath 'usage.json'
             DriverAdminOnly  = $false
         }
     }
@@ -530,6 +555,7 @@ function New-ModemWorker {
             ApnSecret        = Get-AppDataPath -Name 'apn-password.dat'
             Log              = Get-AppDataPath -Name 'logs' -Local
             DriverStaging    = Join-Path -Path ([Environment]::GetFolderPath('Windows')) -ChildPath 'Temp'
+            Usage            = Get-AppDataPath -Name 'usage.json' -Local
             DriverAdminOnly  = $true
         }
     }
@@ -619,8 +645,88 @@ function New-ModemWorker {
         # installed -; read once, and again after the user changes it.
         StartAtLogon      = $null
         StartAtLogonRead  = $false
+        # Data usage: the totals (read from their file at the first sample), the quota thresholds
+        # said this cycle, what the snapshot shows, the last threshold said - carried over from
+        # the worker this one replaces -, when the counters were read and the totals saved last,
+        # whether they changed since, and the last failure, logged once.
+        Usage             = $null
+        UsageLoaded       = $false
+        UsageWarned       = $null
+        UsageView         = $null
+        UsageNotice       = if ($Previous -and $Previous.PSObject.Properties['UsageNotice']) { $Previous.UsageNotice } else { $null }
+        LastUsage         = $null
+        UsageSavedAt      = $null
+        UsageDirty        = $false
+        UsageFailure      = $null
         # The computer slept: Invoke-ModemWorker sets it, the next cycle takes it into account.
         Resumed           = $false
+    }
+}
+
+function Save-WorkerUsage {
+    # Writes the usage totals and the thresholds said to their file.
+    param([hashtable] $Worker)
+
+    Export-DataUsage -State $Worker.Usage -Warned $Worker.UsageWarned -Path $Worker.Paths.Usage -Confirm:$false
+    $Worker.UsageSavedAt = & $Worker.Clock
+    $Worker.UsageDirty = $false
+}
+
+function Update-WorkerUsage {
+    # Reads the modem adapter's byte counters into the usage totals (Update-DataUsage), measures
+    # today and the cycle against the quota, says a threshold reached once per cycle, and saves
+    # the totals now and then. It never stops the cycle - data usage is no reason to touch the
+    # connection -: a failure is logged once, by its type (its text may name the user's folder),
+    # and the next sample tries again. The quota never disconnects.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Changes the worker''s in-memory state and its own data file only.')]
+    param([hashtable] $Worker)
+
+    try {
+        if (-not $Worker.UsageLoaded) {
+            $unreadable = $null
+            $loaded = Import-DataUsage -Path $Worker.Paths.Usage -WarningVariable unreadable -WarningAction SilentlyContinue
+            if ($unreadable) {
+                Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Data usage: $unreadable"
+            }
+            $Worker.Usage = $loaded
+            $Worker.UsageWarned = if ($loaded) { $loaded.Warned } else { $null }
+            $Worker.UsageLoaded = $true
+        }
+        $sample = if ($Worker.Simulation) {
+            $Worker.Simulation.Adapter.ReadCounters()
+        }
+        elseif ($Worker.AdapterInstanceId) {
+            Get-ModemAdapterCounter -InstanceId $Worker.AdapterInstanceId
+        }
+        if (-not $sample) {
+            return
+        }
+        $Worker.Usage = Update-DataUsage -State $Worker.Usage -Sample $sample
+        $settings = Get-WorkerSetting -Worker $Worker
+        $cycleDay = if ($settings) { $settings.UsageCycleDay } else { 1 }
+        $quota = if ($settings) { $settings.UsageQuotaGB } else { 0 }
+        $view = Measure-DataUsage -State $Worker.Usage -Now $sample.Time -CycleDay $cycleDay -QuotaGB $quota
+        $warning = Resolve-UsageWarning -Usage $view -Said $Worker.UsageWarned
+        $Worker.UsageView = $view
+        $Worker.UsageWarned = $warning.Said
+        if ($warning.Warn) {
+            $id = if ($Worker.UsageNotice) { [int]$Worker.UsageNotice.Id + 1 } else { 1 }
+            $Worker.UsageNotice = [pscustomobject]@{ Threshold = $warning.Warn; Id = $id; Time = [DateTimeOffset]::Now }
+            Write-WorkerLog -Worker $Worker -Level 'Info' -Message "Data usage: $($warning.Warn)% of the quota reached"
+        }
+        $Worker.UsageDirty = $true
+        if ($warning.Warn -or $null -eq $Worker.UsageSavedAt -or (& $Worker.Clock) - $Worker.UsageSavedAt -ge $script:WorkerUsageSaveMs) {
+            Save-WorkerUsage -Worker $Worker
+        }
+        $Worker.UsageFailure = $null
+    }
+    catch {
+        $failure = $_.Exception.GetType().Name
+        if ($failure -ne $Worker.UsageFailure) {
+            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Data usage not counted ($failure); tried again at the next sample"
+        }
+        $Worker.UsageFailure = $failure
     }
 }
 
@@ -929,6 +1035,9 @@ function Find-WorkerModem {
         Write-WorkerLog -Worker $Worker -Level 'Info' -Message "Modem: $($presence.Device)$(if ($presence.PortName) { ", AT port $($presence.PortName)" })"
     }
     $Worker.Presence = $presence
+    # The modem's network adapter, whatever its AT port does: data usage is read from it while
+    # another program holds the port, or the port has no driver.
+    $Worker.AdapterInstanceId = $presence.AdapterInstanceId
     if ($presence.Device -ne 'Present') {
         $Worker.PortError = $null
         return
@@ -957,7 +1066,6 @@ function Find-WorkerModem {
     }
     $Worker.Channel = New-AtChannel -Transport ([WorkerTransport]::new($inner, $Worker.Link, $script:WorkerBeatMs))
     $Worker.PortName = $presence.PortName
-    $Worker.AdapterInstanceId = $presence.AdapterInstanceId
     $Worker.PassForced = $true
     Write-WorkerLog -Worker $Worker -Level 'Info' -Message "AT port $($presence.PortName) open"
 }
@@ -1672,6 +1780,8 @@ function Invoke-WorkerCommand {
                         }
                     }
                     $Worker.Settings = $null
+                    # The cycle and the quota may have changed: usage is measured again at once.
+                    $Worker.LastUsage = $null
                 }
                 'SetNetworkMode' {
                     $outcome = Set-WorkerNetworkMode -Worker $Worker -Parameter $parameter
@@ -1796,7 +1906,8 @@ function Invoke-ModemWorkerCycle {
             -PortOpen:([bool]$Worker.Channel) -PassForced:$Worker.PassForced -AdapterMissing:($decision -and $decision.Reason -eq 'NoAdapter') `
             -ProbeWanted:([bool]$probe.Address) -LastProbe $probe.LastAt -ProbeFailed:($probe.LastResult -in 'Failed', 'NotReady') `
             -ProbeNotBefore $probe.NotBefore -RecoveryAt $Worker.RecoveryAt `
-            -TrialAt (Get-WorkerTrialWake -Worker $Worker)
+            -TrialAt (Get-WorkerTrialWake -Worker $Worker) `
+            -UsageWanted:([bool]($Worker.Simulation -or $Worker.AdapterInstanceId)) -LastUsage $Worker.LastUsage
     }
     $resumed = $Worker.Resumed
     if ($resumed) {
@@ -1987,6 +2098,14 @@ function Invoke-ModemWorkerCycle {
         $published = $true
     }
 
+    # Data usage, from the adapter's byte counters.
+    if ((& $due).Usage) {
+        $started = & $Worker.Clock
+        Update-WorkerUsage -Worker $Worker
+        $Worker.LastUsage = $started
+        $published = $true
+    }
+
     # The radio, for display.
     if ((& $due).Status) {
         $started = & $Worker.Clock
@@ -2039,8 +2158,9 @@ function Invoke-ModemWorkerCycle {
 function Close-ModemWorker {
     <#
     .SYNOPSIS
-        Ends a worker: closes its AT port, deletes the copy of a driver package it kept, and
-        drops an update check and a lookup under way. The connection stays as it is.
+        Ends a worker: closes its AT port, saves the data usage counted since the last save,
+        deletes the copy of a driver package it kept, and drops an update check and a lookup
+        under way. The connection stays as it is.
     .EXAMPLE
         Close-ModemWorker -Worker $worker
     #>
@@ -2051,6 +2171,14 @@ function Close-ModemWorker {
     )
 
     Close-WorkerChannel -Worker $Worker
+    if ($Worker.UsageDirty) {
+        try {
+            Save-WorkerUsage -Worker $Worker
+        }
+        catch {
+            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Data usage not saved ($($_.Exception.GetType().Name))"
+        }
+    }
     Clear-WorkerDriverPackage -Worker $Worker
     if ($Worker.UpdateCheck) {
         Stop-UpdateCheck -Check $Worker.UpdateCheck -Confirm:$false

@@ -38,6 +38,12 @@ class SimulatedAdapter {
     # host has it before it can be used.
     [int] $DadChecks = 0
     hidden [int] $Tentative = 0
+    # Its byte counters, as Get-ModemAdapterCounter reads a real adapter's: while it carries an
+    # address the app set, each reading finds TrafficPerRead bytes more received, a tenth of it
+    # sent.
+    [uint64] $ReceivedBytes = 0
+    [uint64] $SentBytes = 0
+    [uint64] $TrafficPerRead = 2000000
 
     # A copy, as Get-ModemAdapterState returns a reading: what the caller holds never changes.
     [object] Read() {
@@ -146,6 +152,21 @@ class SimulatedAdapter {
     [void] Enable() {
         $this.Status = 'Up'
     }
+
+    # A reading of its byte counters, shaped as Get-ModemAdapterCounter's.
+    [object] ReadCounters() {
+        if (@($this.Addresses | Where-Object Origin -EQ 'Manual').Count -gt 0) {
+            $this.ReceivedBytes += $this.TrafficPerRead
+            $this.SentBytes += [uint64][Math]::Floor($this.TrafficPerRead / 10)
+        }
+        return [pscustomobject]@{ Interface = '00000000-0000-0000-0000-000000000099'; Received = $this.ReceivedBytes; Sent = $this.SentBytes; Time = [DateTimeOffset]::Now }
+    }
+
+    # Created anew, as a real adapter is when its USB device restarts: its counters start over.
+    [void] ResetCounters() {
+        $this.ReceivedBytes = 0
+        $this.SentBytes = 0
+    }
 }
 
 [NoRunspaceAffinity()]
@@ -239,9 +260,10 @@ class SimulatedDevice {
     }
 
     # Windows restarts the modem's USB device (R6): it leaves USB, and comes back after AwayMs
-    # with its power-on defaults - a hung modem answers again.
+    # with its power-on defaults - a hung modem answers again -, its adapter created anew.
     [void] Restart() {
         $this.Modem.Vanish()
+        $this.Adapter.ResetCounters()
     }
 }
 

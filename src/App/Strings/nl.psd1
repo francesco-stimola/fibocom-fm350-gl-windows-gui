@@ -250,6 +250,7 @@
     'Rule.Bool'                = 'moet true of false zijn'
     'Rule.Https'               = 'moet leeg of een https-adres zonder spaties, aanhalingstekens of aanmeldingsgegevens zijn'
     'Rule.Bands'               = 'moet een lijst met verschillende bandnummers van {0} tot {1} zijn'
+    'Rule.Gigabytes'           = 'moet een aantal gigabytes van {0} tot {1} zijn, 0 voor geen'
 
     # The Driver tab.
     'DriverProblem.NoInf'        = 'het bevat geen stuurprogramma (geen INF-bestand)'

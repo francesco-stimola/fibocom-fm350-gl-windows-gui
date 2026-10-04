@@ -251,6 +251,7 @@
     'Rule.Bool'                = 'doit être true ou false'
     'Rule.Https'               = 'doit être vide ou une adresse https sans espaces, guillemets ni identifiants'
     'Rule.Bands'               = 'doit être une liste de numéros de bande distincts de {0} à {1}'
+    'Rule.Gigabytes'           = 'doit être un nombre de gigaoctets de {0} à {1}, 0 pour aucun'
 
     # The Driver tab.
     'DriverProblem.NoInf'        = 'il ne contient aucun pilote (aucun fichier INF)'

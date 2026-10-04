@@ -251,6 +251,7 @@
     'Rule.Bool'                = 'deve ser true ou false'
     'Rule.Https'               = 'deve estar vazio ou ser um endereço https sem espaços, aspas nem credenciais'
     'Rule.Bands'               = 'deve ser uma lista de números de banda distintos de {0} a {1}'
+    'Rule.Gigabytes'           = 'deve ser um número de gigabytes de {0} a {1}, 0 para nenhum'
 
     # The Driver tab.
     'DriverProblem.NoInf'        = 'não contém nenhum controlador (nenhum ficheiro INF)'

@@ -12,6 +12,7 @@ $script:AppFolderName = 'fibocom-fm350-gl-windows-gui'
 # adapters). The network mode: not managed - the modem keeps its own - until the user picks one
 # (ROADMAP M5). Encrypted DNS: off, decided 2026-10-03 (DEVLOG); a DoH server named by its
 # template looked up again every hour (decided 2026-10-03). The update notice: on (ROADMAP M7).
+# Data usage: the billing cycle starts on day 1, no quota (decided 2026-10-04).
 $script:DefaultSettings = [ordered]@{
     Apn               = ''
     PdpType           = 'IPV4V6'
@@ -26,7 +27,12 @@ $script:DefaultSettings = [ordered]@{
     LteBands          = [int[]]@()
     NrBands           = [int[]]@()
     CheckForUpdates   = $true
+    UsageCycleDay     = 1
+    UsageQuotaGB      = 0
 }
+
+# The quota a setting can name, in gigabytes (10^9 bytes); 0 is none.
+$script:UsageQuotaRange = @(0, 10000)
 
 # A DoH template: an https address, without credentials, blanks or quotes (docs/AT-COMMANDS.md
 # section 11.1).
@@ -113,6 +119,10 @@ function ConvertTo-AppSetting {
           (4G + 5G), 'LteOnly' or 'NrOnly'. LteBands (1-99) and NrBands (1-512): the bands that
           mode may use, sorted, each once; empty for every band the modem supports.
         - CheckForUpdates: $true looks for a newer release once per start.
+        - UsageCycleDay: the day of the month the billing cycle starts on, 1 to 31; a month
+          without it starts the cycle on its last day.
+        - UsageQuotaGB: the data the cycle allows, in gigabytes (10^9 bytes), decimals allowed,
+          up to 10000; 0 for no quota.
     .EXAMPLE
         (ConvertTo-AppSetting -InputObject @{ Apn = 'internet' }).Settings
     #>
@@ -229,6 +239,26 @@ function ConvertTo-AppSetting {
                     & $reject $known 'Bool'
                 }
             }
+            'UsageCycleDay' {
+                $number = 0
+                if ($value -isnot [bool] -and [int]::TryParse([string]$value, [System.Globalization.NumberStyles]::Integer, [cultureinfo]::InvariantCulture, [ref]$number) -and $number -ge 1 -and $number -le 31) {
+                    $settings.UsageCycleDay = $number
+                }
+                else {
+                    & $reject $known 'Number' @(1, 31)
+                }
+            }
+            'UsageQuotaGB' {
+                $low, $high = $script:UsageQuotaRange
+                $number = 0.0
+                $text = if ($value -is [double] -or $value -is [decimal] -or $value -is [single]) { $value.ToString([cultureinfo]::InvariantCulture) } else { [string]$value }
+                if ($value -isnot [bool] -and [double]::TryParse($text, [System.Globalization.NumberStyles]::Float, [cultureinfo]::InvariantCulture, [ref]$number) -and $number -ge $low -and $number -le $high) {
+                    $settings.UsageQuotaGB = $number
+                }
+                else {
+                    & $reject $known 'Gigabytes' @($low, $high)
+                }
+            }
             'DohRefreshMinutes' {
                 $low, $high = $script:DohRefreshRange
                 $number = 0
@@ -299,6 +329,7 @@ $script:SettingRules = @{
     Bool         = 'must be true or false'
     Https        = 'must be empty or an https address without blanks, quotes or credentials'
     Bands        = 'must be a list of distinct band numbers from {0} to {1}'
+    Gigabytes    = 'must be a number of gigabytes from {0} to {1}, 0 for none'
 }
 
 function ConvertTo-SettingProblemText {

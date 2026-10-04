@@ -26,6 +26,8 @@ Describe 'ConvertTo-AppSetting' {
         $result.Settings.DohTemplate | Should -Be ''
         $result.Settings.DohRefreshMinutes | Should -Be 60 -Because 'a DoH server named by its template is looked up again every hour'
         $result.Settings.CheckForUpdates | Should -BeTrue
+        $result.Settings.UsageCycleDay | Should -Be 1 -Because 'the billing cycle is the calendar month until the user says otherwise'
+        $result.Settings.UsageQuotaGB | Should -Be 0 -Because 'no quota until the user sets one'
     }
 
     It 'takes valid values from a hashtable and from an object' {
@@ -82,6 +84,16 @@ Describe 'ConvertTo-AppSetting' {
         @{ Name = 'DohRefreshMinutes'; Value = 7.5 }
         @{ Name = 'DohRefreshMinutes'; Value = 'hourly' }
         @{ Name = 'DohRefreshMinutes'; Value = $true }
+        @{ Name = 'UsageCycleDay'; Value = 0 }
+        @{ Name = 'UsageCycleDay'; Value = 32 }
+        @{ Name = 'UsageCycleDay'; Value = 1.5 }
+        @{ Name = 'UsageCycleDay'; Value = $true }
+        @{ Name = 'UsageQuotaGB'; Value = -1 }
+        @{ Name = 'UsageQuotaGB'; Value = 10001 }
+        @{ Name = 'UsageQuotaGB'; Value = '2,5' }
+        @{ Name = 'UsageQuotaGB'; Value = 'NaN' }
+        @{ Name = 'UsageQuotaGB'; Value = 'ten' }
+        @{ Name = 'UsageQuotaGB'; Value = $true }
     ) {
         $result = ConvertTo-AppSetting -InputObject @{ $Name = $Value }
         $result.Problems.Count | Should -Be 1
@@ -95,6 +107,8 @@ Describe 'ConvertTo-AppSetting' {
         @{ Setting = 'DohRefreshMinutes'; Value = 2; Problem = 'DohRefreshMinutes must be a whole number of minutes from 5 to 1440; the default is used.' }
         @{ Setting = 'LteBands'; Value = @(0); Problem = 'LteBands must be a list of distinct band numbers from 1 to 99; the default is used.' }
         @{ Setting = 'PdpType'; Value = 'PPP'; Problem = 'PdpType must be one of IP, IPV4V6; the default is used.' }
+        @{ Setting = 'UsageCycleDay'; Value = 40; Problem = 'UsageCycleDay must be a whole number from 1 to 31; the default is used.' }
+        @{ Setting = 'UsageQuotaGB'; Value = -2; Problem = 'UsageQuotaGB must be a number of gigabytes from 0 to 10000, 0 for none; the default is used.' }
     ) {
         $result = ConvertTo-AppSetting -InputObject @{ $Setting = $Value }
         $result.Problems | Should -Be @($Problem)
@@ -114,6 +128,19 @@ Describe 'ConvertTo-AppSetting' {
         $result.Settings.LteBands | Should -Be @(3, 7, 20)
         $result.Settings.NrBands | Should -Be @(78)
         (ConvertTo-AppSetting -InputObject @{ NetworkMode = 'NrOnly'; NrBands = @('78', 512) }).Settings.NrBands | Should -Be @(78, 512)
+    }
+
+    It 'takes a quota in gigabytes with decimals, read in the invariant culture: <Value>' -ForEach @(
+        @{ Value = 0.5; Expected = 0.5 }
+        @{ Value = '2.5'; Expected = 2.5 }
+        @{ Value = 10; Expected = 10 }
+        @{ Value = '10000'; Expected = 10000 }
+        @{ Value = 0; Expected = 0 }
+    ) {
+        $result = ConvertTo-AppSetting -InputObject @{ UsageQuotaGB = $Value; UsageCycleDay = '31' }
+        $result.Problems | Should -BeNullOrEmpty
+        $result.Settings.UsageQuotaGB | Should -Be $Expected
+        $result.Settings.UsageCycleDay | Should -Be 31
     }
 
     It 'accepts a metric written as text, read in the invariant culture' {

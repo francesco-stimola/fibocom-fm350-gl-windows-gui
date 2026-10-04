@@ -15,6 +15,19 @@ BeforeAll {
     function Find-UnredactedValue {
         param([string] $Line)
 
+        # A message PDU: its numbers are semi-octets, read by decoding it. One that doesn't decode
+        # is checked as any other line.
+        if ($Line -match '^\s*(?:[0-9A-Fa-f]{2}){10,}\s*$') {
+            $sms = ConvertFrom-SmsPdu -Pdu $Line
+            if (-not $sms.Problem) {
+                foreach ($address in @($sms.ServiceCentre, $sms.Address) | Where-Object { $_ }) {
+                    if ($address -notin ($script:fakes.PhoneNumbers + $script:fakes.SmsSenders)) {
+                        "address '$address' in a message PDU"
+                    }
+                }
+                return
+            }
+        }
         foreach ($match in [regex]::Matches($Line, '(?<!\d)\d{14,}(?!\d)')) {
             if ($match.Value -notin $script:fakes.LongNumbers) {
                 "long number '$($match.Value)' (IMEI, IMSI, ICCID or EID?)"
@@ -121,6 +134,9 @@ Describe 'The identifier check itself' {
         @{ Name = 'a real container ID'; Line = '"ContainerId": "{3f2504e0-4f89-11d3-9a0c-0305e82c3301}",' }
         @{ Name = 'a real nine-digit cell identity in +CREG'; Line = '+CREG: 2,6,"ABCD","001C2D3E4",13' }
         @{ Name = 'a real neighbour TAC in +GTCCINFO'; Line = '2,4,,,5A1F,00FFFFFFF,6400,100,,55,55,16' }
+        @{ Name = 'a real sender in a message PDU'; Line = '00040C9193331332547600006201402143658005E8329BFD06' }
+        @{ Name = 'a real service centre in a message PDU'; Line = '07919333133254F6040B910100000000F000006201402143658005E8329BFD06' }
+        @{ Name = 'a sender''s real name in a message PDU'; Line = '00040ED0D637396C7EBBCB00006201402143658005E8329BFD06' }
     ) {
         Find-UnredactedValue -Line $Line | Should -Not -BeNullOrEmpty
     }
@@ -137,6 +153,8 @@ Describe 'The identifier check itself' {
         @{ Name = 'location not known in +CREG'; Line = '+CREG: 2,"FFFF","00FFFFFFF",0' }
         @{ Name = 'location not known in a +GTCCINFO neighbour'; Line = '2,4,,,FFFF,00FFFFFFF,6400,100,,55,55,16' }
         @{ Name = 'padded fakes in +C5GREG'; Line = '+C5GREG: 2,1,"00ABCD","000ABCDEF0",13' }
+        @{ Name = 'a message PDU with the fake numbers'; Line = '07910100000000F0040B910100000000F000006201402143658005E8329BFD06' }
+        @{ Name = 'a message PDU from a fake name'; Line = '00040ED04F78591EA6BFE500006201402143658005E8329BFD06' }
     ) {
         Find-UnredactedValue -Line $Line | Should -BeNullOrEmpty
     }

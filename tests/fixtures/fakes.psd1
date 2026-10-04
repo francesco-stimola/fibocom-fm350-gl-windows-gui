@@ -19,6 +19,10 @@
         '10000000000'
     )
 
+    # The sender of a message, when it is a name (an alphanumeric address in a PDU). Message text
+    # and USSD replies are rewritten by hand (docs/SETUP.md -> Fixtures).
+    SmsSenders   = @('Operator', 'Info')
+
     # Location: the TAC and cell identity of registration reports (+CREG, +CGREG, +CEREG,
     # +C5GREG) and of +GTCCINFO cell lines, in hexadecimal and in decimal, padded to the lengths
     # the FM350 uses (TAC 4 or 6 digits, cell identity 8, 9 or 10).
