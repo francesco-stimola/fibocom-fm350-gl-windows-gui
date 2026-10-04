@@ -4,6 +4,35 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-04 — M8: messages in the worker
+
+The worker reads, opens, deletes and sends messages (ARCHITECTURE → *SMS*):
+- **The storage is listed when it may have changed**: once the notices are set, on a `+CMTI`,
+  after a command, and when a pass finds its count changed — one `AT+CPMS?` per pass, rather than
+  a new interval to decide. A refused step waits for the next pass, logged once by the command
+  and the modem's answer.
+- **Announced once**: a message is announced when a part of it is new and none of it was new
+  before, so a long message's later parts don't announce it again; the announcement's Id carries
+  over to the next worker, like the quota's, so a restart never repeats it.
+- **Deleting reads the storage again first** and deletes every part where it is now: the indexes
+  the window saw may have moved.
+- **No number or text in the log**, on the error path too: a failed message command's detail is
+  the error's type.
+- **Observe-only mode reads no message**: listing marks them read on the modem, a change of state.
+- The simulated SIM holds four parts — read, unread, a long message — and a message comes in a
+  minute after the start; a restart turns its notices off, as the device's power-on does.
+
+## 2026-10-04 — Decided: the inbox and the data usage in the window
+
+Taken by the maintainer:
+- **One *Messages* tab**: the list, the selected message below, a box to write one at the bottom.
+  Rejected: a separate *Send* tab; a window of its own to write.
+- **A message is opened by selecting it** in the list, as in a mail client. Rejected: a *Mark as
+  read* button.
+- **Deleting asks every time**, *No* preselected, as the app's other actions that can't be undone.
+- **Data usage in a *Data* tab** with its two settings, and in the tooltip. Rejected: a line in
+  the window's top panel, alone or beside the tab.
+
 ## 2026-10-04 — M8: messages on the device, and USSD left out
 
 M8's device session, on LTE, with the app's codec and sending code (`AT-COMMANDS.md` §9):

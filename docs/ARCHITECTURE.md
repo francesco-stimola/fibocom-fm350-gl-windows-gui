@@ -962,6 +962,23 @@ What a prepaid or capped SIM needs day to day (facts: `AT-COMMANDS.md` §9).
   the app sends `0`. A part refused or unanswered ends the message there, and the UI says how many
   parts went out; the app never sends a part again by itself — an unanswered part may have gone
   out, and each part costs. Sent messages are not stored on the modem.
+- **The worker owns them, as it owns the port** (`Update-WorkerInbox`). It sets the notices once
+  the SIM is ready on a newly opened port, and lists the storage whole (`AT+CMGL=4`) then, on a
+  `+CMTI`, after a command, and when a pass finds the storage's count changed — a message stored
+  without a notice is found that way. A step the modem refuses is logged once and tried again
+  after the next pass. A lost port forgets the messages; the next one sets the notices again.
+  **Observe-only mode reads none**: listing marks messages read on the modem.
+- **Commands**: open a message (new no more), delete one — the storage is read again first, so
+  every part is deleted where it is now —, send one. The number and the text never reach the
+  log; a failure's detail gives the error's type only, as its text may hold either.
+- **The snapshot** carries the messages without their storage indexes, how full the storage is,
+  whether a message is going out, and the last announcement — how many new messages, the newest
+  one's sender — with an Id that grows across worker restarts, so a restarted worker never
+  announces them again.
+- **The window** (decided 2026-10-04): one *Messages* tab — the list, newest first and new ones
+  marked, the selected message's text below it, and a box to write one at the bottom, with its
+  count of characters and parts. Selecting a message opens it: it is new no more. Deleting asks
+  for a confirmation every time, *No* preselected.
 - **What is new is remembered by the message, not its place** (decided 2026-10-04). The modem marks
   a message read as soon as it is listed (`AT-COMMANDS.md` §9), so a message that comes in unread
   is noted at once and stays new until the user opens it, across app restarts and a modem that
@@ -1002,6 +1019,8 @@ USSD's coding stay in §9 for a network or a firmware that answers.
   per cycle: a new cycle or another quota starts over, and what was said is kept in the same file,
   so a restart never says it again (`Resolve-UsageWarning`; decided 2026-10-04). **The quota never
   disconnects** — the app does not break a working connection.
+- **Shown in a *Data* tab** — today, the cycle with its dates, the quota with its share used, and
+  the two settings — and in the tray icon's tooltip (decided 2026-10-04).
 
 ### Identifiers
 Phone numbers, message text and USSD replies are personal data: never logged, and replaced by fake
