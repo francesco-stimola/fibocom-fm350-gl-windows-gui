@@ -970,8 +970,10 @@ What a prepaid or capped SIM needs day to day (facts: `AT-COMMANDS.md` §9).
 - **The worker owns them, as it owns the port** (`Update-WorkerInbox`). It sets the notices once
   the SIM is ready on a newly opened port, and lists the storage whole (`AT+CMGL=4`) then, on a
   `+CMTI`, after a command, and when a pass finds the storage's count changed — a message stored
-  without a notice is found that way. A step the modem refuses is logged once and tried again
-  after the next pass. A lost port forgets the messages; the next one sets the notices again.
+  without a notice is found that way. A step the modem refuses, or one that fails, is logged
+  once — by the modem's answer or the error's type — and tried again after the next pass: it
+  never stops the cycle. A listing cut short has marked what it listed read, so its unread parts
+  are kept new. A lost port forgets the messages; the next one sets the notices again.
   **Observe-only mode reads none**: listing marks messages read on the modem.
 - **Commands**: open a message (new no more), delete one — the storage is read again first, so
   every part is deleted where it is now —, send one. The number and the text never reach the
@@ -982,8 +984,10 @@ What a prepaid or capped SIM needs day to day (facts: `AT-COMMANDS.md` §9).
   announces them again.
 - **The window** (decided 2026-10-04): one *Messages* tab — the list, newest first and new ones
   marked, the selected message's text below it, and a box to write one at the bottom, with its
-  count of characters and parts. Selecting a message opens it: it is new no more. Deleting asks
-  for a confirmation every time, *No* preselected.
+  count of characters and parts — 255 parts at most. Selecting a message opens it: it is new no
+  more. Deleting asks for a confirmation every time, *No* preselected. *Send* waits for the
+  worker's answer to the message queued, or for another worker: a second click, or a double one,
+  sends nothing.
 - **What is new is remembered by the message, not its place** (decided 2026-10-04). The modem marks
   a message read as soon as it is listed (`AT-COMMANDS.md` §9), so a message that comes in unread
   is noted at once and stays new until the user opens it, across app restarts and a modem that

@@ -4,6 +4,25 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-04 — M8: the milestone's review, and its fixes
+
+The milestone's one review pass found five defects, each fixed with a test:
+- **A double click on *Send* sent the message twice**: the button stayed enabled until the worker
+  published that a message was going out. The window now waits for the worker's answer to the
+  command it queued (its Id, which `Send-AppCommand` now returns), or for another worker.
+- **A listing the parser couldn't read stopped every cycle**: a `+CMGL` header with an index
+  alone threw, before the recovery decision and the snapshot, and the worker ended after three
+  cycles, again and again while the message stayed stored. The parser leaves such a header out,
+  and the messages' step, like data usage, never stops the cycle.
+- **A message opened while the worker was replaced stayed new**: the window opened each message
+  once, and the command could go with the worker that ended; a new worker took it before reading
+  its record of what is new. Selecting a message again now opens it again, and the record is read
+  before a message is taken off it.
+- **A listing cut short lost its unread parts**: the modem had marked them read. They are kept
+  new from the lines that came.
+- **A long paste froze the window**: the text is measured on every keystroke. The box takes 255
+  parts at most, and a longer text is too long without being measured.
+
 ## 2026-10-04 — M8: the Messages and Data tabs, the tooltip, the notifications
 
 The window and the tray show what the worker reads (ARCHITECTURE → *Tray icon*, *SMS*):
