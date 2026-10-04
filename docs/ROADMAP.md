@@ -22,7 +22,7 @@ written `(planned)`.
 | [M6 — Driver installation](#m6) | ✅ complete |
 | [M7 — Packaging & first release](#m7) — tag `v1.0.0` | ✅ complete |
 | [M8 — SMS, USSD & data usage](#m8) — tag `v1.1.0` | ✅ complete |
-| [M9 — eSIM](#m9) — tag `v1.2.0` (planned) | 🔨 code-complete |
+| [M9 — eSIM](#m9) — tag `v1.2.0` | ✅ complete |
 | [M10 — Driverless AT port & Windows on Arm](#m10) — tag `v2.0.0` (planned) | 📋 planned |
 
 ---
@@ -182,7 +182,7 @@ modem alone (decided 2026-10-03).
 - [x] The *Messages* tab names the SIM in use, and says a message goes out from it (decided 2026-10-04): each slot shows a storage of its own (`AT-COMMANDS.md` §9).
 - [x] Device session, before the tag: the two items above on the real modem — the app installed over the build before them, the physical SIM taking the APN saved before; BetterRoaming downloaded again, its own APN at each switch, the physical SIM's back at the switch home; `AT+ICCID` on the eUICC's slot (`AT-COMMANDS.md` §8, question 8); with the test profile enabled for a moment, whether the slot's storage lists BetterRoaming's messages (§9, question 6). The eUICC and the modem ending as they began. *Each SIM's APN at the first pass after every switch; `AT+ICCID` the enabled profile's ICCID, as lpac lists it; the profiles on the eUICC's slot share part of its storage — the item below. The eUICC and the modem compared with their start, and equal.*
 - [x] Each message by the SIM it came in on (decided 2026-10-04): the SIM in use noted for each part that comes in, in a file encrypted for the user; on a profile, another profile's messages not listed — the tab says how many —, a deleted profile's listed with its name, a message whose SIM is not known listed with every SIM (ARCHITECTURE → *SMS*). *In the worker and the *Messages* tab, in the eight languages; proven on the simulated modem, a message coming in just before a profile switch included.*
-- [ ] Device session, before the tag: the item above on the real modem — the app installed over the build before it; BetterRoaming downloaded again, the messages the network sends then listed as its own; the test profile enabled for a moment: those not listed, the tab counting them; BetterRoaming deleted: its messages listed with its name, then deleted. The eUICC and the modem ending as they began.
+- [x] Device session, before the tag: the item above on the real modem — the app installed over the build before it; BetterRoaming downloaded again, the messages the network sends then listed as its own; the test profile enabled for a moment: those not listed, the tab counting them; BetterRoaming deleted: its messages listed with its name, then deleted. The eUICC and the modem ending as they began. *Each message the network sent noted as BetterRoaming's; with the test profile enabled, not listed and counted; once BetterRoaming was deleted, listed with its name; enabled again, a message not opened still new. Downloaded again, the profile kept its ICCID, and its messages stayed its own. The eUICC and the modem compared with their start, and equal.*
 
 <a id="m10"></a>
 ## M10 — Driverless AT port & Windows on Arm
