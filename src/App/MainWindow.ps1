@@ -66,7 +66,8 @@ function New-MainWindow {
 
         [scriptblock] $AskName,
 
-        [scriptblock] $Copy = { param($text) [System.Windows.Clipboard]::SetText($text) },
+        # Two tries 50 ms apart at most: WPF's own clipboard tries for seconds, on the UI thread.
+        [scriptblock] $Copy = { param($text) [System.Windows.Forms.Clipboard]::SetDataObject($text, $true, 2, 50) },
 
         [scriptblock] $Open,
 

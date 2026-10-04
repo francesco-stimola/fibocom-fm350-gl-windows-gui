@@ -819,7 +819,7 @@ function Get-LpacArgument {
             if ($ProfileId -notmatch '^[0-9]{18,20}[Ff]?$') {
                 throw [System.ArgumentException]::new('An ICCID is 18 to 20 digits.', 'ProfileId')
             }
-            if ([System.Text.Encoding]::UTF8.GetByteCount($Nickname) -gt $script:EsimMaxNicknameBytes -or $Nickname -match '\p{C}') {
+            if ([System.Text.Encoding]::UTF8.GetByteCount($Nickname) -gt $script:EsimMaxNicknameBytes -or $Nickname -match '\p{Cc}') {
                 throw [System.ArgumentException]::new("A nickname is $($script:EsimMaxNicknameBytes) bytes of UTF-8 at most, without control characters.", 'Nickname')
             }
             if ($Nickname) {
@@ -1056,6 +1056,15 @@ class LpacProcess {
     [void] Dispose() {
         $this.Stop()
         [void]$this.Process.WaitForExit(5000)
+        # Process.Dispose leaves the redirected streams to the garbage collector.
+        foreach ($stream in @($this.Process.StandardInput, $this.Process.StandardOutput, $this.Process.StandardError)) {
+            try {
+                $stream.Dispose()
+            }
+            catch {
+                Write-Debug "A stream of lpac's could not be closed: $($_.Exception.Message)"
+            }
+        }
         $this.Process.Dispose()
     }
 }
@@ -1104,12 +1113,13 @@ function Invoke-LpacOperation {
         sent and answered as a failure; each step of its progress noted; its result kept.
 
         It ends when lpac's output ends, or after -TimeoutMs (lpac stopped), or when the AT port
-        is lost (likewise). Channels left open - lpac stopped, a close that went unanswered - are
-        closed at the end, on a port still there. -Beat runs between reads, at least once a
-        second: the worker's heartbeat.
+        is lost, or once -Stop says so - the worker is ending - (likewise). Channels left open -
+        lpac stopped, a close that went unanswered - are closed at the end, on a port still there.
+        -Beat runs between reads, at least once a second: the worker's heartbeat; -Stop is asked
+        as often, and a request for the network under way is given up.
 
         Returns Outcome - 'Done' (lpac gave its result: Code 0 or not), 'NoResult' (it ended
-        without one), 'Timeout' or 'PortLost' -, Code, Message and Data (lpac's result; on a
+        without one), 'Timeout', 'PortLost' or 'Stopped' -, Code, Message and Data (lpac's result; on a
         failure Data is lpac's short reason), Steps (the progress, in order), Requests (how many
         APDU requests), HttpRequests, HttpFailure (the last request for the network that failed:
         its check's problem, or Invoke-EsimHttpRequest's failure, and the host) and ElapsedMs.
@@ -1131,6 +1141,9 @@ function Invoke-LpacOperation {
 
         [scriptblock] $Beat = {},
 
+        # Whether to end the run now: the worker is ending.
+        [scriptblock] $Stop = { $false },
+
         # Sends a checked request: param($request, $timeoutMs, $beat); returns Status, Body,
         # Failure.
         [scriptblock] $Http = { param($request, $timeoutMs, $beat) Invoke-EsimHttpRequest -Request $request -TimeoutMs $timeoutMs -Beat $beat }
@@ -1144,11 +1157,24 @@ function Invoke-LpacOperation {
     $httpRequests = 0
     $httpFailure = $null
     $outcome = $null
+    # The beat of a request for the network: it gives the request up once the run is to stop.
+    $runBeat = $Beat
+    $runStop = $Stop
+    $httpBeat = {
+        & $runBeat
+        if (& $runStop) {
+            throw [System.OperationCanceledException]::new('The run is stopping.')
+        }
+    }.GetNewClosure()
     try {
         while (-not $outcome) {
             $left = $TimeoutMs - $clock.ElapsedMilliseconds
             if ($left -le 0) {
                 $outcome = 'Timeout'
+                break
+            }
+            if (& $Stop) {
+                $outcome = 'Stopped'
                 break
             }
             & $Beat
@@ -1187,7 +1213,7 @@ function Invoke-LpacOperation {
                         $Lpac.WriteLine((ConvertTo-LpacHttpAnswerLine -Status 0))
                     }
                     else {
-                        $reply = & $Http $request ([int][Math]::Max(1, $TimeoutMs - $clock.ElapsedMilliseconds)) $Beat
+                        $reply = & $Http $request ([int][Math]::Max(1, $TimeoutMs - $clock.ElapsedMilliseconds)) $httpBeat
                         if ($reply.Failure) {
                             $httpFailure = "$($reply.Failure) $($request.Host)"
                         }

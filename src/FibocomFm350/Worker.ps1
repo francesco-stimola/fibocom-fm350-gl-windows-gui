@@ -2022,10 +2022,17 @@ function Invoke-WorkerLpac {
     # simulated device's lpac in development mode, the app's own otherwise. Returns the run.
     param([hashtable] $Worker, [string] $Operation, [hashtable] $Option = @{})
 
+    # The worker is ending: no run starts, and one under way stops - its channels closed - well
+    # within the time the app waits for the worker.
+    $link = $Worker.Link
+    $stop = { [bool]$link['Stop'] }.GetNewClosure()
+    if (& $stop) {
+        return [pscustomobject]@{ Outcome = 'Stopped'; Code = $null; Message = $null; Data = $null; Steps = [string[]]@(); Requests = 0; HttpRequests = 0; HttpFailure = $null; ElapsedMs = 0 }
+    }
     $arguments = Get-LpacArgument -Operation $Operation @Option
     $lpac = if ($Worker.Simulation) { $Worker.Simulation.StartLpac($arguments) } else { Start-LpacProcess -Argument $arguments -Confirm:$false }
     $timeout = if ($Operation -eq 'DownloadProfile') { $script:EsimTimeoutMs.Download } else { $script:EsimTimeoutMs.Other }
-    Invoke-LpacOperation -Channel $Worker.Channel -Lpac $lpac -TimeoutMs $timeout -Beat (Get-WorkerBeat -Worker $Worker)
+    Invoke-LpacOperation -Channel $Worker.Channel -Lpac $lpac -TimeoutMs $timeout -Beat (Get-WorkerBeat -Worker $Worker) -Stop $stop
 }
 
 function Get-WorkerLpacFailure {
@@ -2045,15 +2052,17 @@ function Get-WorkerLpacFailure {
 }
 
 function Update-WorkerSimSlot {
-    # Reads the SIM slot in use and the kind of SIM in it: once per port, and after a switch.
-    # A read that fails leaves them unknown, and is tried again with the next port.
+    # Reads the SIM slot in use and the kind of SIM in it: once per port, after a switch, and at
+    # the user's request. A read the modem left unanswered is tried again at the next pass; one
+    # it refused, with the next port.
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
         Justification = 'Reads the modem; changes the worker''s in-memory state only.')]
     param([hashtable] $Worker)
 
-    $Worker.SimSlotRead = $true
     $before = "$($Worker.SimSlot)/$($Worker.SimType)"
-    $slot = ConvertFrom-AtSimSlot -Lines (Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+GTDUALSIM?').Lines
+    $answer = Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+GTDUALSIM?'
+    $Worker.SimSlotRead = $answer.Status -notin 'Timeout', 'PortLost'
+    $slot = ConvertFrom-AtSimSlot -Lines $answer.Lines
     $Worker.SimSlot = if ($slot) { $slot.Slot } else { $null }
     $Worker.SimType = if ($Worker.Channel.State -eq 'Open') { ConvertFrom-AtSimType -Lines (Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+SIMTYPE?').Lines } else { $null }
     if ("$($Worker.SimSlot)/$($Worker.SimType)" -ne $before) {
@@ -2209,24 +2218,27 @@ function Invoke-WorkerEsimCommand {
             return & $outcome 'Unchanged' $null
         }
         $answer = Invoke-AtCommand -Channel $Worker.Channel -Command "AT+GTDUALSIM=$slot"
-        if ($answer.Status -ne 'OK') {
-            return & $outcome 'Failed' "AT+GTDUALSIM=$slot $($answer.Status)$(if ($null -ne $answer.ErrorCode) { " $($answer.ErrorCode)" })"
+        $failure = if ($answer.Status -ne 'OK') { "AT+GTDUALSIM=$slot $($answer.Status)$(if ($null -ne $answer.ErrorCode) { " $($answer.ErrorCode)" })" } else { $null }
+        if ($failure -and $answer.Status -notin 'Timeout', 'PortLost') {
+            return & $outcome 'Failed' $failure
         }
         # The SIM changes: service drops, the SIM is read again - an intentional operation, which
-        # nothing escalates over. The eUICC is read again once the slot says it is in use.
+        # nothing escalates over. A write left unanswered may have switched too, as a network
+        # mode's may. The eUICC is read again once the slot says it is in use.
         Open-WorkerMaintenanceWindow -Worker $Worker -Now (& $Worker.Clock)
         $Worker.SimSlotRead = $false
         $Worker.EsimInfo = $null
         $Worker.EsimProfiles = $null
         $Worker.EsimNotifications = $null
         $Worker.EsimDue = $true
-        return & $outcome 'Done' $null
+        return & $outcome $(if ($failure) { 'Failed' } else { 'Done' }) $failure
     }
 
     if (-not (Test-WorkerLpac -Worker $Worker)) {
         return & $outcome 'NoLpac' $null
     }
-    if (-not $Worker.SimSlotRead) {
+    # Read again at the user's request: the slot too.
+    if (-not $Worker.SimSlotRead -or $Kind -eq 'ReadEsim') {
         Update-WorkerSimSlot -Worker $Worker
     }
     if (-not (Test-WorkerEuiccInUse -Worker $Worker)) {
@@ -2298,9 +2310,10 @@ function Invoke-WorkerEsimCommand {
     }
     $Worker.EsimDue = $true
     $why = Get-WorkerLpacFailure -Run $run
-    if ($Kind -in 'EnableProfile', 'DisableProfile' -and ($run.Outcome -ne 'Done' -or $run.Code -eq 0)) {
+    if ($Kind -in 'EnableProfile', 'DisableProfile') {
         # The SIM resets with the switch: service drops, the SIM is read again - an intentional
-        # operation, which nothing escalates over. A run that broke off may have switched too.
+        # operation, which nothing escalates over. A run that failed may have switched too: an
+        # APDU answered too late fails lpac's run, not the eUICC's switch.
         Open-WorkerMaintenanceWindow -Worker $Worker -Now (& $Worker.Clock)
         $Worker.PassForced = $true
     }
@@ -2699,7 +2712,7 @@ function Invoke-ModemWorkerCycle {
         $Worker.PassForced = $false
         $wasOnline = $Worker.State -eq 'Online'
         Register-WorkerDecision -Worker $Worker -Decision $pass -Logged
-        if (-not $wasOnline -and $Worker.State -eq 'Online' -and @($Worker.EsimNotifications).Count -gt 0) {
+        if (-not $wasOnline -and $Worker.State -eq 'Online' -and @($Worker.EsimNotifications | Where-Object { $_ }).Count -gt 0) {
             # Online again - maybe through the profile just switched to: the notifications that
             # couldn't be sent go now.
             $Worker.EsimDue = $true

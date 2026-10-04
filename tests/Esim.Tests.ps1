@@ -435,6 +435,23 @@ Describe 'Invoke-EsimHttpRequest, on this computer only' {
             $listener.Stop()
         }
     }
+
+    It 'gives the request up at once when its beat throws: the run is stopping' {
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        $listener.Start()
+        try {
+            $port = $listener.LocalEndpoint.Port
+            $request = [pscustomobject]@{ Uri = [uri]"https://127.0.0.1:$port/gsma/rsp2/es9plus/initiateAuthentication"; Body = [byte[]]@(); Headers = [ordered]@{} }
+            $clock = [System.Diagnostics.Stopwatch]::StartNew()
+            $reply = Invoke-EsimHttpRequest -Request $request -TimeoutMs 60000 -Beat { throw [System.OperationCanceledException]::new('stopping') }
+            $clock.ElapsedMilliseconds | Should -BeLessThan 5000
+            $reply.Status | Should -Be 0
+            $reply.Failure | Should -Not -BeNullOrEmpty
+        }
+        finally {
+            $listener.Stop()
+        }
+    }
 }
 
 Describe 'ConvertFrom-AtLogicalChannel' {
@@ -503,6 +520,8 @@ Describe 'Get-LpacArgument' {
         @{ Operation = 'DeleteProfile'; ProfileId = 'A0000005591010FFFFFFFF8900001000'; Nickname = ''; Code = ''; Confirmation = ''; Expected = 'profile|delete|A0000005591010FFFFFFFF8900001000' }
         @{ Operation = 'SetNickname'; ProfileId = '8900100000000000000'; Nickname = 'Lavoro è "mio" $x'; Code = ''; Confirmation = ''; Expected = 'profile|nickname|8900100000000000000|Lavoro è "mio" $x' }
         @{ Operation = 'SetNickname'; ProfileId = '89001000000000000000'; Nickname = ''; Code = ''; Confirmation = ''; Expected = 'profile|nickname|89001000000000000000' }
+        @{ Operation = 'SetNickname'; ProfileId = '8900100000000000000'; Nickname = 'Travel 🇮🇹'; Code = ''; Confirmation = ''; Expected = 'profile|nickname|8900100000000000000|Travel 🇮🇹' }
+        @{ Operation = 'SetNickname'; ProfileId = '8900100000000000000'; Nickname = "Family $([char]::ConvertFromUtf32(0x1F468))$([char]0x200D)$([char]::ConvertFromUtf32(0x1F467))"; Code = ''; Confirmation = ''; Expected = "profile|nickname|8900100000000000000|Family $([char]::ConvertFromUtf32(0x1F468))$([char]0x200D)$([char]::ConvertFromUtf32(0x1F467))" }
         @{ Operation = 'DownloadProfile'; ProfileId = ''; Nickname = ''; Code = '1$smdp.example.com$ABC-123'; Confirmation = ''; Expected = 'profile|download|-a|LPA:1$smdp.example.com$ABC-123' }
         @{ Operation = 'DownloadProfile'; ProfileId = ''; Nickname = ''; Code = 'LPA:1$smdp.example.com$ABC$$1'; Confirmation = '1234'; Expected = 'profile|download|-a|LPA:1$smdp.example.com$ABC$$1|-c|1234' }
         @{ Operation = 'ListNotifications'; ProfileId = ''; Nickname = ''; Code = ''; Confirmation = ''; Expected = 'notification|list' }
@@ -519,6 +538,7 @@ Describe 'Get-LpacArgument' {
         @{ Name = 'a nickname of 65 bytes'; Operation = 'SetNickname'; ProfileId = '8900100000000000000'; Nickname = ('a' * 65); Code = '' }
         @{ Name = 'a nickname of 33 two-byte letters'; Operation = 'SetNickname'; ProfileId = '8900100000000000000'; Nickname = ('è' * 33); Code = '' }
         @{ Name = 'a nickname with a line end'; Operation = 'SetNickname'; ProfileId = '8900100000000000000'; Nickname = "a`nb"; Code = '' }
+        @{ Name = 'a nickname with a tab'; Operation = 'SetNickname'; ProfileId = '8900100000000000000'; Nickname = "a`tb"; Code = '' }
         @{ Name = 'a code that is not one'; Operation = 'DownloadProfile'; ProfileId = ''; Nickname = ''; Code = 'hello' }
         @{ Name = 'no code'; Operation = 'DownloadProfile'; ProfileId = ''; Nickname = ''; Code = '' }
     ) {
@@ -671,6 +691,42 @@ Describe 'Invoke-LpacOperation' {
         $lpac.Disposed | Should -BeTrue
         $beats.Count | Should -BeGreaterThan 2
         $script:device.Modem.Received | Should -Contain 'AT+CCHC=1'
+    }
+
+    It 'stops when the worker is ending: lpac stopped, its channel closed' {
+        $lpac = Get-ScriptedLpac -Request @(
+            (Get-RequestLine -Function connect)
+            (Get-RequestLine -Function logic_channel_open -Parameter $script:isdR)
+        ) -Hang
+        $asked = [System.Collections.Generic.List[int]]::new()
+        $run = Invoke-LpacOperation -Channel $script:device.Channel -Lpac $lpac -TimeoutMs 60000 -Stop { $asked.Add(1); $asked.Count -gt 3 }
+        $run.Outcome | Should -Be 'Stopped'
+        $run.ElapsedMs | Should -BeLessThan 5000
+        $lpac.Disposed | Should -BeTrue
+        $script:device.Modem.Received | Should -Contain 'AT+CCHC=1'
+    }
+
+    It 'gives up a request for the network under way when the worker is ending' {
+        $script:stopping = $false
+        # Waits as Invoke-EsimHttpRequest does, beating, and fails as it does when the beat throws.
+        $http = {
+            try {
+                for ($i = 0; $i -lt 500; $i++) {
+                    $script:stopping = $i -ge 3
+                    & $args[2]
+                    Start-Sleep -Milliseconds 10
+                }
+                [pscustomobject]@{ Status = 200; Body = $null; Failure = $null }
+            }
+            catch [System.OperationCanceledException] {
+                [pscustomobject]@{ Status = 0; Body = $null; Failure = 'Network' }
+            }
+        }
+        $lpac = Get-ScriptedLpac -Request @('{"type":"http","payload":{"url":"https://smdp.example.com/gsma/rsp2/es9plus/initiateAuthentication","tx":"","headers":[]}}') -Hang
+        $run = Invoke-LpacOperation -Channel $script:device.Channel -Lpac $lpac -TimeoutMs 60000 -Http $http -Stop { $script:stopping }
+        $run.Outcome | Should -Be 'Stopped'
+        $run.ElapsedMs | Should -BeLessThan 5000
+        $lpac.Answers | Should -Be @('{"type":"http","payload":{"rcode":0,"rx":""}}')
     }
 
     It 'stops on a lost port, with nothing more sent' {
@@ -905,6 +961,62 @@ Describe 'The worker and the eSIM' {
             $text | Should -Not -Match $iccid
         }
         $snapshot.Esim.Profiles[0].PSObject.Properties.Name | Should -Not -Contain 'Iccid'
+    }
+
+    It 'takes a slot switch left unanswered for one that may have happened: a maintenance window, the slot read again' {
+        $script:worker = Get-EsimWorker -Scenario Esim
+        $script:link['Snapshot'].Recovery.History.MaintenanceUntil | Should -BeNullOrEmpty
+        # The modem switches, and its OK is lost.
+        $script:device.Modem.Script('AT+GTDUALSIM=0', @{ NoFinal = $true })
+        $outcome = Invoke-EsimCommand -Worker $script:worker -Kind SelectSimSlot -Parameter @{ Slot = 0 }
+        $outcome.Result | Should -Be 'Failed'
+        $outcome.Detail | Should -Be 'AT+GTDUALSIM=0 Timeout'
+        $script:link['Snapshot'].Recovery.History.MaintenanceUntil | Should -Not -BeNullOrEmpty
+        $script:worker.PassForced = $true
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:link['Snapshot'].Esim.Slot | Should -Be 0 -Because 'the slot is read again, not kept from before'
+    }
+
+    It 'opens a maintenance window for a profile switch whose run failed: the eUICC may have switched all the same' {
+        $script:worker = Get-EsimWorker -Scenario EsimEmpty
+        $script:link['Snapshot'].Recovery.History.MaintenanceUntil | Should -BeNullOrEmpty
+        # Every run fails from here: the enable's as an APDU answered too late would fail it.
+        Mock -ModuleName FibocomFm350 Invoke-WorkerLpac { [pscustomobject]@{ Outcome = 'Done'; Code = -1; Message = 'es10c_enable_profile'; Data = ''; HttpFailure = $null } }
+        $outcome = Invoke-EsimCommand -Worker $script:worker -Kind EnableProfile -Parameter @{ Aid = 'A0000005591010FFFFFFFF8900002000' }
+        $outcome.Result | Should -Be 'Failed'
+        $script:link['Snapshot'].Recovery.History.MaintenanceUntil | Should -Not -BeNullOrEmpty
+    }
+
+    It 'reads the slot again at the next pass when the modem left the read unanswered' {
+        $script:device = New-SimulatedDevice -Scenario Esim
+        $script:device.Modem.Euicc.ResetMs = 0
+        $script:device.Modem.Script('AT+GTDUALSIM?', @{ Lines = @('OK'); NoFinal = $true })
+        $script:link = New-ModemWorkerLink
+        $script:worker = New-ModemWorker -Link $script:link -Simulation $script:device -DataFolder $script:folder
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:worker.SimSlotRead | Should -BeFalse
+        $script:link['Snapshot'].Esim.Slot | Should -BeNullOrEmpty
+        $script:worker.PassForced = $true
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:link['Snapshot'].Esim.Slot | Should -Be 1
+    }
+
+    It 'reads the slot again when the user asks to read the eSIM' {
+        $script:worker = Get-EsimWorker -Scenario Esim
+        # Switched by another program meanwhile.
+        [void]$script:device.Modem.Euicc.Answer('AT+GTDUALSIM=0', $script:device.Modem)
+        (Invoke-EsimCommand -Worker $script:worker -Kind ReadEsim).Result | Should -Be 'NotEuicc'
+        $script:link['Snapshot'].Esim.Slot | Should -Be 0
+    }
+
+    It 'starts no lpac once the worker is ending' {
+        $script:worker = Get-EsimWorker -Scenario Esim
+        $before = $script:device.Modem.Received.Count
+        $script:link['Stop'] = $true
+        $outcome = Invoke-EsimCommand -Worker $script:worker -Kind ReadEsim
+        $outcome.Result | Should -Be 'Failed'
+        $outcome.Detail | Should -Match 'Stopped'
+        @($script:device.Modem.Received | Select-Object -Skip $before | Where-Object { $_ -like 'AT+CCHO=*' }) | Should -BeNullOrEmpty
     }
 
     It 'publishes an eUICC with no profile as read, with none' {

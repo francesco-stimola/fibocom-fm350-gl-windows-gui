@@ -837,6 +837,15 @@ Describe 'The eSIM tab' {
         $script:sent[0].Parameter.Nickname | Should -Be 'Lab'
     }
 
+    It 'renames with an emoji, which SGP.22''s nickname takes' {
+        Update-MainWindow -View $script:esimView
+        $script:controls.ProfilesGrid.SelectedItem = @($script:controls.ProfilesGrid.ItemsSource)[0]
+        $nickname = 'Travel ' + [char]::ConvertFromUtf32(0x1F1EE) + [char]::ConvertFromUtf32(0x1F1F9)
+        $script:controls.NicknameBox.Text = $nickname
+        Invoke-Click $script:controls.RenameProfileButton
+        $script:sent.Kind | Should -Be @('SetProfileNickname')
+        $script:sent[0].Parameter.Nickname | Should -Be $nickname
+    }
     It 'refuses a nickname longer than 64 bytes, and says why' {
         Update-MainWindow -View $script:esimView
         $script:controls.ProfilesGrid.SelectedItem = @($script:controls.ProfilesGrid.ItemsSource)[0]
