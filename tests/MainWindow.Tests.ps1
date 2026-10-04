@@ -47,7 +47,8 @@ Describe 'The main window' {
         $script:asked = 0
         $script:chosen = $null
         $script:opened = [System.Collections.Generic.List[string]]::new()
-        $script:window = New-MainWindow -Send { param($kind, $parameter) $script:sent.Add([pscustomobject]@{ Kind = $kind; Parameter = $parameter }) } `
+        # Send gives back the command's Id, as the app's does.
+        $script:window = New-MainWindow -Send { param($kind, $parameter) $script:sent.Add([pscustomobject]@{ Kind = $kind; Parameter = $parameter }); "id-$($script:sent.Count)" } `
             -Ask { $script:asked++; $script:answer } -Choose { $script:chosen } -Open { param($url) $script:opened.Add($url) }
         $script:controls = $script:window.Controls
     }
@@ -450,14 +451,14 @@ Describe 'The main window' {
         $script:controls.SendMessageButton.IsEnabled | Should -BeTrue
     }
 
-    It 'opens a new message the user selects, once, and shows it' {
+    It 'opens a new message the user selects, again when selected again, and shows it' {
         Update-MainWindow -View $script:views['Online']
         $items = @($script:controls.MessagesGrid.ItemsSource)
         $script:controls.MessagesGrid.SelectedItem = $items[0]
         $script:controls.MessagesGrid.SelectedItem = $items[2]
         $script:controls.MessagesGrid.SelectedItem = $items[0]
 
-        $script:sent.Kind | Should -Be @('OpenMessage') -Because 'a message read is opened once, and one already read not at all'
+        $script:sent.Kind | Should -Be @('OpenMessage', 'OpenMessage') -Because 'a command lost with a worker that ended is sent again; a message already read is not opened'
         $script:sent[0].Parameter.Fingerprints | Should -Be $items[0].Fingerprints
         $script:controls.MessageHeaderText.Text | Should -Be $items[0].Header
         $script:controls.MessageBodyText.Text | Should -Be $items[0].Text
@@ -525,6 +526,45 @@ Describe 'The main window' {
         Update-MainWindow -View $done
 
         $script:controls.MessageTextBox.Text | Should -Be 'another one'
+    }
+
+    It 'sends a message once, however many times Send is clicked before the worker answers' {
+        $view = $script:views['Online']
+        Update-MainWindow -View $view
+        $script:controls.MessageToBox.Text = '+10000000000'
+        $script:controls.MessageTextBox.Text = 'hello'
+        Invoke-Click $script:controls.SendMessageButton
+        Invoke-Click $script:controls.SendMessageButton
+        $script:controls.SendMessageButton.IsEnabled | Should -BeFalse
+        Update-MainWindow -View $view
+        Invoke-Click $script:controls.SendMessageButton
+        $script:sent.Kind | Should -Be @('SendMessage') -Because 'the worker has not answered it yet'
+        $script:controls.SendMessageButton.IsEnabled | Should -BeFalse
+
+        $answered = $view | Select-Object -Property *
+        $answered.Messages = $view.Messages | Select-Object -Property *
+        $answered.Messages.SendIds = [string[]]@('id-1')
+        Update-MainWindow -View $answered
+        $script:controls.SendMessageButton.IsEnabled | Should -BeTrue
+        Invoke-Click $script:controls.SendMessageButton
+        $script:sent.Kind | Should -Be @('SendMessage', 'SendMessage') -Because 'once answered, the user may send it again'
+    }
+
+    It 'can send again once another worker took over: the command went with the one that ended' {
+        $view = $script:views['Online']
+        Update-MainWindow -View $view
+        $script:controls.MessageToBox.Text = '+10000000000'
+        $script:controls.MessageTextBox.Text = 'hello'
+        Invoke-Click $script:controls.SendMessageButton
+        $next = $view | Select-Object -Property *
+        $next.Messages = $view.Messages | Select-Object -Property *
+        $next.Messages.Generation = [int]$view.Messages.Generation + 1
+        Update-MainWindow -View $next
+        $script:controls.SendMessageButton.IsEnabled | Should -BeTrue
+    }
+
+    It 'takes a text of 255 parts at most' {
+        $script:controls.MessageTextBox.MaxLength | Should -Be (255 * 153)
     }
 
     It 'asks for a number and a text, and sends nothing without them' {

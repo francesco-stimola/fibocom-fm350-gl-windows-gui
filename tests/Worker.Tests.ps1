@@ -1451,6 +1451,52 @@ Describe 'Messages on the simulated modem' {
         $script:link['Snapshot'].Messages.Items.New | Should -Be @($true, $false, $false)
     }
 
+    It 'opens a message the next worker gets before its first listing' {
+        $device = New-SimulatedDevice -Scenario Online
+        $first = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $first
+        $last = $script:link['Snapshot']
+        $fingerprints = (Get-TestMessage '+10000000000').Fingerprints
+        Close-ModemWorker -Worker $first
+
+        $second = Get-TestWorker -Device $device -Extra @{ Previous = $last; Generation = 2 }
+        $result = Invoke-TestCommand -Worker $second -Kind OpenMessage -Parameter @{ Fingerprints = $fingerprints }
+
+        $result.Result | Should -Be 'Done'
+        (Get-TestMessage '+10000000000').New | Should -BeFalse -Because 'the record of what is new was read before the message was taken off it'
+        (Get-TestMessage 'Info').New | Should -BeTrue
+    }
+
+    It 'keeps new the unread parts a listing cut short marked read' {
+        $device = New-SimulatedDevice -Scenario Online
+        $device.AwayMs = 600000
+        $device.Modem.Script('AT+CMGL=4', @{ Lines = @('+CMGL: 2,0,,24', $script:silent.Replace('F04000', 'F00000'), 'OK'); NoFinal = $true; Vanish = $true })
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+
+        $expected = Get-SmsFingerprint -Pdu $script:silent.Replace('F04000', 'F00000')
+        $worker.SmsUnread | Should -Contain $expected
+        @(Import-SmsUnread -Path (Join-Path $script:folder 'sms-new.dat')) | Should -Contain $expected
+        @(Get-TestLog | Where-Object { $_ -match 'Messages: AT\+CMGL=4 PortLost' }).Count | Should -Be 1
+    }
+
+    It 'goes on with the cycle when reading the messages fails, saying it once by the error''s type' {
+        $device = New-SimulatedDevice -Scenario Online
+        $worker = Get-TestWorker -Device $device
+        Mock ConvertFrom-AtMessageList -ModuleName FibocomFm350 { throw [System.FormatException]::new('From +10000000000: bad') }
+        Invoke-ModemWorkerCycle -Worker $worker
+        $script:now += 30000
+        Invoke-ModemWorkerCycle -Worker $worker
+
+        $snapshot = $script:link['Snapshot']
+        $snapshot.State | Should -Be 'Online'
+        $snapshot.Recovery | Should -Not -BeNullOrEmpty -Because 'the cycle went on to the recovery decision'
+        $snapshot.Messages | Should -BeNullOrEmpty
+        $log = @(Get-TestLog)
+        @($log | Where-Object { $_ -match 'Messages: not read \(FormatException\)' }).Count | Should -Be 1
+        ($log -join "`n") | Should -Not -Match '10000000000'
+    }
+
     It 'deletes a message, every part of it, where the storage keeps them now' {
         $device = New-SimulatedDevice -Scenario Online
         $worker = Get-TestWorker -Device $device

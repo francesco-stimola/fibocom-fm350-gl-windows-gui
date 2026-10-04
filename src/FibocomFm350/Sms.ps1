@@ -761,14 +761,18 @@ function ConvertFrom-AtMessageList {
         $i++
         $values = @($arguments | ForEach-Object Value)
         if ($null -eq $Index) {
-            $number, $values = $values
-            $entryIndex = ConvertTo-AtInteger -Text $number
+            # The index, then the status at least: a header without them is left out.
+            $entryIndex = if ($values.Count -ge 2) { ConvertTo-AtInteger -Text $values[0] } else { $null }
             if ($null -eq $entryIndex) {
                 continue
             }
+            $values = @($values | Select-Object -Skip 1)
         }
         else {
             $entryIndex = $Index
+        }
+        if ($values.Count -eq 0) {
+            continue
         }
         $state = ConvertTo-AtInteger -Text $values[0]
         [pscustomobject]@{

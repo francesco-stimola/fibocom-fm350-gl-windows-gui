@@ -126,14 +126,15 @@ function New-MainWindow {
         ModeHint     = $null
         # The Data tab's form, as last filled from the settings.
         FormUsage    = $null
-        # The Messages tab: the list as last shown, the message the user selected, those opened
-        # from here, the newest message sent and the text it had; and whether the window is
-        # filling the list itself, so a selection it restores opens nothing.
+        # The Messages tab: the list as last shown, the message the user selected, the newest
+        # message sent and the text it had; and whether the window is filling the list itself,
+        # so a selection it restores opens nothing.
         MessagesShown = $null
         SelectedKey   = $null
-        OpenedKeys    = [System.Collections.Generic.HashSet[string]]::new()
         SentId        = $null
         SentText      = $null
+        # A message sent and not answered yet: its command's Id and the worker that has it.
+        SendPending   = $null
         Updating      = $false
         Exiting      = $false
     }
@@ -247,15 +248,16 @@ function Show-WindowMessage {
 
 function Select-WindowMessage {
     # A message the user selected in the list: shown, and opened - new no more (decided
-    # 2026-10-04). A selection the window restores after a refresh opens nothing.
+    # 2026-10-04). A selection the window restores after a refresh opens nothing; one the user
+    # makes again opens it again, in case the command was lost with a worker that ended.
     $message = $script:MainWindow.Controls.MessagesGrid.SelectedItem
     Show-WindowMessage -Message $message
     if ($script:MainWindow.Updating -or -not $message) {
         return
     }
     $script:MainWindow.SelectedKey = $message.Key
-    if ($message.New -and $script:MainWindow.OpenedKeys.Add($message.Key)) {
-        & $script:MainWindow.Send 'OpenMessage' @{ Fingerprints = [string[]]$message.Fingerprints }
+    if ($message.New) {
+        [void](& $script:MainWindow.Send 'OpenMessage' @{ Fingerprints = [string[]]$message.Fingerprints })
     }
 }
 
@@ -270,8 +272,12 @@ function Invoke-WindowMessageDelete {
 
 function Send-WindowMessage {
     # The Send button: the number and the text as typed, for the worker, which checks them. The
-    # text stays until the message is sent: one that fails, the user may send again.
+    # text stays until the message is sent: one that fails, the user may send again. Once queued
+    # the button waits for the worker's answer - a second click, or a double one, sends nothing.
     $controls = $script:MainWindow.Controls
+    if ($script:MainWindow.SendPending) {
+        return
+    }
     $number = $controls.MessageToBox.Text.Trim()
     $text = $controls.MessageTextBox.Text
     if (-not $number -or -not $text) {
@@ -279,7 +285,12 @@ function Send-WindowMessage {
         return
     }
     $script:MainWindow.SentText = $text
-    & $script:MainWindow.Send 'SendMessage' @{ Number = $number; Text = $text }
+    $id = & $script:MainWindow.Send 'SendMessage' @{ Number = $number; Text = $text }
+    if ($id) {
+        $view = $script:MainWindow.View
+        $script:MainWindow.SendPending = @{ Id = [string]$id; Generation = $(if ($view -and $view.Messages) { $view.Messages.Generation }) }
+        $controls.SendMessageButton.IsEnabled = $false
+    }
 }
 
 function Show-WindowMessageCount {
@@ -317,7 +328,13 @@ function Show-WindowMessageList {
         $script:MainWindow.MessagesShown = $signature
     }
     Show-WindowMessage -Message $controls.MessagesGrid.SelectedItem
-    $controls.SendMessageButton.IsEnabled = $messages.CanSend
+    # A message waiting for its answer: until the worker has answered it, or another worker took
+    # over - the command went with the one that ended.
+    $pending = $script:MainWindow.SendPending
+    if ($pending -and ($pending.Id -in @($messages.SendIds) -or $messages.Generation -ne $pending.Generation)) {
+        $script:MainWindow.SendPending = $null
+    }
+    $controls.SendMessageButton.IsEnabled = $messages.CanSend -and -not $script:MainWindow.SendPending
     if ($messages.SentId -and $messages.SentId -ne $script:MainWindow.SentId) {
         $script:MainWindow.SentId = $messages.SentId
         if ($controls.MessageTextBox.Text -eq $script:MainWindow.SentText) {

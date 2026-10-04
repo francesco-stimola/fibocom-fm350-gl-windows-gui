@@ -9,6 +9,10 @@
 # The network modes the window and the tray menu offer, in their order (ROADMAP M5).
 $script:NetworkModeNames = @('Automatic', 'LteOnly', 'NrOnly')
 
+# The longest message text: 255 parts of 153 GSM 7-bit characters (23.040). The window's box takes
+# no more, and a text beyond it is too long without being measured on the UI thread.
+$script:MessageMaxCharacters = 255 * 153
+
 function Get-SnapshotRecovery {
     # The snapshot's recovery state, or $null.
     param([object] $Snapshot)
@@ -787,7 +791,8 @@ function Get-MessagesView {
         no modem, the SIM not ready, observe-only), TabText (the tab's header, with the number
         of new messages), Items - a row per message, newest first: Key, Fingerprints, New,
         Marker, From, Time, Preview, Header, Text, Note -, SentId (the newest message sent's
-        command), SendingText, CanDelete and CanSend.
+        command), SendIds (the commands of the messages the worker sent or tried), Generation
+        (that worker's), SendingText, CanDelete and CanSend.
     .EXAMPLE
         Get-MessagesView -Snapshot $snapshot
     #>
@@ -850,12 +855,15 @@ function Get-MessagesView {
         }
     }
     $new = if ($messages) { [int]$messages.New } else { 0 }
-    $sent = @(Get-SnapshotValue -Snapshot $Snapshot -Name 'Results' | Where-Object { $_ -and $_.Kind -eq 'SendMessage' -and $_.Result -eq 'Sent' }) | Select-Object -Last 1
+    $sends = @(Get-SnapshotValue -Snapshot $Snapshot -Name 'Results' | Where-Object { $_ -and $_.Kind -eq 'SendMessage' })
+    $sent = @($sends | Where-Object Result -EQ 'Sent') | Select-Object -Last 1
     [pscustomobject]@{
         StateText   = $state
         TabText     = if ($new -gt 0) { Get-AppText 'Messages.TabNew' $new } else { Get-AppText 'Xaml.MessagesTab' }
         Items       = [object[]]@($rows)
         SentId      = if ($sent) { $sent.Id } else { $null }
+        SendIds     = [string[]]@($sends | ForEach-Object Id)
+        Generation  = Get-SnapshotValue -Snapshot $Snapshot -Name 'Generation'
         SendingText = if ($sending) { Get-AppText 'Messages.Sending' } else { $null }
         CanDelete   = [bool]$messages -and -not $sending
         CanSend     = [bool]$messages -and -not $sending
@@ -869,6 +877,10 @@ function Get-MessageCountText {
 
     if (-not $Text) {
         return $null
+    }
+    # Longer than 255 parts of the most a part holds: too long, without measuring it.
+    if ($Text.Length -gt $script:MessageMaxCharacters) {
+        return Get-AppText 'Messages.TooLong'
     }
     $measure = Measure-SmsText -Text $Text
     if ($measure.TooLong) {

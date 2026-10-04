@@ -840,15 +840,40 @@ function Save-WorkerSmsUnread {
     }
 }
 
+function Import-WorkerSmsUnread {
+    # Reads the fingerprints of the parts still new from their file, once per worker - before the
+    # first reading of the storage, or the first message opened.
+    param([hashtable] $Worker)
+
+    if ($Worker.SmsUnreadLoaded) {
+        return
+    }
+    $unreadable = $null
+    $Worker.SmsUnread = [string[]]@(Import-SmsUnread -Path $Worker.Paths.SmsNew -WarningVariable unreadable -WarningAction SilentlyContinue)
+    if ($unreadable) {
+        Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Messages: $unreadable"
+    }
+    $Worker.SmsUnreadLoaded = $true
+}
+
 function Read-WorkerInbox {
     # Reads the modem's whole storage - AT+CMGL=4, which marks every message read there - and how
     # full it is, keeps which parts are new (Update-SmsUnread, and its file when that changed),
     # and announces the messages new since the last reading: how many, and the newest one's
-    # sender. Silent messages (23.040: never shown) are left out. Returns the listing's status.
+    # sender. Silent messages (23.040: never shown) are left out. A listing cut short still
+    # marked what it listed read: its unread parts are kept new, the messages shown left as they
+    # were. Returns the listing's status.
     param([hashtable] $Worker)
 
     $listing = Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+CMGL=4'
+    Import-WorkerSmsUnread -Worker $Worker
     if ($listing.Status -ne 'OK') {
+        $listed = @(ConvertFrom-AtMessageList -Lines $listing.Lines | Where-Object Status -EQ 'Unread' | ForEach-Object { Get-SmsFingerprint -Pdu $_.Pdu })
+        $kept = [string[]]@(@($Worker.SmsUnread) + $listed | Sort-Object -Unique)
+        if ($kept.Count -ne @($Worker.SmsUnread).Count) {
+            $Worker.SmsUnread = $kept
+            Save-WorkerSmsUnread -Worker $Worker
+        }
         Register-WorkerMessagesFailure -Worker $Worker -Failure "AT+CMGL=4 $($listing.Status)$(if ($null -ne $listing.ErrorCode) { " $($listing.ErrorCode)" })"
         return $listing.Status
     }
@@ -856,14 +881,6 @@ function Read-WorkerInbox {
             $_ | Add-Member -NotePropertyName Sms -NotePropertyValue (ConvertFrom-SmsPdu -Pdu $_.Pdu) -PassThru
         })
     $storage = ConvertFrom-AtMessageStorage -Lines (Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+CPMS?').Lines
-    if (-not $Worker.SmsUnreadLoaded) {
-        $unreadable = $null
-        $Worker.SmsUnread = [string[]]@(Import-SmsUnread -Path $Worker.Paths.SmsNew -WarningVariable unreadable -WarningAction SilentlyContinue)
-        if ($unreadable) {
-            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Messages: $unreadable"
-        }
-        $Worker.SmsUnreadLoaded = $true
-    }
     $before = [string[]]@($Worker.SmsUnread)
     $unread = [string[]]@(Update-SmsUnread -Unread $before -Entry $entries)
     $messages = @(Join-SmsPart -Entry $entries | Where-Object { -not $_.Silent })
@@ -892,29 +909,38 @@ function Read-WorkerInbox {
 function Update-WorkerInbox {
     # The messages' part of a cycle: the notices set once per port - with PDU mode, which the
     # codec reads -, then the storage read whole when due, or else how full it is checked, so a
-    # message stored without a notice is read too. Returns whether the storage was read.
+    # message stored without a notice is read too. It never stops the cycle: messages are no
+    # reason to leave the connection unwatched. A failure is logged once, by the error's type -
+    # its text may hold a number or a text -, and tried again after the next pass. Returns
+    # whether the storage was read.
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
         Justification = 'Sets the modem''s new-message notices, a setting that is not kept; the worker''s state otherwise.')]
     param([hashtable] $Worker)
 
-    if (-not $Worker.MessagesReady) {
-        foreach ($command in 'AT+CMGF=0', $script:WorkerMessageNotices) {
-            $answer = Invoke-AtCommand -Channel $Worker.Channel -Command $command
-            if ($answer.Status -ne 'OK') {
-                Register-WorkerMessagesFailure -Worker $Worker -Failure "$command $($answer.Status)$(if ($null -ne $answer.ErrorCode) { " $($answer.ErrorCode)" })"
+    try {
+        if (-not $Worker.MessagesReady) {
+            foreach ($command in 'AT+CMGF=0', $script:WorkerMessageNotices) {
+                $answer = Invoke-AtCommand -Channel $Worker.Channel -Command $command
+                if ($answer.Status -ne 'OK') {
+                    Register-WorkerMessagesFailure -Worker $Worker -Failure "$command $($answer.Status)$(if ($null -ne $answer.ErrorCode) { " $($answer.ErrorCode)" })"
+                    return $false
+                }
+            }
+            $Worker.MessagesReady = $true
+            $Worker.MessagesDue = $true
+        }
+        if (-not $Worker.MessagesDue) {
+            $storage = ConvertFrom-AtMessageStorage -Lines (Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+CPMS?').Lines
+            if ($storage -and $Worker.MessageStorage -and $storage.Read.Used -eq $Worker.MessageStorage.Read.Used) {
                 return $false
             }
         }
-        $Worker.MessagesReady = $true
-        $Worker.MessagesDue = $true
+        (Read-WorkerInbox -Worker $Worker) -eq 'OK'
     }
-    if (-not $Worker.MessagesDue) {
-        $storage = ConvertFrom-AtMessageStorage -Lines (Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+CPMS?').Lines
-        if ($storage -and $Worker.MessageStorage -and $storage.Read.Used -eq $Worker.MessageStorage.Read.Used) {
-            return $false
-        }
+    catch {
+        Register-WorkerMessagesFailure -Worker $Worker -Failure "not read ($($_.Exception.GetType().Name))"
+        $false
     }
-    (Read-WorkerInbox -Worker $Worker) -eq 'OK'
 }
 
 function Remove-WorkerMessage {
@@ -2094,7 +2120,9 @@ function Invoke-WorkerCommand {
                     $detail = if ($outcome.Result -eq 'Failed') { "pnputil exit code $($outcome.ExitCode)" } else { $null }
                 }
                 'OpenMessage' {
-                    # Only the app's own record changes: the modem marked it read already.
+                    # Only the app's own record changes: the modem marked it read already. The
+                    # record is read first when no listing has read it yet.
+                    Import-WorkerSmsUnread -Worker $Worker
                     $opened = [string[]]@($parameter['Fingerprints'])
                     $left = [string[]]@($Worker.SmsUnread | Where-Object { $_ -notin $opened })
                     if ($left.Count -ne @($Worker.SmsUnread).Count) {

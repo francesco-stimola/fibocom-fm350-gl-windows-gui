@@ -631,6 +631,18 @@ Describe 'ConvertFrom-AtMessageList' {
         $entries[0].Pdu | Should -Be '07910100000000F0040B910100000000F000006201402143658005E8329BFD06'
     }
 
+    It 'leaves out a header without its index and status: <Name>' -ForEach @(
+        @{ Name = 'an index alone'; Header = '+CMGL: 3' }
+        @{ Name = 'nothing'; Header = '+CMGL:' }
+        @{ Name = 'an index that is no number'; Header = '+CMGL: x,0,,24' }
+    ) {
+        @(ConvertFrom-AtMessageList -Lines $Header, (Get-TestDeliverPdu) -ErrorAction Stop).Count | Should -Be 0
+    }
+
+    It 'reads an empty AT+CMGR answer without failing' {
+        { ConvertFrom-AtMessageList -Lines '+CMGR:', (Get-TestDeliverPdu) -Index 7 -ErrorAction Stop } | Should -Not -Throw
+    }
+
     It 'reads a status it doesn''t know as none' {
         @(ConvertFrom-AtMessageList -Lines '+CMGL: 5,7,,24', (Get-TestDeliverPdu))[0].Status | Should -BeNullOrEmpty
     }

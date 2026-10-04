@@ -52,12 +52,13 @@ function Start-AppWorker {
 }
 
 function Send-AppCommand {
-    # Queues a command for the current worker; never waits.
+    # Queues a command for the current worker and returns its Id; never waits. Without a worker
+    # the command is dropped, and nothing is returned.
     param([string] $Kind, [hashtable] $Parameter = @{})
 
     $worker = $script:App.Worker
     if ($worker) {
-        [void](Send-ModemCommand -Link $worker.Link -Kind $Kind -Parameter $Parameter)
+        Send-ModemCommand -Link $worker.Link -Kind $Kind -Parameter $Parameter
     }
     elseif ($script:MainWindow) {
         $script:MainWindow.Controls.ResultText.Text = Get-AppText 'Result.Restarting'

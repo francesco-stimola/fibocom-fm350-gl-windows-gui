@@ -788,6 +788,18 @@ Describe 'The Messages tab' {
         $view.CanDelete | Should -BeFalse
     }
 
+    It 'gives the commands of the messages sent or tried, and the worker that kept them' {
+        $time = [DateTimeOffset]::Now
+        $results = @(
+            [pscustomobject]@{ Id = '1'; Kind = 'SendMessage'; Result = 'Sent'; Time = $time }
+            [pscustomobject]@{ Id = '2'; Kind = 'SendMessage'; Result = 'Failed'; Time = $time }
+            [pscustomobject]@{ Id = '3'; Kind = 'DeleteMessage'; Result = 'Done'; Time = $time }
+        )
+        $view = Get-MessagesView -Snapshot (Copy-Snapshot $script:online @{ Results = $results })
+        $view.SendIds | Should -Be @('1', '2')
+        $view.Generation | Should -Be $script:online.Generation
+    }
+
     It 'names the newest message sent' {
         $time = [DateTimeOffset]::Now
         $results = @(
@@ -818,7 +830,9 @@ Describe 'The count of a message being written' {
         @{ Name = 'an escaped character counting two'; Text = "$([char]0x20AC)"; Expected = 'Characters: 2 - parts: 1' }
         @{ Name = 'two parts past 160'; Text = ('x' * 161); Expected = 'Characters: 161 - parts: 2' }
         @{ Name = 'UCS2 for a character the alphabet lacks'; Text = "$([char]0x0416)abc"; Expected = 'Characters: 4 - parts: 1 (with special characters, 70 per part)' }
-        @{ Name = 'too long'; Text = ('x' * 40000); Expected = 'Too long: a message has at most 255 parts.' }
+        @{ Name = 'too long'; Text = ('x' * 39016); Expected = 'Too long: a message has at most 255 parts.' }
+        @{ Name = 'too long to measure'; Text = ('x' * 1000000); Expected = 'Too long: a message has at most 255 parts.' }
+        @{ Name = 'too long though under the longest box: UCS2'; Text = ("$([char]0x0416)" * 17086); Expected = 'Too long: a message has at most 255 parts.' }
     ) {
         & (Get-Module FibocomFm350.App) { param($text) Get-MessageCountText -Text $text } $Text | Should -Be $Expected
     }
