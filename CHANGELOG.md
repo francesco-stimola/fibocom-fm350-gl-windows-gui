@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-04
+
 ### Added
 - eSIM, on modules with an embedded SIM: an *eSIM* tab with the SIM slot in use — in the window's
   top panel too — and the switch to the other slot; the EID, with *Copy*; the profiles, enabled,
