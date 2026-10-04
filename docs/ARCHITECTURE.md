@@ -999,6 +999,13 @@ runs as an external process, one invocation per operation (facts: `AT-COMMANDS.m
   *Copy* (decided 2026-10-04: providers ask for it to sell a plan) — never the log nor the tooltip.
   The log redacts `AT+CGLA`'s APDUs, in a command and in its answer, and activation codes; an eSIM
   command's failure is logged by the step that failed and lpac's reason.
+- **What lpac's command line carries** (decided 2026-10-04): the activation code, its confirmation
+  code and, to set a nickname, the profile's ICCID — lpac `2.2.1` takes them nowhere else
+  (`AT-COMMANDS.md` §8). The app's log never has them; but for the seconds lpac runs, whatever
+  records processes' command lines sees them — an administrator's tools, Windows' process-creation
+  auditing where a policy turns it on with command lines, Sysmon, an EDR agent: on a computer an IT
+  department manages, its IT department. Said in the README and the release notes. A later lpac
+  that reads them from its standard input would take them off the command line.
 - **Development mode** (`-Scenario EsimEmpty`, `Esim`): the simulated modem has two slots, as our
   module has them — the physical SIM, and an eUICC holding a test profile (`SimulatedEuicc`): its
   logical channels, the STORE DATA requests that change it told by their tag, the SIM reset after

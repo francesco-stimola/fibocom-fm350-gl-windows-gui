@@ -58,7 +58,9 @@ adapter's IP address by hand. And when the link drops — it does — nothing br
 - **eSIM** (since 1.2) — on modules with an embedded SIM: switch between the physical SIM and the
   eSIM; list, enable, disable, rename and delete eSIM profiles; download one from its activation
   code, typed or read from the image of its QR code; the EID at hand, to copy. Through
-  [lpac](https://github.com/estkme-group/lpac).
+  [lpac](https://github.com/estkme-group/lpac). lpac takes the activation code — and, to rename a
+  profile, its ICCID — on its command line: the app never logs them, but on a computer that
+  records processes' command lines, as an IT department's may, they are recorded too.
 
 ## Install
 

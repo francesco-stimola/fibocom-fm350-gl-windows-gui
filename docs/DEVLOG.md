@@ -4,6 +4,15 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-04 — Decided: the codes on lpac's command line, said
+
+The open decision from M9's review, taken by the maintainer: **accepted, and said** — in
+ARCHITECTURE → *eSIM*, the README and the release notes. lpac `2.2.1` takes the activation code,
+its confirmation code and a nickname's ICCID on its command line alone: the app's log never has
+them, but whatever records processes' command lines on the computer does, for the seconds lpac
+runs. Rejected: asking lpac for another way in first (no date; a later lpac that reads them from
+its standard input can be taken with its pin); taking *Rename* out (the codes would stay there).
+
 ## 2026-10-04 — M9: a switch whose answer is lost, an exit during lpac's run
 
 From M9's review:
@@ -24,6 +33,7 @@ From M9's review:
   thread.
 - **Still open**: the activation code, its confirmation code and an ICCID go on lpac's command
   line, where process auditing can record them (ROADMAP → *Open decisions*).
+
 ## 2026-10-04 — M9: the eSIM tab, a QR code read from an image, the bundled programs tested
 
 The window's *eSIM* tab as decided (ARCHITECTURE → *eSIM*), and what its building settled:

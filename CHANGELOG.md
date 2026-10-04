@@ -16,7 +16,9 @@ All notable changes to this project are documented here. The format follows
   downloaded from its activation code, typed or read from the image of its QR code. The providers'
   notifications are sent by themselves. An eSIM with no profile enabled says so in the tray and the
   window, with *Open eSIM*. Verified on our module's eUICC, a commercial profile downloaded,
-  enabled, deleted and downloaded again.
+  enabled, deleted and downloaded again. The activation code — and, to rename a profile, its
+  ICCID — reach lpac on its command line: never in the app's log, but recorded on a computer that
+  records processes' command lines.
 - The release zip carries lpac 2.2.1 (AGPL-3.0), which manages the eSIM, and ZXing.Net 0.16.11
   (Apache-2.0), which reads QR codes, each with its license; lpac's source is attached to the
   release. The app makes lpac's HTTPS requests itself, each server's certificate checked against
