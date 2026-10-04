@@ -389,6 +389,15 @@ Describe 'The package' {
         (Get-ChildItem $destination -Name | Sort-Object) | Should -Be @('App', 'FibocomFm350', 'install.cmd', 'Installer', 'Start-Fm350.ps1', 'uninstall.cmd')
     }
 
+    It 'copies lpac''s folder when the package has one' {
+        $package = Copy-TestPackage
+        [void](New-Item -ItemType Directory -Path (Join-Path $package 'lpac'))
+        Set-Content -LiteralPath (Join-Path $package 'lpac\lpac.exe') -Value 'not a program'
+        $destination = Join-Path $TestDrive "copy-$([guid]::NewGuid().ToString('N'))"
+        [void](Copy-AppPackage -Source $package -Destination $destination -Confirm:$false)
+        Join-Path $destination 'lpac\lpac.exe' | Should -Exist
+    }
+
     It 'never copies into a folder that exists' {
         $destination = Join-Path $TestDrive 'exists'
         [void](New-Item -ItemType Directory -Path $destination -Force)

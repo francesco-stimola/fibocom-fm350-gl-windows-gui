@@ -8,6 +8,9 @@
 # Release build output
 /dist/
 
+# lpac is never committed: the release workflow takes its pinned release (tools/Lpac.psd1).
+/src/lpac/
+
 # Pester output
 testResults.xml
 coverage.xml

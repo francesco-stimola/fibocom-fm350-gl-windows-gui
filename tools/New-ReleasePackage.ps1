@@ -11,9 +11,18 @@
     CHANGELOG.md. No folder at the top of the zip: Explorer's "Extract All" puts it in a folder
     named after the zip.
 
-    Writes the zip and release-notes.md into -OutputFolder, and returns Version, Zip, Notes and
-    Files (the number of files in the zip). Fails on any check that doesn't hold. CI runs it on
-    every push, without -Tag: the package is proven before a tag is ever pushed.
+    lpac goes in the zip's 'lpac' folder (ARCHITECTURE -> eSIM): its Windows build as the pinned
+    release publishes it (-LpacPin, tools/Lpac.psd1) - lpac.exe, libcurl.dll, its README and
+    licenses -, and SOURCE.txt, which says where its source is. Its source archive is written
+    beside the zip, for the release to carry. Each of the two files is taken from -LpacCache, or
+    downloaded there from the pinned address, and used only once its SHA-256 matches the pin; a
+    file that doesn't match is deleted and nothing is built. A 'lpac' folder in src/ is never
+    packaged: the binaries come from the pinned release alone.
+
+    Writes the zip, release-notes.md and lpac's source archive into -OutputFolder, and returns
+    Version, Zip, Notes, Files (the number of files in the zip) and LpacSource. Fails on any check
+    that doesn't hold. CI runs it on every push, without -Tag: the package is proven before a tag
+    is ever pushed.
 .EXAMPLE
     ./tools/New-ReleasePackage.ps1 -Tag v1.0.0 -OutputFolder dist
 #>
@@ -23,11 +32,17 @@ param(
 
     [string] $OutputFolder = (Join-Path -Path (Split-Path -Parent $PSScriptRoot) -ChildPath 'dist'),
 
-    [string] $Root = (Split-Path -Parent $PSScriptRoot)
+    [string] $Root = (Split-Path -Parent $PSScriptRoot),
+
+    [string] $LpacPin = (Join-Path -Path $PSScriptRoot -ChildPath 'Lpac.psd1'),
+
+    # Where lpac's two files are looked for, and downloaded to when missing.
+    [string] $LpacCache = (Join-Path -Path $OutputFolder -ChildPath 'lpac-download')
 )
 
 $script:ReleaseManifests = @('src/FibocomFm350/FibocomFm350.psd1', 'src/App/FibocomFm350.App.psd1', 'src/Installer/FibocomFm350.Installer.psd1')
 $script:ReleaseTopFiles = @('LICENSE', 'README.md', 'CHANGELOG.md')
+$script:LpacFolder = 'lpac'
 
 function Resolve-ReleaseVersion {
     # The version to release: the one every module carries, and the tag's when there is one
@@ -83,16 +98,76 @@ function Get-ChangelogSection {
 }
 
 function Get-ReleaseFile {
-    # The files of the zip: Path on disk and Entry, its name in the zip, with forward slashes.
+    # The files of the zip from the repository: Path on disk and Entry, its name in the zip, with
+    # forward slashes. A 'lpac' folder in src/ is left out: lpac comes from its pinned release.
     param([string] $Root)
 
     $source = Join-Path -Path $Root -ChildPath 'src'
     foreach ($file in @(Get-ChildItem -LiteralPath $source -Recurse -File | Sort-Object FullName)) {
-        [pscustomobject]@{ Path = $file.FullName; Entry = [System.IO.Path]::GetRelativePath($source, $file.FullName).Replace('\', '/') }
+        $entry = [System.IO.Path]::GetRelativePath($source, $file.FullName).Replace('\', '/')
+        if ($entry -notlike "$script:LpacFolder/*") {
+            [pscustomobject]@{ Path = $file.FullName; Entry = $entry }
+        }
     }
     foreach ($name in $script:ReleaseTopFiles) {
         [pscustomobject]@{ Path = (Join-Path -Path $Root -ChildPath $name); Entry = $name }
     }
+}
+
+function Test-LpacPin {
+    # Whether a pin of lpac's release is complete: a version, and for its build and its source a
+    # file name, an https address and a SHA-256. Throws on what is missing. A pure check.
+    param([hashtable] $Pin)
+
+    if ([string]$Pin['Version'] -notmatch '^\d+\.\d+\.\d+$') {
+        throw "lpac's pin has no version."
+    }
+    foreach ($part in 'Build', 'Source') {
+        $entry = $Pin[$part]
+        if ($entry -isnot [hashtable] -or [string]$entry['Name'] -notmatch '^[A-Za-z0-9._-]+$' -or [string]$entry['Url'] -notmatch '^https://' -or
+            [string]$entry['Sha256'] -notmatch '^[0-9a-fA-F]{64}$') {
+            throw "lpac's pin has no complete $part (a file name, an https address, a SHA-256)."
+        }
+    }
+    $true
+}
+
+function Get-LpacFile {
+    # One of lpac's pinned files: from -Cache, downloaded there when missing, used only once its
+    # SHA-256 matches the pin's. A file that doesn't match is deleted. Returns its path.
+    param([hashtable] $Entry, [string] $Cache)
+
+    if (-not (Test-Path -LiteralPath $Cache)) {
+        [void](New-Item -ItemType Directory -Path $Cache)
+    }
+    $path = Join-Path -Path $Cache -ChildPath $Entry.Name
+    if (-not (Test-Path -LiteralPath $path)) {
+        Invoke-WebRequest -Uri $Entry.Url -OutFile $path -UseBasicParsing
+    }
+    $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+    if ($hash -ne $Entry.Sha256.ToUpperInvariant()) {
+        Remove-Item -LiteralPath $path -Force
+        throw "$($Entry.Name): its SHA-256 is $hash, not the pinned $($Entry.Sha256.ToUpperInvariant()). Deleted; nothing is built."
+    }
+    $path
+}
+
+function Get-LpacSourceNote {
+    # SOURCE.txt, beside lpac in the zip: what lpac is, its license, and where its source is. A
+    # pure function.
+    param([hashtable] $Pin)
+
+    @(
+        "lpac $($Pin.Version), by ESTKME TECHNOLOGY LIMITED: $($Pin.Page)"
+        ''
+        'This app runs lpac to manage the profiles of an eSIM. lpac is free software: its program is'
+        'under the GNU Affero General Public License v3.0 only (LICENSE-lpac), its eUICC library under'
+        'the GNU Lesser General Public License v2.1 (LICENSE-libeuicc); the other LICENSE files are'
+        'those of the libraries built into it and of libcurl.'
+        ''
+        "Its corresponding source is attached to this app's GitHub Release, beside this zip, as"
+        "$($Pin.Source.Name) (SHA-256 $($Pin.Source.Sha256.ToLowerInvariant()))."
+    ) -join "`r`n"
 }
 
 # Dot-sourced (the tests): the functions alone.
@@ -115,29 +190,76 @@ if (-not $notes) {
     throw "CHANGELOG.md has no section for $version$(if (-not $Tag) { ' and no Unreleased one' }), or it is empty."
 }
 
+$pin = Import-PowerShellDataFile -LiteralPath $LpacPin
+[void](Test-LpacPin -Pin $pin)
+$lpacBuild = Get-LpacFile -Entry $pin.Build -Cache $LpacCache
+$lpacSource = Get-LpacFile -Entry $pin.Source -Cache $LpacCache
+
 if (-not (Test-Path -LiteralPath $OutputFolder)) {
     [void](New-Item -ItemType Directory -Path $OutputFolder)
 }
 $zipPath = Join-Path -Path $OutputFolder -ChildPath "fibocom-fm350-gl-windows-gui-$version.zip"
 $notesPath = Join-Path -Path $OutputFolder -ChildPath 'release-notes.md'
+$sourcePath = Join-Path -Path $OutputFolder -ChildPath $pin.Source.Name
 if (Test-Path -LiteralPath $zipPath) {
     Remove-Item -LiteralPath $zipPath -Force
 }
 $files = @(Get-ReleaseFile -Root $Root)
+$count = $files.Count
+$built = $false
 $zip = [System.IO.Compression.ZipFile]::Open($zipPath, [System.IO.Compression.ZipArchiveMode]::Create)
 try {
     foreach ($file in $files) {
         [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.Path, $file.Entry, [System.IO.Compression.CompressionLevel]::Optimal)
     }
+    # lpac's build, its files as published, in the 'lpac' folder; a nested or climbing name is refused.
+    $build = [System.IO.Compression.ZipFile]::OpenRead($lpacBuild)
+    try {
+        foreach ($entry in @($build.Entries | Where-Object { $_.Name })) {
+            if ($entry.FullName -ne $entry.Name -or $entry.Name -match '[\\/]|^\.\.?$') {
+                throw "$($pin.Build.Name): an entry in a folder, $($entry.FullName); only a flat build is packaged."
+            }
+            $target = $zip.CreateEntry("$script:LpacFolder/$($entry.Name)", [System.IO.Compression.CompressionLevel]::Optimal)
+            $in = $entry.Open()
+            $out = $target.Open()
+            try {
+                $in.CopyTo($out)
+            }
+            finally {
+                $out.Dispose()
+                $in.Dispose()
+            }
+            $count++
+        }
+    }
+    finally {
+        $build.Dispose()
+    }
+    $note = $zip.CreateEntry("$script:LpacFolder/SOURCE.txt", [System.IO.Compression.CompressionLevel]::Optimal)
+    $writer = [System.IO.StreamWriter]::new($note.Open(), [System.Text.UTF8Encoding]::new($false))
+    try {
+        $writer.Write((Get-LpacSourceNote -Pin $pin))
+    }
+    finally {
+        $writer.Dispose()
+    }
+    $count++
+    $built = $true
 }
 finally {
     $zip.Dispose()
+    # A zip left half built is no package.
+    if (-not $built) {
+        Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
+    }
 }
+Copy-Item -LiteralPath $lpacSource -Destination $sourcePath -Force
 Set-Content -LiteralPath $notesPath -Value $notes -Encoding utf8NoBOM
 
 [pscustomobject]@{
-    Version = $version
-    Zip     = $zipPath
-    Notes   = $notesPath
-    Files   = $files.Count
+    Version    = $version
+    Zip        = $zipPath
+    Notes      = $notesPath
+    Files      = $count
+    LpacSource = $sourcePath
 }

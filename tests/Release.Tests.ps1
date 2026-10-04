@@ -1,11 +1,45 @@
 # The release package (tools/New-ReleasePackage.ps1): the version a tag may release, the
-# CHANGELOG section that becomes the notes, and the zip itself - built into TestDrive from this
-# repository, extracted, and found to be a package the installer takes.
+# CHANGELOG section that becomes the notes, lpac's pin, and the zip itself - built into TestDrive
+# from this repository with a stand-in for lpac's release (no download), extracted, and found to
+# be a package the installer takes.
 
 BeforeAll {
     $script:root = (Resolve-Path "$PSScriptRoot/..").Path
     $script:builder = Join-Path $script:root 'tools/New-ReleasePackage.ps1'
     . $script:builder
+
+    # A stand-in for lpac's release: a flat build zip and a source archive in -Cache, and a pin
+    # that names them with their SHA-256 (or -Wrong ones) and addresses never fetched.
+    function Get-TestLpac {
+        param([string] $Folder, [switch] $Wrong, [switch] $Nested)
+        $cache = Join-Path $Folder 'cache'
+        New-Item -ItemType Directory -Path $cache -Force | Out-Null
+        $staging = Join-Path $Folder 'build'
+        New-Item -ItemType Directory -Path $staging -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $staging 'lpac.exe') -Value 'not a program'
+        Set-Content -LiteralPath (Join-Path $staging 'LICENSE-lpac') -Value 'AGPL-3.0'
+        if ($Nested) {
+            New-Item -ItemType Directory -Path (Join-Path $staging 'sub') -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $staging 'sub/x.dll') -Value 'x'
+        }
+        $build = Join-Path $cache 'lpac-test.zip'
+        Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $build -Force
+        $source = Join-Path $cache 'lpac-9.9.9-source.tar.gz'
+        Set-Content -LiteralPath $source -Value 'source'
+        $buildHash = (Get-FileHash -LiteralPath $build -Algorithm SHA256).Hash
+        $sourceHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+        if ($Wrong) {
+            $buildHash = '0' * 64
+            $sourceHash = '0' * 64
+        }
+        $pin = Join-Path $Folder 'Lpac.psd1'
+        Set-Content -LiteralPath $pin -Value @(
+            "@{ Version = '9.9.9'; Page = 'https://example.invalid/lpac'"
+            "    Build = @{ Name = 'lpac-test.zip'; Url = 'https://example.invalid/build.zip'; Sha256 = '$buildHash' }"
+            "    Source = @{ Name = 'lpac-9.9.9-source.tar.gz'; Url = 'https://example.invalid/source.tar.gz'; Sha256 = '$sourceHash' } }"
+        )
+        [pscustomobject]@{ Pin = $pin; Cache = $cache; Build = $build; Source = $source }
+    }
 
     $script:changelog = @'
 # Changelog
@@ -87,9 +121,10 @@ Describe 'Get-ChangelogSection' {
 }
 
 Describe 'New-ReleasePackage.ps1' {
-    It 'builds the zip from this repository: the package at its top, nothing else' {
+    It 'builds the zip from this repository: the package at its top, lpac in its folder, nothing else' {
         $out = Join-Path $TestDrive 'dist'
-        $result = & $script:builder -OutputFolder $out
+        $lpac = Get-TestLpac -Folder (Join-Path $TestDrive 'lpac')
+        $result = & $script:builder -OutputFolder $out -LpacPin $lpac.Pin -LpacCache $lpac.Cache
         $result.Zip | Should -Exist
         $result.Notes | Should -Exist
         Split-Path -Leaf $result.Zip | Should -Be "fibocom-fm350-gl-windows-gui-$($result.Version).zip"
@@ -107,6 +142,9 @@ Describe 'New-ReleasePackage.ps1' {
         }
         $entries -match '\\' | Should -BeNullOrEmpty -Because 'zip entries use forward slashes'
         $entries -match '^(tests|docs|tools|captures|\.github)/' | Should -BeNullOrEmpty
+        @($entries -like 'lpac/*') | Should -Be @('lpac/LICENSE-lpac', 'lpac/lpac.exe', 'lpac/SOURCE.txt')
+        $result.LpacSource | Should -Exist
+        Split-Path -Leaf $result.LpacSource | Should -Be 'lpac-9.9.9-source.tar.gz'
 
         $extracted = Join-Path $TestDrive 'extracted'
         Expand-Archive -LiteralPath $result.Zip -DestinationPath $extracted
@@ -122,7 +160,59 @@ Describe 'New-ReleasePackage.ps1' {
 
     It 'refuses a tag that doesn''t name the version, and builds nothing' {
         $out = Join-Path $TestDrive 'refused'
-        { & $script:builder -Tag 'v0.0.1' -OutputFolder $out } | Should -Throw '*doesn''t match*'
+        $lpac = Get-TestLpac -Folder (Join-Path $TestDrive 'lpac-refused')
+        { & $script:builder -Tag 'v0.0.1' -OutputFolder $out -LpacPin $lpac.Pin -LpacCache $lpac.Cache } | Should -Throw '*doesn''t match*'
         Test-Path $out | Should -BeFalse
+    }
+
+    It 'refuses lpac''s files when a SHA-256 doesn''t match: deleted, nothing built' {
+        $out = Join-Path $TestDrive 'wrong'
+        $lpac = Get-TestLpac -Folder (Join-Path $TestDrive 'lpac-wrong') -Wrong
+        { & $script:builder -OutputFolder $out -LpacPin $lpac.Pin -LpacCache $lpac.Cache } | Should -Throw '*SHA-256*'
+        $lpac.Build | Should -Not -Exist
+        Test-Path $out | Should -BeFalse
+    }
+
+    It 'refuses a build with a folder in it, and leaves no zip' {
+        $out = Join-Path $TestDrive 'nested'
+        $lpac = Get-TestLpac -Folder (Join-Path $TestDrive 'lpac-nested') -Nested
+        { & $script:builder -OutputFolder $out -LpacPin $lpac.Pin -LpacCache $lpac.Cache } | Should -Throw '*flat build*'
+        @(Get-ChildItem -LiteralPath $out -Filter '*.zip') | Should -BeNullOrEmpty
+    }
+
+    It 'never packages a lpac folder put in src' {
+        $fake = Join-Path $TestDrive 'fake-root'
+        foreach ($file in 'src/App/a.ps1', 'src/lpac/lpac.exe', 'src/lpacx/b.txt', 'LICENSE', 'README.md', 'CHANGELOG.md') {
+            New-Item -ItemType File -Path (Join-Path $fake $file) -Force | Out-Null
+        }
+        @(Get-ReleaseFile -Root $fake | ForEach-Object Entry) | Should -Be @('App/a.ps1', 'lpacx/b.txt', 'LICENSE', 'README.md', 'CHANGELOG.md')
+    }
+}
+
+Describe 'lpac''s pin' {
+    It 'pins this repository''s lpac: its official release, a version, two SHA-256' {
+        $pin = Import-PowerShellDataFile -LiteralPath (Join-Path $script:root 'tools/Lpac.psd1')
+        Test-LpacPin -Pin $pin | Should -BeTrue
+        $pin.Build.Url | Should -BeLike "https://github.com/estkme-group/lpac/releases/download/v$($pin.Version)/*"
+        $pin.Source.Url | Should -Be "https://github.com/estkme-group/lpac/archive/refs/tags/v$($pin.Version).tar.gz"
+        $pin.Page | Should -Be "https://github.com/estkme-group/lpac/releases/tag/v$($pin.Version)"
+    }
+
+    It 'refuses a pin without <Name>' -ForEach @(
+        @{ Name = 'a version'; Pin = @{ Version = ''; Build = @{ Name = 'a.zip'; Url = 'https://x/a'; Sha256 = ('a' * 64) }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
+        @{ Name = 'a SHA-256'; Pin = @{ Version = '1.0.0'; Build = @{ Name = 'a.zip'; Url = 'https://x/a'; Sha256 = 'abc' }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
+        @{ Name = 'an https address'; Pin = @{ Version = '1.0.0'; Build = @{ Name = 'a.zip'; Url = 'http://x/a'; Sha256 = ('a' * 64) }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
+        @{ Name = 'its source'; Pin = @{ Version = '1.0.0'; Build = @{ Name = 'a.zip'; Url = 'https://x/a'; Sha256 = ('a' * 64) } } }
+        @{ Name = 'a plain file name'; Pin = @{ Version = '1.0.0'; Build = @{ Name = '../a.zip'; Url = 'https://x/a'; Sha256 = ('a' * 64) }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
+    ) {
+        { Test-LpacPin -Pin $Pin } | Should -Throw "*lpac's pin*"
+    }
+
+    It 'says where lpac''s source is, beside it' {
+        $note = Get-LpacSourceNote -Pin @{ Version = '2.3.0'; Page = 'https://example.invalid/p'; Source = @{ Name = 'lpac-2.3.0-source.tar.gz'; Sha256 = ('A' * 64) } }
+        $note | Should -Match 'lpac 2\.3\.0'
+        $note | Should -Match 'Affero'
+        $note | Should -Match 'lpac-2\.3\.0-source\.tar\.gz'
+        $note | Should -Match ('a' * 64)
     }
 }

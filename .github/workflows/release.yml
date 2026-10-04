@@ -24,18 +24,21 @@ jobs:
       # Pinned to a commit: a tag can be moved (docs/AT-COMMANDS.md section 11.3).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Fails when the tag doesn't name the modules' version, or the CHANGELOG has no section
-      # for it.
+      # Fails when the tag doesn't name the modules' version, the CHANGELOG has no section for
+      # it, or a file of lpac's doesn't match its pinned SHA-256 (tools/Lpac.psd1).
       - name: Build the package
         shell: pwsh
-        run: ./tools/New-ReleasePackage.ps1 -Tag $env:GITHUB_REF_NAME -OutputFolder dist
+        run: |
+          $package = ./tools/New-ReleasePackage.ps1 -Tag $env:GITHUB_REF_NAME -OutputFolder dist
+          "LPAC_SOURCE=$($package.LpacSource)" >> $env:GITHUB_ENV
 
-      # gh comes with GitHub's runners; the job's own token, nothing stored.
+      # gh comes with GitHub's runners; the job's own token, nothing stored. lpac's source goes
+      # beside the zip: the corresponding source its license asks for.
       - name: Publish the release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = $env:GITHUB_REF_NAME
-          gh release create $tag "dist/fibocom-fm350-gl-windows-gui-$($tag.Substring(1)).zip" --title $tag --notes-file dist/release-notes.md --verify-tag
+          gh release create $tag "dist/fibocom-fm350-gl-windows-gui-$($tag.Substring(1)).zip" $env:LPAC_SOURCE --title $tag --notes-file dist/release-notes.md --verify-tag
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
