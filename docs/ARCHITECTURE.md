@@ -942,36 +942,41 @@ What a prepaid or capped SIM needs day to day (facts: `AT-COMMANDS.md` §9).
   send in surrogate pairs come out whole, and a pair is never split between two parts. Sending:
   GSM 7-bit when the alphabet holds every character, else UCS2; the SIM's service centre; no
   validity period (the centre's own); parts joined by a one-octet reference.
-- **The modem stores, then announces.** On every connect the worker sets `+CNMI` so that a new
-  message is saved on the modem and announced with `+CMTI: <storage>,<index>`. Direct delivery
+- **The modem stores, then announces.** Once the SIM is ready on a newly opened port, the worker
+  sets `AT+CNMI=2,1,0,0,0`, so that a new message is saved on the modem and announced with
+  `+CMTI: <storage>,<index>` — on the MD AT port, data up or not (`AT-COMMANDS.md` §9). Notices start
+  off (`0,0,0,0,0`), and a message that comes while they are off is stored silently, so the inbox
+  is read whole when the worker sets them, not only on a notice. The app selects no storage: the
+  FM350 offers `"SM"` alone to `+CPMS=`, which its notices name already. Direct delivery
   (`+CMT`) is never used: it hands the message to the port without storing it, so one arriving
   while the app is closed or its worker is restarting would be lost, and it must be acknowledged
   within 15 s or the modem sends it again.
-- **The AT channel routes the notices.** `+CMTI` and `+CUSD` are unsolicited result codes: they can
-  arrive at any time, in the middle of another command's response too (M1 separates them). The
-  worker reads the new message and publishes it in the next snapshot; the UI shows a tray
-  notification.
-- **Messages stay on the modem.** The inbox is read from the modem's storage at start and on each
-  notice; delete acts there. The app keeps no copy on disk. A full storage is shown in the UI,
-  since new messages can't be stored.
+- **The AT channel routes the notices.** `+CMTI` is an unsolicited result code: it can arrive at
+  any time, in the middle of another command's response too (M1 separates them). The worker reads
+  the new message and publishes it in the next snapshot; the UI shows a tray notification.
+- **Messages stay on the modem.** The inbox is read from the modem's storage when the notices are
+  set and on each notice; delete acts there. The app keeps no copy on disk. A full storage is
+  shown in the UI, since new messages can't be stored.
+- **Sending, part by part.** Each part is one `AT+CMGS`: its length, the modem's `> ` prompt, the
+  PDU and Ctrl-Z (`Send-AtMessagePdu`). The modem picks each part's message reference itself, so
+  the app sends `0`. A part refused or unanswered ends the message there, and the UI says how many
+  parts went out; the app never sends a part again by itself — an unanswered part may have gone
+  out, and each part costs. Sent messages are not stored on the modem.
 - **What is new is remembered by the message, not its place** (decided 2026-10-04). The modem marks
   a message read as soon as it is listed (`AT-COMMANDS.md` §9), so a message that comes in unread
   is noted at once and stays new until the user opens it, across app restarts and a modem that
-  comes back under another storage index: each of its parts by a fingerprint (SHA-256 of its type,
-  sender, time stamp, long-message reference and text), kept in one file encrypted with DPAPI for
+  comes back under another storage index: each of its parts by a fingerprint (SHA-256 of the part's PDU
+  as stored, which holds the sender, the time stamp and the text), kept in one file encrypted with DPAPI for
   the user — no text, no number. A fingerprint leaves when its message is opened or deleted, or is
   no longer in the storage: the file holds at most what the storage can, and is rewritten whole.
 - **The tray says who wrote** (decided 2026-10-04): a notification with the sender alone; the text
   only in the window.
 
 ### USSD
-One session at a time. The request is `AT+CUSD`; the reply arrives later as a `+CUSD` code, often
-after the command's `OK`, and may ask for an answer (a menu). The worker waits for it up to 30 s
-(decided 2026-10-04) — then says there was no answer and ends the session with `AT+CUSD=2` —,
-decodes it by its data coding scheme (pure function), and the UI shows it with
-an answer box when the network expects one. **Best effort:** whether USSD works over LTE/NR
-depends on the operator's network; if the FM350 can't do it, the feature is dropped, not
-emulated.
+**Not built.** USSD was planned as best effort — dropped, not emulated, if the FM350 couldn't do
+it — and on the device it can't: on LTE the modem accepts `AT+CUSD` and no reply ever comes, with
+two SIMs and either way of writing the code (`AT-COMMANDS.md` §9). The facts about `+CUSD` and
+USSD's coding stay in §9 for a network or a firmware that answers.
 
 ### Data usage
 - **Counted on the Windows side.** The modem has no traffic counter (`AT-COMMANDS.md` §10); the
@@ -1046,8 +1051,9 @@ src/
     AtText.ps1           framing and classifying the lines on the AT port (M1, pure)
     Timeouts.ps1         each command's documented worst case (M2, pure)
     Transport.ps1        the serial transport, and the shape every transport has (M1)
-    SimulatedModem.ps1   the simulated modem: fixtures + scripted faults; fixture import (M1); its network mode (M5)
-    AtChannel.ps1        the AT channel: commands, answers, unsolicited codes (M1)
+    SimulatedModem.ps1   the simulated modem: fixtures + scripted faults; fixture import (M1); its network mode (M5);
+                         its message storage, notices and sending (M8)
+    AtChannel.ps1        the AT channel: commands, answers, unsolicited codes (M1); sending a PDU (M8)
     Measurements.ps1     measurement index -> dBm/dB (M1, pure)
     Parsers.ps1          identity, SIM, registration, operator, signal, temperature (M1, pure)
     Cells.ps1            +GTCCINFO cells and +GTCAINFO carrier aggregation (M1, pure)
@@ -1057,7 +1063,7 @@ src/
     Usage.ps1            data usage: the adapter's counters accumulated, the cycle, the quota (M8,
                          pure), their reading and file
     Sms.ps1              SMS: the PDU codec, long messages joined and split, the storage's
-                         answers (M8, pure)
+                         answers, what is new (M8, pure); the file of what is new
     Sim.ps1              SIM PIN: states, the decision, the encrypted store, removing it (M2)
     Fcc.ps1              FCC lock: reads, diagnosis, unlock (M2)
     Modes.ps1            network mode and bands: reads, what to write (pure), a choice on trial (M5)

@@ -144,17 +144,17 @@ verifies it and installs it (design: ARCHITECTURE → *Drivers*).
 <a id="m8"></a>
 ## M8 — SMS, USSD & data usage
 
-What a prepaid or capped SIM needs day to day: the operator's messages, balance codes, and how much
-data is left (design: ARCHITECTURE → *SMS, USSD and data usage*; facts: `AT-COMMANDS.md` §9–§10).
+What a prepaid or capped SIM needs day to day: the operator's messages and how much data is left;
+balance codes by USSD were tried and left out (design: ARCHITECTURE → *SMS, USSD and data usage*; facts: `AT-COMMANDS.md` §9–§10).
 
-- [ ] Device session: answer the open questions in `AT-COMMANDS.md` §9 — storages, which port gets new-message notices, USSD on LTE / NSA / SA with a real operator.
+- [x] Device session: answer the open questions in `AT-COMMANDS.md` §9 — storages, which port gets new-message notices, USSD on LTE / NSA / SA with a real operator. *Answered on LTE: the notices come on the MD AT port, data up or not; sending works; USSD gets no reply. Messages on NSA and SA not seen, written down as open in §9.*
 - [x] SMS codec as pure functions written from 3GPP TS 23.040 and 23.038, with a matrix of tests: PDU decoding, GSM 7-bit (with the extension table) and UCS-2, long messages reassembled from their parts; PDU encoding for sending, splitting long messages (`Sms.ps1`; facts in `AT-COMMANDS.md` §9, *SMS PDUs*).
 - [ ] Receive: new-message notices from the modem, a tray notification, an inbox in the main window; read and delete on the modem's storage. No copy of the messages on disk.
 - [ ] Send a message.
-- [ ] USSD: send a code, show the reply, answer a menu, cancel. **Best effort**: if the device session shows that USSD does not work on the FM350 over LTE/NR, it leaves this milestone and the finding is recorded in `AT-COMMANDS.md`.
+- [x] ~~USSD: send a code, show the reply, answer a menu, cancel.~~ **Left out, as the best-effort rule said**: on the device the modem accepts `AT+CUSD` and never replies, on LTE with two SIMs and either string format (`AT-COMMANDS.md` §9, *USSD*).
 - [ ] Data usage: the modem adapter's byte counters, sampled by the worker, accumulated across counter resets (pure function) and persisted; today and the current billing cycle (start day in settings); an optional quota with a tray warning (at 80% and 100%, once per cycle; decided 2026-10-04). Never disconnects. *Counting, the cycle, the quota and the file are done (`Usage.ps1`, in the worker); the tray warning comes with the UI.*
-- [ ] Phone numbers, message text and USSD replies never logged.
-- [ ] UI: messages and USSD in the main window; usage in the window and the tooltip.
+- [ ] Phone numbers and message text never logged.
+- [ ] UI: messages in the main window; usage in the window and the tooltip.
 
 <a id="m9"></a>
 ## M9 — eSIM

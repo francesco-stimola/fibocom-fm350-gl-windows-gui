@@ -4,6 +4,37 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-04 — M8: messages on the device, and USSD left out
+
+M8's device session, on LTE, with the app's codec and sending code (`AT-COMMANDS.md` §9):
+- **Notices come on the MD AT port**, data up or not: with `AT+CNMI=2,1,0,0,0` each part is stored
+  and announced as `+CMTI: "SM", <index>`. Notices start off, and a message that comes then is
+  stored silently, so the worker reads the whole inbox when it sets them, not only on a notice.
+- **The app selects no storage**: `+CPMS=` takes `"SM"` alone while `+CPMS?` reports `"MT"`, and
+  the notices name `"SM"` already. Nothing to set, nothing to put back.
+- **The modem picks each message reference itself**, one per attempt, whatever the PDU says; the
+  app sends `0` and never counts references. Sent messages are not stored.
+- **A part can be refused for a while** (`+CME ERROR: 226` after 12.8 s; the same parts went through
+  two minutes later). A part refused or unanswered ends the message, and the app never resends by
+  itself: an unanswered part may have gone out, and each part costs.
+- **USSD is left out**, as the best-effort rule said: `AT+CUSD` answers `OK` and no reply ever comes,
+  with two SIMs and the code written either way. Registered for SMS only on the circuit-switched
+  side, the modem most likely has no fallback for it, and no USSD over IMS was offered. The `+CUSD`
+  facts stay in §9; the 30 s wait decided for a reply is moot.
+
+Built for the inbox and the sending, ahead of the worker:
+- `Send-AtMessagePdu` — `AT+CMGS`, the `> ` prompt (no line end after it), the PDU and Ctrl-Z; on a
+  missing prompt or a timeout it cancels with ESC and clears what the modem echoed, so the next
+  command's answer is not mixed with the PDU.
+- **What is new**: a part's fingerprint is the SHA-256 of its PDU as stored, which holds the sender,
+  the time stamp and the text; `Update-SmsUnread` (pure) keeps the unread ones still stored and not
+  opened, in a DPAPI file that holds no text and no number.
+- **The simulated modem stores messages**: `+CPMS`, `+CMGL`, `+CMGR`, `+CMGD`, `+CNMI` notices,
+  arrivals on a schedule, and sending with the prompt, with an error or with no answer, for the
+  worker's tests.
+- **Device fixtures** of `+CMGL`, `+CMGR` and `+CNMI` answers, the numbers and time stamps
+  rewritten, the test messages' texts kept: the codec decodes them exactly.
+
 ## 2026-10-04 — M8: data usage counted
 
 The worker reads the modem adapter's byte counters every 30 s, port open or not, and keeps
