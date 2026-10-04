@@ -726,8 +726,8 @@ Describe 'The Messages tab' {
         }
 
         function Get-TestMessageList {
-            param([object[]] $Item, [int] $Used = 1, [int] $Total = 70)
-            [pscustomobject]@{ Items = [object[]]$Item; New = @($Item | Where-Object New).Count; Used = $Used; Total = $Total; Full = $Used -ge $Total }
+            param([object[]] $Item, [int] $Used = 1, [int] $Total = 70, [int] $Hidden = 0)
+            [pscustomobject]@{ Items = [object[]]$Item; New = @($Item | Where-Object New).Count; Hidden = $Hidden; Used = $Used; Total = $Total; Full = $Used -ge $Total }
         }
     }
 
@@ -771,6 +771,18 @@ Describe 'The Messages tab' {
         $view.FromText | Should -BeNullOrEmpty
     }
 
+    It 'says how many messages of another eSIM profile it doesn''t show, and no empty SIM for them' {
+        $esim = $script:online.Esim | Select-Object -Property *
+        $esim.Slot = 1
+        $esim.SimType = 'Esim'
+        $shown = Get-MessagesView -Snapshot (Copy-Snapshot $script:online @{ Esim = $esim; Messages = (Get-TestMessageList -Item @(Get-TestMessage) -Used 3 -Hidden 2) })
+        $shown.StateText | Should -BeLike '* 3 of 70 places used on the SIM. Messages that came in on another eSIM profile, shown when it is in use: 2.'
+        @($shown.Items).Count | Should -Be 1
+        $none = Get-MessagesView -Snapshot (Copy-Snapshot $script:online @{ Esim = $esim; Messages = (Get-TestMessageList -Item @() -Used 2 -Hidden 2) })
+        $none.StateText | Should -BeLike '* 2 of 70 places used on the SIM. Messages that came in on another eSIM profile, shown when it is in use: 2.'
+        $none.StateText | Should -Not -Match 'No messages'
+    }
+
     It 'says an empty SIM, and a full one' {
         (Get-MessagesView -Snapshot (Copy-Snapshot $script:online @{ Messages = (Get-TestMessageList -Item @() -Used 0) })).StateText | Should -Be 'SIM in use: slot 1, a physical SIM. 0 of 70 places used on the SIM. No messages on the SIM.'
         $full = Get-MessagesView -Snapshot (Copy-Snapshot $script:online @{ Messages = (Get-TestMessageList -Item @(Get-TestMessage) -Used 70) })
@@ -785,7 +797,13 @@ Describe 'The Messages tab' {
         @{ Name = 'parts missing'; Change = @{ Text = "one $([char]0x2026)"; Count = 3; Missing = [int[]]@(2, 3); Complete = $false }; Text = "one $([char]0x2026)"; Note = 'Parts not received (yet): 2, 3.' }
         @{ Name = 'a national language table'; Change = @{ NationalLanguage = $true }; Text = 'hello'; Note = 'It uses a national language table the app doesn''t have: some characters may be wrong.' }
         @{ Name = 'silent, its text never shown'; Change = @{ Silent = $true }; Text = 'A silent message: the network asked that it never be shown.'; Note = 'It takes a place on the SIM until it is deleted.' }
-        @{ Name = 'silent, its text''s language table not mentioned'; Change = @{ Silent = $true; NationalLanguage = $true }; Text = 'A silent message: the network asked that it never be shown.'; Note = 'It takes a place on the SIM until it is deleted.' }    ) {
+        @{ Name = 'silent, its text''s language table not mentioned'; Change = @{ Silent = $true; NationalLanguage = $true }; Text = 'A silent message: the network asked that it never be shown.'; Note = 'It takes a place on the SIM until it is deleted.' }
+        @{ Name = 'come in on the SIM in use'; Change = @{ Owner = 'Own'; OwnerKind = $null; OwnerName = $null }; Text = 'hello'; Note = $null }
+        @{ Name = 'come in on an eSIM profile not in use, named'; Change = @{ Owner = 'Other'; OwnerKind = 'Esim'; OwnerName = 'Travel' }; Text = 'hello'; Note = 'It came in on the eSIM profile Travel, not in use now.' }
+        @{ Name = 'come in on an eSIM profile not in use, with no name'; Change = @{ Owner = 'Other'; OwnerKind = 'Esim'; OwnerName = $null }; Text = 'hello'; Note = 'It came in on another eSIM profile, not in use now.' }
+        @{ Name = 'come in on another physical SIM'; Change = @{ Owner = 'Other'; OwnerKind = 'Usim'; OwnerName = $null }; Text = 'hello'; Note = 'It came in on another SIM, not in use now.' }
+        @{ Name = 'come in on a SIM of a kind not known, parts missing'; Change = @{ Owner = 'Other'; OwnerKind = ''; OwnerName = $null; Count = 2; Missing = [int[]]@(2); Complete = $false }; Text = 'hello'; Note = 'It came in on another SIM, not in use now. Parts not received (yet): 2.' }
+    ) {
         $view = Get-MessagesView -Snapshot (Copy-Snapshot $script:online @{ Messages = (Get-TestMessageList -Item @(Get-TestMessage -Change $Change)) })
         $view.Items[0].Text | Should -Be $Text
         $view.Items[0].Note | Should -Be $Note

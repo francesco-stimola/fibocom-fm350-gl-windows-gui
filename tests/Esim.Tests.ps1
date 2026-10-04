@@ -1095,6 +1095,68 @@ Describe 'The worker and the eSIM' {
         }
     }
 
+    Context 'the SIM a message came in on' {
+        BeforeAll {
+            # Passes until the SIM in use is identified again and its messages read, after a switch.
+            function Invoke-EsimMessagePass {
+                for ($i = 0; $i -lt 3; $i++) {
+                    $script:worker.PassForced = $true
+                    Invoke-ModemWorkerCycle -Worker $script:worker
+                }
+                $script:link['Snapshot'].Messages
+            }
+
+            # From +10000000000, 'hello'.
+            $script:hello = '07910100000000F0040B910100000000F0000062014021436580' + '05E8329BFD06'
+            $script:travel = 'A0000005591010FFFFFFFF8900001000'
+            $script:lab = 'A0000005591010FFFFFFFF8900002000'
+        }
+
+        It 'shows a profile only its own messages: another profile''s hidden, a deleted one''s with its name' {
+            $script:worker = Get-EsimWorker -Scenario Esim
+            $first = $script:link['Snapshot'].Messages
+            $own = @($first.Items | Where-Object Owner -EQ 'Own').Count
+            $own | Should -BeGreaterThan 0 -Because 'what came in unread came in on Travel, the profile in use'
+            $unknown = @($first.Items | Where-Object Owner -EQ 'Unknown').Count
+            # One more comes in on Travel just before it is disabled, its notice not read yet: the
+            # storage is read before the switch, so it is Travel's.
+            $script:device.Modem.Messaging.Deliver($script:hello, $script:device.Modem)
+            (Invoke-EsimCommand -Worker $script:worker -Kind DisableProfile -Parameter @{ Aid = $script:travel }).Result | Should -Be 'Done'
+            $script:link['Snapshot'].Messages | Should -BeNullOrEmpty -Because 'the messages shown were the SIM''s just disabled'
+            (Invoke-EsimCommand -Worker $script:worker -Kind EnableProfile -Parameter @{ Aid = $script:lab }).Result | Should -Be 'Done'
+
+            $lab = Invoke-EsimMessagePass
+            $lab.Hidden | Should -Be ($own + 1)
+            @($lab.Items).Count | Should -Be $unknown
+            @($lab.Items | Where-Object Owner -NE 'Unknown') | Should -BeNullOrEmpty
+            $lab.New | Should -Be 0 -Because 'another profile''s new messages are not this one''s'
+
+            (Invoke-EsimCommand -Worker $script:worker -Kind DeleteProfile -Parameter @{ Aid = $script:travel }).Result | Should -Be 'Done'
+            Invoke-ModemWorkerCycle -Worker $script:worker
+            $gone = $script:link['Snapshot'].Messages
+            $gone.Hidden | Should -Be 0
+            $other = @($gone.Items | Where-Object Owner -EQ 'Other')
+            $other.Count | Should -Be ($own + 1)
+            @($other | ForEach-Object OwnerKind | Sort-Object -Unique) | Should -Be 'Esim'
+            @($other | ForEach-Object OwnerName | Sort-Object -Unique) | Should -Be 'Travel'
+            Get-Content -LiteralPath (Join-Path $script:folder 'sms-sim.dat') -Raw | Should -Not -Match 'Travel' -Because 'the file is encrypted'
+        }
+
+        It 'keeps the name a profile had last for its messages, once it is deleted' {
+            $script:worker = Get-EsimWorker -Scenario Esim
+            (Invoke-EsimCommand -Worker $script:worker -Kind DisableProfile -Parameter @{ Aid = $script:travel }).Result | Should -Be 'Done'
+            (Invoke-EsimCommand -Worker $script:worker -Kind SetProfileNickname -Parameter @{ Aid = $script:travel; Nickname = 'Away' }).Result | Should -Be 'Done'
+            Invoke-ModemWorkerCycle -Worker $script:worker
+            (Invoke-EsimCommand -Worker $script:worker -Kind DeleteProfile -Parameter @{ Aid = $script:travel }).Result | Should -Be 'Done'
+            (Invoke-EsimCommand -Worker $script:worker -Kind EnableProfile -Parameter @{ Aid = $script:lab }).Result | Should -Be 'Done'
+
+            $lab = Invoke-EsimMessagePass
+            $other = @($lab.Items | Where-Object Owner -EQ 'Other')
+            $other.Count | Should -BeGreaterThan 0
+            @($other | ForEach-Object OwnerName | Sort-Object -Unique) | Should -Be 'Away'
+        }
+    }
+
     It 'publishes an eUICC with no profile as read, with none' {
         $script:worker = Get-EsimWorker -Scenario EsimEmpty
         (Invoke-EsimCommand -Worker $script:worker -Kind DeleteProfile -Parameter @{ Aid = 'A0000005591010FFFFFFFF8900002000' }).Result | Should -Be 'Done'

@@ -828,3 +828,88 @@ Describe 'What is new' {
         "$warnings" | Should -Match $Failure
     }
 }
+
+Describe 'Which SIM a message came in on' {
+    BeforeAll {
+        $script:one = Get-TestDeliverPdu -UserData '05E8329BFD06'
+        $script:two = Get-TestDeliverPdu -Time '62014021436680' -UserData '05E8329BFD06'
+        $script:f1 = Get-SmsFingerprint -Pdu $script:one
+        $script:f2 = Get-SmsFingerprint -Pdu $script:two
+        $script:simA = 'A' * 64
+        $script:simB = 'B' * 64
+    }
+
+    It '<Name>' -ForEach @(
+        @{ Name = 'gives a part listed unread the SIM in use'; Before = @(); Stored = @(@('one', 'Unread'), @('two', 'Read')); Sim = 'A'; Kind = 'Esim'; Profile = 'Travel'; After = @(, @('f1', 'A', 'Esim', 'Travel')) }
+        @{ Name = 'gives no SIM to a part already read when first seen'; Before = @(); Stored = @(, @('two', 'Read')); Sim = 'A'; Kind = 'Usim'; Profile = ''; After = @() }
+        @{ Name = 'keeps the SIM a part came in on, listed unread again with another in use'; Before = @(, @('f1', 'A', 'Esim', 'Travel')); Stored = @(, @('one', 'Unread')); Sim = 'B'; Kind = 'Esim'; Profile = 'Test'; After = @(, @('f1', 'A', 'Esim', 'Travel')) }
+        @{ Name = 'gives no SIM without the SIM in use'; Before = @(); Stored = @(, @('one', 'Unread')); Sim = ''; Kind = ''; Profile = ''; After = @() }
+        @{ Name = 'renames the SIM in use''s parts, not another''s'; Before = @(@('f1', 'A', 'Esim', 'Travel'), @('f2', 'B', 'Esim', 'Test')); Stored = @(); Sim = 'A'; Kind = 'Esim'; Profile = 'Away'; After = @(@('f1', 'A', 'Esim', 'Away'), @('f2', 'B', 'Esim', 'Test')) }
+        @{ Name = 'keeps a part''s name when the SIM in use has none'; Before = @(, @('f1', 'A', 'Esim', 'Travel')); Stored = @(); Sim = 'A'; Kind = 'Esim'; Profile = ''; After = @(, @('f1', 'A', 'Esim', 'Travel')) }
+        @{ Name = 'keeps the parts another slot''s storage holds'; Before = @(, @('f1', 'B', 'Usim', '')); Stored = @(, @('two', 'Unread')); Sim = 'A'; Kind = 'Esim'; Profile = 'Travel'; After = @(@('f1', 'B', 'Usim', ''), @('f2', 'A', 'Esim', 'Travel')) }
+        @{ Name = 'knows a part whatever the case of its fingerprint'; Before = @(, @('f1 lower', 'A', 'Esim', 'Travel')); Stored = @(, @('one', 'Unread')); Sim = 'B'; Kind = 'Esim'; Profile = 'Test'; After = @(, @('f1 lower', 'A', 'Esim', 'Travel')) }
+    ) {
+        $names = @{ one = $script:one; two = $script:two }
+        $prints = @{ f1 = $script:f1; f2 = $script:f2; 'f1 lower' = $script:f1.ToLowerInvariant() }
+        $sims = @{ A = $script:simA; B = $script:simB; '' = '' }
+        $owner = foreach ($item in $Before) { [pscustomobject]@{ Message = $prints[$item[0]]; Sim = $sims[$item[1]]; Kind = $item[2]; Name = $item[3] } }
+        $entries = foreach ($pair in $Stored) { [pscustomobject]@{ Pdu = $names[$pair[0]]; Status = $pair[1] } }
+
+        $result = @(Update-SmsOwner -Owner @($owner) -Entry @($entries) -Sim $sims[$Sim] -Kind $Kind -Name $Profile)
+
+        @($result | ForEach-Object { "$($_.Message)|$($_.Sim)|$($_.Kind)|$($_.Name)" }) |
+            Should -Be @($After | ForEach-Object { "$($prints[$_[0]])|$($sims[$_[1]])|$($_[2])|$($_[3])" })
+    }
+
+    It 'keeps the newest 1000 parts' {
+        $owner = foreach ($number in 1..1000) { [pscustomobject]@{ Message = $number.ToString('X64'); Sim = $script:simA; Kind = 'Usim'; Name = '' } }
+
+        $result = @(Update-SmsOwner -Owner @($owner) -Entry @([pscustomobject]@{ Pdu = $script:one; Status = 'Unread' }) -Sim $script:simB -Kind Esim -Name 'Travel')
+
+        $result.Count | Should -Be 1000
+        $result[0].Message | Should -Be (2).ToString('X64') -Because 'the oldest is forgotten first'
+        $result[-1].Message | Should -Be $script:f1
+    }
+
+    It 'reads back the parts and SIMs it wrote, encrypted for the user' {
+        $path = Join-Path $TestDrive 'sms-sim.dat'
+        $owner = @(
+            [pscustomobject]@{ Message = $script:f1; Sim = $script:simA; Kind = 'Esim'; Name = 'Travel' }
+            [pscustomobject]@{ Message = $script:f2; Sim = $script:simB; Kind = 'Usim'; Name = '' }
+        )
+        Export-SmsOwner -Owner $owner -Path $path -Confirm:$false
+
+        $read = @(Import-SmsOwner -Path $path)
+        @($read | ForEach-Object { "$($_.Message)|$($_.Sim)|$($_.Kind)|$($_.Name)" }) | Should -Be @("$($script:f1)|$($script:simA)|Esim|Travel", "$($script:f2)|$($script:simB)|Usim|")
+        Get-Content -LiteralPath $path -Raw | Should -Not -Match 'Travel' -Because 'the file is encrypted'
+        Export-SmsOwner -Owner @() -Path $path -Confirm:$false
+        @(Import-SmsOwner -Path $path).Count | Should -Be 0
+    }
+
+    It 'gives none without a file' {
+        $warnings = $null
+        @(Import-SmsOwner -Path (Join-Path $TestDrive 'none-sim.dat') -WarningVariable warnings -WarningAction SilentlyContinue).Count | Should -Be 0
+        $warnings.Count | Should -Be 0 -Because 'nothing remembered yet is nothing to warn about'
+    }
+
+    It 'gives none, with a warning, for <Name>' -ForEach @(
+        @{ Name = 'a file that is not encrypted'; Content = '[]'; Failure = 'CryptographicException' }
+        @{ Name = 'a list without SIMs'; Written = @(, @{ Message = 'F' * 64; Kind = 'Usim'; Name = '' }); Failure = 'FormatException' }
+        @{ Name = 'a part''s fingerprint too short'; Written = @(, @{ Message = 'AB'; Sim = 'F' * 64; Kind = 'Usim'; Name = '' }); Failure = 'FormatException' }
+        @{ Name = 'another kind of SIM'; Written = @(, @{ Message = 'F' * 64; Sim = 'F' * 64; Kind = 'Other'; Name = '' }); Failure = 'FormatException' }
+    ) {
+        $path = Join-Path $TestDrive 'bad-sim.dat'
+        if ($Written) {
+            Export-SmsOwner -Owner @($Written | ForEach-Object { [pscustomobject]$_ }) -Path $path -Confirm:$false
+        }
+        else {
+            Set-Content -LiteralPath $path -Value $Content
+        }
+        $warnings = $null
+        $result = @(Import-SmsOwner -Path $path -WarningVariable warnings -WarningAction SilentlyContinue)
+
+        $result.Count | Should -Be 0
+        $warnings.Count | Should -Be 1
+        "$warnings" | Should -Match $Failure
+    }
+}

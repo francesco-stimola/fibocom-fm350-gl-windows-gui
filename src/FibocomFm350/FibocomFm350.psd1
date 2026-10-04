@@ -62,6 +62,7 @@
         'Enable-ModemAdapter'
         'Export-AppSetting'
         'Export-DataUsage'
+        'Export-SmsOwner'
         'Export-SmsUnread'
         'Get-ApnPassword'
         'Get-AtCommandTimeout'
@@ -87,6 +88,7 @@
         'Import-AtFixture'
         'Import-DataUsage'
         'Import-SimSetting'
+        'Import-SmsOwner'
         'Import-SmsUnread'
         'Initialize-AtChannel'
         'Install-ModemDriver'
@@ -163,6 +165,7 @@
         'Test-ModemDataPath'
         'Uninstall-ModemDriver'
         'Update-DataUsage'
+        'Update-SmsOwner'
         'Update-SmsUnread'
         'Write-AppLog'
     )

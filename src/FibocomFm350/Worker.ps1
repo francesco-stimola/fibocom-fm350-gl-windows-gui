@@ -391,18 +391,48 @@ function Resolve-WorkerSchedule {
 
 function Get-WorkerMessageView {
     # The messages as a snapshot shows them, newest first: what Join-SmsPart gives, each with New
-    # (a part of it still new), but not where the storage keeps them; and how full the storage
-    # is. $null while they were not read: no port, the SIM not ready, or observe only.
+    # (a part of it still new) and the SIM it came in on, but not where the storage keeps them;
+    # and how full the storage is. $null while they were not read: no port, the SIM not ready, or
+    # observe only.
+    # The SIM a message came in on is the one remembered for its parts (Update-WorkerSmsOwner).
+    # On the eUICC's slot the storage holds other profiles' messages too (AT-COMMANDS section 9):
+    # one that came in on another profile still on the eUICC is left out - counted in Hidden,
+    # shown when that profile is in use -; one that came in on a SIM not there now, or not known
+    # to be there, shows with Owner 'Other', the kind of that SIM and its name (OwnerKind,
+    # OwnerName). The others show as they are: Owner 'Own', or 'Unknown' - its SIM not known, or
+    # the SIM in use not identified.
     param([hashtable] $Worker)
 
     if ($null -eq $Worker.Messages) {
         return $null
     }
     $unread = [System.Collections.Generic.HashSet[string]]::new([string[]]@($Worker.SmsUnread), [System.StringComparer]::OrdinalIgnoreCase)
+    $owners = @{}
+    foreach ($entry in @($Worker.SmsOwners | Where-Object { $_ })) {
+        $owners[[string]$entry.Message] = $entry
+    }
+    $current = if ($Worker.Sim) { [string]$Worker.Sim.Fingerprint } else { '' }
+    $present = $null
+    if ($null -ne $Worker.EsimProfiles) {
+        $present = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($each in @($Worker.EsimProfiles | Where-Object { $_ -and $_.Iccid })) {
+            [void]$present.Add((Get-SimSettingFingerprint -Iccid $each.Iccid))
+        }
+    }
+    $hidden = 0
     $items = foreach ($message in $Worker.Messages) {
+        $owner = @($message.Fingerprints | ForEach-Object { $owners[[string]$_] } | Where-Object { $_ }) | Select-Object -First 1
+        $from = if (-not $owner -or -not $current) { 'Unknown' } elseif ($owner.Sim -eq $current) { 'Own' } elseif ($null -ne $present -and $present.Contains($owner.Sim)) { 'Hidden' } else { 'Other' }
+        if ($from -eq 'Hidden') {
+            $hidden++
+            continue
+        }
         [pscustomobject]@{
             Fingerprints     = [string[]]$message.Fingerprints
             New              = @($message.Fingerprints | Where-Object { $unread.Contains($_) }).Count -gt 0
+            Owner            = $from
+            OwnerKind        = if ($from -eq 'Other') { [string]$owner.Kind } else { $null }
+            OwnerName        = if ($from -eq 'Other' -and $owner.Name) { [string]$owner.Name } else { $null }
             Address          = $message.Address
             AddressType      = $message.AddressType
             Time             = $message.Time
@@ -421,11 +451,12 @@ function Get-WorkerMessageView {
     $items = @($items)
     $storage = $Worker.MessageStorage
     [pscustomobject]@{
-        Items = [object[]]$items
-        New   = @($items | Where-Object New).Count
-        Used  = if ($storage) { $storage.Receive.Used } else { $null }
-        Total = if ($storage) { $storage.Receive.Total } else { $null }
-        Full  = [bool]($storage -and $storage.Receive.Used -ge $storage.Receive.Total)
+        Items  = [object[]]$items
+        New    = @($items | Where-Object New).Count
+        Hidden = $hidden
+        Used   = if ($storage) { $storage.Receive.Used } else { $null }
+        Total  = if ($storage) { $storage.Receive.Total } else { $null }
+        Full   = [bool]($storage -and $storage.Receive.Used -ge $storage.Receive.Total)
     }
 }
 
@@ -459,7 +490,8 @@ function New-ModemSnapshot {
         Addresses, LookedUp, Via, Next, Failure); Usage (Measure-DataUsage's: today, the cycle,
         the quota) and UsageNotice (the last quota threshold said: Threshold, Id - one more for
         each, across worker restarts -, Time); Messages (Get-WorkerMessageView: the messages on
-        the modem, newest first, and how full its storage is; $null while not read),
+        the modem, newest first, with the SIM each came in on - another eSIM profile's left out
+        and counted -, and how full its storage is; $null while not read),
         MessageNotice (the last new messages announced: Sender - the newest one's -, Count, Id -
         one more each time, across worker restarts -, Time) and MessageOperation ('Sending'
         while a message goes out); Esim (Get-WorkerEsimView: the SIM slot in use and its kind,
@@ -641,6 +673,7 @@ function New-ModemWorker {
             DriverStaging    = Join-Path -Path $DataFolder -ChildPath 'driver-staging'
             Usage            = Join-Path -Path $DataFolder -ChildPath 'usage.json'
             SmsNew           = Join-Path -Path $DataFolder -ChildPath 'sms-new.dat'
+            SmsSim           = Join-Path -Path $DataFolder -ChildPath 'sms-sim.dat'
             DriverAdminOnly  = $false
         }
     }
@@ -654,6 +687,7 @@ function New-ModemWorker {
             DriverStaging    = Join-Path -Path ([Environment]::GetFolderPath('Windows')) -ChildPath 'Temp'
             Usage            = Get-AppDataPath -Name 'usage.json' -Local
             SmsNew           = Get-AppDataPath -Name 'sms-new.dat' -Local
+            SmsSim           = Get-AppDataPath -Name 'sms-sim.dat' -Local
             DriverAdminOnly  = $true
         }
     }
@@ -769,15 +803,17 @@ function New-ModemWorker {
         # Messages - none in observe-only mode: listing them marks them read on the modem -:
         # whether the notices are set on this port, whether the storage is to be read whole, the
         # messages read (Join-SmsPart's) and how full the storage is, the fingerprints of the
-        # parts still new (read from their file at the first reading), the last new messages
-        # announced - carried over from the worker this one replaces -, the message going out,
-        # and the last failure, logged once.
+        # parts still new and the SIMs the parts came in on (each read from its file at the first
+        # reading), the last new messages announced - carried over from the worker this one
+        # replaces -, the message going out, and the last failure, logged once.
         MessagesReady     = $false
         MessagesDue       = $true
         Messages          = $null
         MessageStorage    = $null
         SmsUnread         = [string[]]@()
         SmsUnreadLoaded   = $false
+        SmsOwners         = [object[]]@()
+        SmsOwnersLoaded   = $false
         MessageNotice     = if ($Previous -and $Previous.PSObject.Properties['MessageNotice']) { $Previous.MessageNotice } else { $null }
         MessageOperation  = $null
         MessagesFailure   = $null
@@ -915,19 +951,84 @@ function Import-WorkerSmsUnread {
     $Worker.SmsUnreadLoaded = $true
 }
 
+function Import-WorkerSmsOwner {
+    # Reads which SIM the parts came in on from their file, once per worker, before the first
+    # reading of the storage. A file that can't be read is said in the log: every message shows.
+    param([hashtable] $Worker)
+
+    if ($Worker.SmsOwnersLoaded) {
+        return
+    }
+    $unreadable = $null
+    $Worker.SmsOwners = [object[]]@(Import-SmsOwner -Path $Worker.Paths.SmsSim -WarningVariable unreadable -WarningAction SilentlyContinue)
+    if ($unreadable) {
+        Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Messages: $unreadable"
+    }
+    $Worker.SmsOwnersLoaded = $true
+}
+
+function Update-WorkerSmsOwner {
+    # Remembers which SIM the parts came in on (Update-SmsOwner) and writes the file when that
+    # changed; a file that can't be written stops nothing - it is written again at the next
+    # change. The parts listed unread are the SIM in use's, with its kind and - an eSIM profile's
+    # - its name as the user knows it; without the SIM in use identified, they keep no SIM and
+    # show with every SIM. -Sim and -Name, with no entries: a SIM's parts take that name.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Changes the worker''s in-memory state and the app''s own file.')]
+    param([hashtable] $Worker, [object[]] $Entry = @(), [string] $Sim, [string] $Name)
+
+    Import-WorkerSmsOwner -Worker $Worker
+    $options = @{}
+    if ($Sim) {
+        $options['Sim'] = $Sim
+        $options['Name'] = $Name
+    }
+    elseif ($Worker.Sim -and $Worker.Sim.Fingerprint) {
+        $kind = if (Test-WorkerEuiccInUse -Worker $Worker) { 'Esim' } elseif ($Worker.SimType -eq 'Usim') { 'Usim' } else { '' }
+        $enabled = @($Worker.EsimProfiles | Where-Object { $_ -and $_.State -eq 'Enabled' -and $_.Iccid }) | Select-Object -First 1
+        $options['Sim'] = $Worker.Sim.Fingerprint
+        $options['Kind'] = $kind
+        $options['Name'] = if ($kind -eq 'Esim' -and $enabled -and (Get-SimSettingFingerprint -Iccid $enabled.Iccid) -eq $Worker.Sim.Fingerprint) {
+            Get-WorkerEsimProfileName -Entry $enabled
+        }
+        else {
+            ''
+        }
+    }
+    $before = ConvertTo-Json -InputObject ([object[]]@($Worker.SmsOwners)) -Compress -Depth 3
+    $Worker.SmsOwners = [object[]]@(Update-SmsOwner -Owner $Worker.SmsOwners -Entry $Entry @options)
+    if ((ConvertTo-Json -InputObject ([object[]]@($Worker.SmsOwners)) -Compress -Depth 3) -ne $before) {
+        try {
+            Export-SmsOwner -Owner $Worker.SmsOwners -Path $Worker.Paths.SmsSim -Confirm:$false
+        }
+        catch {
+            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Messages: the SIMs they came in on not saved ($($_.Exception.GetType().Name))"
+        }
+    }
+}
+
+function Get-WorkerEsimProfileName {
+    # A profile's name as the user knows it - its nickname, its name or its provider's -, or ''.
+    param([object] $Entry)
+
+    [string](@($Entry.Nickname, $Entry.Name, $Entry.Provider | Where-Object { $_ }) | Select-Object -First 1)
+}
+
 function Read-WorkerInbox {
     # Reads the modem's whole storage - AT+CMGL=4, which marks every message read there - and how
     # full it is, keeps which parts are new (Update-SmsUnread, and its file when that changed),
     # and announces the messages new since the last reading: how many, and the newest one's
     # sender. A silent message (23.040: never shown) is listed - it takes a place in the storage,
-    # which only deleting it frees -, but never new nor announced. A listing cut short still
-    # marked what it listed read: its unread parts are kept new, the messages shown left as they
-    # were. Returns the listing's status.
+    # which only deleting it frees -, but never new nor announced. The parts listed unread came in
+    # on the SIM in use: that is remembered (Update-WorkerSmsOwner). A listing cut short still
+    # marked what it listed read: its unread parts are kept new and told as the SIM in use's, the
+    # messages shown left as they were. Returns the listing's status.
     param([hashtable] $Worker)
 
     $listing = Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+CMGL=4'
     Import-WorkerSmsUnread -Worker $Worker
     if ($listing.Status -ne 'OK') {
+        Update-WorkerSmsOwner -Worker $Worker -Entry @(ConvertFrom-AtMessageList -Lines $listing.Lines)
         $listed = @(ConvertFrom-AtMessageList -Lines $listing.Lines | Where-Object Status -EQ 'Unread' | ForEach-Object { Get-SmsFingerprint -Pdu $_.Pdu })
         $kept = [string[]]@(@($Worker.SmsUnread) + $listed | Sort-Object -Unique)
         if ($kept.Count -ne @($Worker.SmsUnread).Count) {
@@ -940,6 +1041,7 @@ function Read-WorkerInbox {
     $entries = @(ConvertFrom-AtMessageList -Lines $listing.Lines | ForEach-Object {
             $_ | Add-Member -NotePropertyName Sms -NotePropertyValue (ConvertFrom-SmsPdu -Pdu $_.Pdu) -PassThru
         })
+    Update-WorkerSmsOwner -Worker $Worker -Entry $entries
     $storage = ConvertFrom-AtMessageStorage -Lines (Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+CPMS?').Lines
     $before = [string[]]@($Worker.SmsUnread)
     $unread = [string[]]@(Update-SmsUnread -Unread $before -Entry @($entries | Where-Object { -not $_.Sms.Silent }))
@@ -1721,11 +1823,28 @@ function Update-WorkerSim {
 
 function Clear-WorkerSim {
     # The SIM in use is about to change - a slot switched, a profile enabled or disabled -, or the
-    # port is gone: none is known until a pass identifies it.
+    # port is gone: none is known until a pass identifies it. The messages shown were the other
+    # SIM's: the storage is read again once it is.
     param([hashtable] $Worker)
 
     $Worker.Sim = $null
     $Worker.SimToken = $null
+    $Worker.Messages = $null
+    $Worker.MessageStorage = $null
+    $Worker.MessagesDue = $true
+}
+
+function Update-WorkerInboxBeforeSwitch {
+    # Before the SIM in use changes - a slot switched, a profile enabled or disabled -, how full
+    # the storage is is checked, and the storage read if it changed: a message that came in on the
+    # SIM in use is told as its own, not as the next one's.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Reads the storage, as a cycle does.')]
+    param([hashtable] $Worker)
+
+    if ($Worker.Sim -and $Worker.MessagesReady -and -not $Worker.ObserveOnly -and $Worker.Channel -and $Worker.Channel.State -eq 'Open') {
+        [void](Update-WorkerInbox -Worker $Worker)
+    }
 }
 
 function Save-WorkerNetworkMode {
@@ -2322,6 +2441,7 @@ function Invoke-WorkerEsimCommand {
         if ($Worker.SimSlot -eq $slot) {
             return & $outcome 'Unchanged' $null
         }
+        Update-WorkerInboxBeforeSwitch -Worker $Worker
         $answer = Invoke-AtCommand -Channel $Worker.Channel -Command "AT+GTDUALSIM=$slot"
         $failure = if ($answer.Status -ne 'OK') { "AT+GTDUALSIM=$slot $($answer.Status)$(if ($null -ne $answer.ErrorCode) { " $($answer.ErrorCode)" })" } else { $null }
         if ($failure -and $answer.Status -notin 'Timeout', 'PortLost') {
@@ -2391,12 +2511,14 @@ function Invoke-WorkerEsimCommand {
                     if ($chosen.State -eq 'Enabled') {
                         return & $outcome 'Unchanged' $null
                     }
+                    Update-WorkerInboxBeforeSwitch -Worker $Worker
                     $run = Invoke-WorkerLpac -Worker $Worker -Operation EnableProfile -Option @{ ProfileId = $aid }
                 }
                 'DisableProfile' {
                     if ($chosen.State -ne 'Enabled') {
                         return & $outcome 'Unchanged' $null
                     }
+                    Update-WorkerInboxBeforeSwitch -Worker $Worker
                     $run = Invoke-WorkerLpac -Worker $Worker -Operation DisableProfile -Option @{ ProfileId = $aid }
                 }
                 'DeleteProfile' {
@@ -2428,7 +2550,10 @@ function Invoke-WorkerEsimCommand {
         return & $outcome $(if ($run.Outcome -eq 'Timeout') { 'Timeout' } else { 'Failed' }) $why
     }
     if ($Kind -eq 'DeleteProfile' -and $chosen.Iccid) {
-        # Nothing of a deleted profile is kept: its APN settings neither.
+        # Its messages may stay in the slot's storage (AT-COMMANDS section 9): they show with its
+        # name as it was last.
+        Update-WorkerSmsOwner -Worker $Worker -Sim (Get-SimSettingFingerprint -Iccid $chosen.Iccid) -Name (Get-WorkerEsimProfileName -Entry $chosen)
+        # Nothing else of a deleted profile is kept: its APN settings neither.
         try {
             Remove-SimSetting -Fingerprint (Get-SimSettingFingerprint -Iccid $chosen.Iccid) -Path $Worker.Paths.SimSettings -ApnSecretPath $Worker.Paths.ApnSecret -Confirm:$false
         }
@@ -3019,11 +3144,12 @@ function Invoke-ModemWorkerCycle {
     }
 
     # Messages: the notices set once per port, the storage read when it may have changed - on a
-    # notice, after a command, when how full it is changed, checked after each pass. A step the
-    # modem refused waits for the next pass. None in observe-only mode: listing marks messages
-    # read on the modem.
+    # notice, after a command, when how full it is changed, checked after each pass -, once a pass
+    # has identified the SIM in use, or found its ICCID can't be read: what comes in is told as
+    # its own. A step the modem refused waits for the next pass. None in observe-only mode:
+    # listing marks messages read on the modem.
     if ($Worker.Channel -and $Worker.Channel.State -eq 'Open' -and -not $Worker.ObserveOnly -and (Test-WorkerSimReady -Worker $Worker) -and
-        ($passRan -or (-not $Worker.MessagesFailure -and ($Worker.MessagesDue -or -not $Worker.MessagesReady)))) {
+        ($Worker.Sim -or $Worker.SimUnreadLogged) -and ($passRan -or (-not $Worker.MessagesFailure -and ($Worker.MessagesDue -or -not $Worker.MessagesReady)))) {
         if (Update-WorkerInbox -Worker $Worker) {
             $published = $true
         }

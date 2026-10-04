@@ -805,11 +805,12 @@ function Get-MessagesView {
     .SYNOPSIS
         The Messages tab, from the snapshot.
     .DESCRIPTION
-        A pure function. Returns StateText (the SIM in use - the messages listed are its slot's -
-        and how full it is, or why there are no messages: no modem, the SIM not ready,
-        observe-only), TabText (the tab's header, with the number of new messages), Items - a row
-        per message, newest first: Key, Fingerprints, New, Marker, From, Time, Preview, Header,
-        Text, Note -, SentId (the newest message sent's command), SendIds (the commands of the
+        A pure function. Returns StateText (the SIM in use - the messages listed are its slot's -,
+        how full it is and how many messages of another eSIM profile are not shown, or why there
+        are no messages: no modem, the SIM not ready, observe-only), TabText (the tab's header,
+        with the number of new messages), Items - a row per message, newest first: Key,
+        Fingerprints, New, Marker, From, Time, Preview, Header, Text, Note - the SIM it came in on,
+        when not the one in use, first -, SentId (the newest message sent's command), SendIds (the commands of the
         messages the worker sent or tried), Generation (that worker's), SendingText, FromText
         (which SIM a message goes out from: the one in use - the modem uses one at a time,
         decided 2026-10-04), CanDelete and CanSend.
@@ -837,7 +838,11 @@ function Get-MessagesView {
         if ($messages.Full) {
             $sentences.Add((Get-AppText 'Messages.Full'))
         }
-        if (@($messages.Items).Count -eq 0) {
+        $hidden = if ($messages.PSObject.Properties['Hidden']) { [int]$messages.Hidden } else { 0 }
+        if ($hidden -gt 0) {
+            $sentences.Add((Get-AppText 'Messages.Hidden' $hidden))
+        }
+        elseif (@($messages.Items).Count -eq 0) {
             $sentences.Add((Get-AppText 'Messages.Empty'))
         }
         $sentences -join ' '
@@ -859,6 +864,18 @@ function Get-MessagesView {
         $body = Get-MessageBody -Message $item
         $line = ($body -replace '\s+', ' ').Trim()
         $notes = [System.Collections.Generic.List[string]]::new()
+        if ($item.PSObject.Properties['Owner'] -and $item.Owner -eq 'Other') {
+            $cameIn = if ($item.OwnerKind -eq 'Esim' -and $item.OwnerName) {
+                Get-AppText 'Messages.FromGoneProfile' $item.OwnerName
+            }
+            elseif ($item.OwnerKind -eq 'Esim') {
+                Get-AppText 'Messages.FromOtherProfile'
+            }
+            else {
+                Get-AppText 'Messages.FromOtherSim'
+            }
+            $notes.Add($cameIn)
+        }
         if (-not $item.Complete -and @($item.Missing).Count -gt 0) {
             $notes.Add((Get-AppText 'Messages.Missing' (@($item.Missing) -join ', ')))
         }

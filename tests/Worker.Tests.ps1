@@ -1716,6 +1716,63 @@ Describe 'Messages on the simulated modem' {
         $device.Modem.Messaging.Notices[1] | Should -Be '1'
         @($device.Modem.Received | Where-Object { $_ -eq 'AT+CNMI=2,1,0,0,0' }).Count | Should -Be 2
     }
+
+    It 'remembers the SIM in use as the one the unread messages came in on, encrypted; a message read before keeps none' {
+        $device = New-SimulatedDevice -Scenario Online
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $snapshot = $script:link['Snapshot']
+
+        $snapshot.Messages.Items.Owner | Should -Be @('Own', 'Own', 'Unknown') -Because 'Operator''s was read before the app saw it'
+        $snapshot.Messages.Hidden | Should -Be 0
+        $path = Join-Path $script:folder 'sms-sim.dat'
+        $owners = @(Import-SmsOwner -Path $path)
+        $owners.Count | Should -Be 3 -Because 'one entry per part: Info''s has two'
+        @($owners | ForEach-Object Sim | Sort-Object -Unique) | Should -Be (InModuleScope FibocomFm350 { Get-SimSettingFingerprint -Iccid '8900100000000000000' })
+        @($owners | ForEach-Object Kind | Sort-Object -Unique) | Should -Be 'Usim'
+        Get-Content -LiteralPath $path -Raw | Should -Not -Match $owners[0].Message -Because 'the file is encrypted'
+    }
+
+    It 'shows a message that came in on another physical SIM, with the kind of that SIM' {
+        New-Item -ItemType Directory -Path $script:folder -Force | Out-Null
+        $operator = Get-SmsFingerprint -Pdu $script:simulation.Messages.Stored[0].Pdu
+        Export-SmsOwner -Owner @([pscustomobject]@{ Message = $operator; Sim = 'C' * 64; Kind = 'Usim'; Name = '' }) -Path (Join-Path $script:folder 'sms-sim.dat') -Confirm:$false
+        $device = New-SimulatedDevice -Scenario Online
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $message = Get-TestMessage 'Operator'
+
+        $message.Owner | Should -Be 'Other'
+        $message.OwnerKind | Should -Be 'Usim'
+        $message.OwnerName | Should -BeNullOrEmpty
+        $script:link['Snapshot'].Messages.Items.Count | Should -Be 3 -Because 'only another eSIM profile still on the eUICC hides one'
+    }
+
+    It 'reads the messages of a SIM whose ICCID can''t be read, every one shown, none told as its own' {
+        $device = New-SimulatedDevice -Scenario Online
+        $device.Modem.SetAnswer('AT+ICCID', @('+CME ERROR: 100'))
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $snapshot = $script:link['Snapshot']
+
+        $snapshot.Messages.Items.Owner | Should -Be @('Unknown', 'Unknown', 'Unknown')
+        $snapshot.Messages.New | Should -Be 2
+        @(Import-SmsOwner -Path (Join-Path $script:folder 'sms-sim.dat')).Count | Should -Be 0
+    }
+
+    It 'shows every message when the file of their SIMs can''t be read, and says so once' {
+        New-Item -ItemType Directory -Path $script:folder -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:folder 'sms-sim.dat') -Value 'not encrypted'
+        $device = New-SimulatedDevice -Scenario Online
+        $device.Modem.Messaging.Stored | ForEach-Object { $_.Status = 1 }
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $script:now += 30000
+        Invoke-ModemWorkerCycle -Worker $worker
+
+        $script:link['Snapshot'].Messages.Items.Owner | Should -Be @('Unknown', 'Unknown', 'Unknown')
+        @(Get-TestLog | Where-Object { $_ -match 'Messages: The SIMs the messages came in on can''t be read \(CryptographicException\)' }).Count | Should -Be 1
+    }
 }
 
 Describe 'The worker and the AT port' {

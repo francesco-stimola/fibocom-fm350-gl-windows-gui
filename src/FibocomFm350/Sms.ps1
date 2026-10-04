@@ -992,3 +992,133 @@ function Export-SmsUnread {
         Write-AppFile -Path $Path -Content (ConvertTo-ProtectedText -Text $json)
     }
 }
+
+# How many message parts the app remembers the SIM of: the oldest are forgotten first. A storage
+# holds a few hundred at most.
+$script:SmsOwnersKept = 1000
+
+function Update-SmsOwner {
+    <#
+    .SYNOPSIS
+        Remembers which SIM each message part came in on, after a reading of the storage.
+    .DESCRIPTION
+        A pure function (decided 2026-10-04). On the eUICC's slot the modem keeps part of the
+        messages for the slot, whichever profile is enabled (AT-COMMANDS section 9): the app tells
+        them apart by the SIM they came in on. -Owner: the parts remembered - Message (the part's
+        fingerprint, Get-SmsFingerprint's), Sim (the SIM's, Get-SimSettingFingerprint's), Kind
+        ('Usim' or 'Esim') and Name (the eSIM profile's, or '') -; -Entry: what AT+CMGL=4 listed
+        (Pdu, Status); -Sim, -Kind and -Name: the SIM in use.
+        A part the modem reports unread came in since the storage was last read, on the SIM in
+        use - the only one registered. A part already read when first seen keeps no SIM: where it
+        came in is not known. Without -Sim nothing is added. A part of the SIM in use takes its
+        name as it is now. The newest 1000 are kept. Returns the entries.
+    .EXAMPLE
+        $owners = Update-SmsOwner -Owner $owners -Entry $entries -Sim $fingerprint -Kind Esim -Name 'Travel'
+    #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Pure: returns the new list and changes nothing.')]
+    [CmdletBinding()]
+    [OutputType([object[]])]
+    param(
+        [AllowEmptyCollection()]
+        [object[]] $Owner = @(),
+
+        [AllowEmptyCollection()]
+        [object[]] $Entry = @(),
+
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string] $Sim,
+
+        [ValidateSet('Usim', 'Esim', '')]
+        [string] $Kind = '',
+
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string] $Name = ''
+    )
+
+    $kept = [System.Collections.Generic.List[object]]::new()
+    $known = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($item in @($Owner | Where-Object { $_ })) {
+        $named = if ($Sim -and $Name -and $item.Sim -eq $Sim) { $Name } else { [string]$item.Name }
+        $kept.Add([pscustomobject]@{ Message = $item.Message; Sim = $item.Sim; Kind = $item.Kind; Name = $named })
+        [void]$known.Add($item.Message)
+    }
+    if ($Sim) {
+        foreach ($item in $Entry) {
+            $fingerprint = Get-SmsFingerprint -Pdu $item.Pdu
+            if ($item.Status -eq 'Unread' -and $known.Add($fingerprint)) {
+                $kept.Add([pscustomobject]@{ Message = $fingerprint; Sim = $Sim; Kind = $Kind; Name = [string]$Name })
+            }
+        }
+    }
+    [object[]]@($kept | Select-Object -Last $script:SmsOwnersKept)
+}
+
+function Import-SmsOwner {
+    <#
+    .SYNOPSIS
+        Reads which SIM the message parts came in on (Update-SmsOwner's entries).
+    .DESCRIPTION
+        The file holds them encrypted with DPAPI for the current user (Export-SmsOwner). No file
+        gives none; a file that can't be read or decrypted gives none too, with a warning: every
+        message then shows, its SIM not known.
+    .EXAMPLE
+        $owners = Import-SmsOwner -Path $path
+    #>
+    [CmdletBinding()]
+    [OutputType([object[]])]
+    param(
+        [Parameter(Mandatory)]
+        [string] $Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return
+    }
+    try {
+        $secret = ConvertFrom-ProtectedText -Text (Get-Content -LiteralPath $Path -Raw -ErrorAction Stop).Trim()
+        if (-not $secret) {
+            throw [System.Security.Cryptography.CryptographicException]::new('Not decrypted.')
+        }
+        $json = [System.Net.NetworkCredential]::new('', $secret).Password
+        $entries = @($json | ConvertFrom-Json -ErrorAction Stop)
+        $bad = @($entries | Where-Object {
+                -not $_ -or [string]$_.Message -notmatch '^[0-9A-F]{64}$' -or [string]$_.Sim -notmatch '^[0-9A-F]{64}$' -or [string]$_.Kind -notin 'Usim', 'Esim', ''
+            })
+        if ($bad.Count) {
+            throw [System.FormatException]::new('Not a list of message parts and their SIMs.')
+        }
+        [object[]]@($entries | ForEach-Object { [pscustomobject]@{ Message = [string]$_.Message; Sim = [string]$_.Sim; Kind = [string]$_.Kind; Name = [string]$_.Name } })
+    }
+    catch {
+        Write-Warning "The SIMs the messages came in on can't be read ($($_.Exception.GetType().Name)); every message shows."
+    }
+}
+
+function Export-SmsOwner {
+    <#
+    .SYNOPSIS
+        Writes which SIM the message parts came in on, encrypted for the current user.
+    .DESCRIPTION
+        One file, rewritten whole, encrypted with DPAPI: fingerprints of parts and SIMs, the kind
+        of SIM and an eSIM profile's name - no text, no number, no ICCID.
+    .EXAMPLE
+        Export-SmsOwner -Owner $owners -Path $path
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]] $Owner,
+
+        [Parameter(Mandatory)]
+        [string] $Path
+    )
+
+    $json = ConvertTo-Json -InputObject ([object[]]@($Owner | Select-Object -Property Message, Sim, Kind, Name)) -Compress -Depth 3
+    if ($PSCmdlet.ShouldProcess($Path, 'Write the SIMs the messages came in on')) {
+        Write-AppFile -Path $Path -Content (ConvertTo-ProtectedText -Text $json)
+    }
+}
