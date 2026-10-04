@@ -4,6 +4,18 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-04 — M8: the app's icon in its notifications
+
+Tried with the real app on the device, a new message's notification showed PowerShell's icon. Probes
+on the host (`AT-COMMANDS.md` §11.2): Windows heads a tray notification with the program that sends
+it — here PowerShell's MSIX package —, whatever AppUserModelID the process carries, with a Start-menu
+shortcut carrying it too; the heading can't be the app's while PowerShell hosts it. The
+notification's own icon can: `Show-TrayNotice` sends it with `NIIF_USER` and the app's large icon to
+the `NotifyIcon`'s own tray icon, whose window and identifier the NotifyIcon keeps private — read by
+reflection, with the standard notification as the way back should a .NET keep them otherwise.
+Decided by the maintainer: before `v1.1.0`. Rejected: an AppUserModelID on the process, which
+changes nothing under PowerShell's package.
+
 ## 2026-10-04 — M8: the milestone's review, and its fixes
 
 The milestone's one review pass found five defects, each fixed with a test:

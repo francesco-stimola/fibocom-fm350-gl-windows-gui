@@ -11,7 +11,8 @@ All notable changes to this project are documented here. The format follows
 - Text messages: the messages on the SIM in a *Messages* tab — new ones marked, long messages
   joined from their parts, any alphabet, emoji included —, opened by selecting them, deleted after
   a confirmation; a box to write one, with its count of characters and parts, sent part by part
-  and never sent again by itself. New messages are announced in the tray by their sender only, and
+  and never sent again by itself. New messages are announced in the tray by their sender only, with
+  the app's icon in the notification, and
   stay new across restarts (fingerprints in an encrypted file, no text and no number). Phone
   numbers and texts never reach the log.
 - Data usage: counted from the modem adapter's byte counters across their resets, today and in
