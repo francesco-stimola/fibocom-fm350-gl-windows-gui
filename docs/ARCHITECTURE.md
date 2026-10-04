@@ -911,10 +911,21 @@ runs as an external process, one invocation per operation (facts: `AT-COMMANDS.m
                  AT port: AT+CCHO / AT+CGLA / AT+CCHC ──► eUICC
 ```
 
-- **lpac never touches the AT port.** Its `stdio` backend hands every APDU to the worker, which
-  carries it with `AT+CCHO`/`AT+CGLA`/`AT+CCHC` on the port it already owns (invariant 1). lpac
-  talks to the SM-DP+ over HTTPS on its own, with its `curl` backend (`AT-COMMANDS.md` §8 says
-  what it checks and what it doesn't).
+- **lpac never touches the AT port, nor the network.** Its `stdio` APDU backend hands every APDU to
+  the worker, which carries it with `AT+CCHO`/`AT+CGLA`/`AT+CCHC` on the port it already owns
+  (invariant 1); its `stdio` HTTP backend hands every request for the SM-DP+ to the worker, which
+  makes it over HTTPS with .NET (decided 2026-10-04). lpac's own `curl` backend checks no
+  certificate, and would have the elevated app ship and run an old `libcurl.dll` with its TLS
+  library (`AT-COMMANDS.md` §8).
+- **The SM-DP+'s certificate is checked** (`FibocomFm350.EsimHttp`, C# compiled at run time: a TLS
+  callback runs on a thread with no runspace). Taken when Windows trusts it; otherwise only when
+  it names the host and its chain ends at the GSMA's root CI, the one that issues SM-DP+
+  certificates and that our eUICC trusts (`Data/GsmaRsp2RootCi1.pem`, from two sources,
+  `AT-COMMANDS.md` §8) — as ChromeOS's LPA does. Revocation is not checked against that root:
+  its list is an offline CA's. A request is checked first (`Resolve-LpacHttpRequest`): a `POST` to
+  `https://<host>/gsma/rsp2/es9plus/<function>` — a host name, no port, one of the five ES9+
+  functions lpac calls — with lpac's three headers, or it is never sent. No cookie, no redirect
+  followed, the answer at most 8 MB, the run's time limit for each request.
 - **The bridge is a translation** — lpac request → AT command, AT answer → lpac answer — written
   as pure functions with a matrix of tests (`Resolve-LpacApduRequest`, `Resolve-LpacApduAnswer`,
   `ConvertFrom-LpacLine`, `ConvertTo-LpacAnswerLine`), and a thin loop around them
@@ -929,12 +940,13 @@ runs as an external process, one invocation per operation (facts: `AT-COMMANDS.m
     with it. Channels left open — lpac stopped, a close unanswered — are closed at the end of the
     run.
   - Every request gets one answer line: lpac reads one per request. A request for the network
-    (lpac's `stdio` HTTP backend, unused) is answered as a failure.
+    that fails its check, or on the way, is answered with no status — lpac reads it as the
+    server's error —, and the run says why, with the host.
   - A run ends with lpac's output, at its time limit (lpac stopped), or on a lost port. The loop
     owns the process from its start and disposes it whatever happens.
-- **lpac runs with the app's settings, nothing else of its own**: `LPAC_APDU=stdio`, the HTTP
-  backend and 120-byte ES10 segments are named, and lpac's and its library's other variables
-  are taken out of the environment it inherits — the user's environment reaches the elevated
+- **lpac runs with the app's settings, nothing else of its own**: `LPAC_APDU=stdio` and
+  `LPAC_HTTP=stdio` are named, and lpac's and its library's other variables are taken out of the
+  environment it inherits — the user's environment reaches the elevated
   app's children, and a variable could name another backend (one opens the COM port itself),
   another ISD-R, or debug output carrying the APDUs. Its arguments are passed one by one, never
   joined into a command line; no window. **Its path is named in one place** (`Get-LpacPath`):
@@ -980,12 +992,14 @@ runs as an external process, one invocation per operation (facts: `AT-COMMANDS.m
   and gives lpac's result from what the eUICC holds. Nothing of the eSIM ships proven on it alone
   (decided 2026-10-03).
 - **lpac ships with the app.** lpac is AGPL-3.0, so unlike the modem driver it may be
-  redistributed. The release workflow downloads the pinned version from lpac's official GitHub
-  release (`tools/Lpac.psd1`), checks the SHA-256 of each file, and puts the Windows build in the
-  zip's `lpac` folder as published — `lpac.exe`, `libcurl.dll`, its README and licenses — with
-  `SOURCE.txt`, which says where the source is; lpac's source archive for the same tag is attached
-  to the GitHub Release as the corresponding source. The binaries are never committed to git; a
-  `lpac` folder in `src/` is never packaged.
+  redistributed. **Version `2.2.1`** (decided 2026-10-04): `2.3.0`'s `stdio` backend doesn't work
+  (`AT-COMMANDS.md` §8). The release workflow downloads the pinned version from lpac's official
+  GitHub release (`tools/Lpac.psd1`), checks the SHA-256 of each file — the one computed at the
+  first download, GitHub listing none for that release —, and puts the files the pin lists in the
+  zip's `lpac` folder — `lpac.exe`, its README and licenses; not `libcurl.dll`, which the app
+  doesn't use — with `SOURCE.txt`, which says where the source is; lpac's source archive for the
+  same tag is attached to the GitHub Release as the corresponding source. The binaries are never
+  committed to git; a `lpac` folder in `src/` is never packaged.
 
 ## SMS, USSD and data usage (M8)
 
@@ -1219,8 +1233,8 @@ None beyond **PowerShell 7.6+ on Windows**. Everything the app uses ships with i
 (serial), WPF and WinForms (UI), `System.Drawing` (icon), `System.Net.Http` (the update notice),
 and the Windows modules `PnpDevice`, `NetAdapter`, `NetTCPIP`, `DnsClient`, `ScheduledTasks`.
 Windows PowerShell 5.1 and its `Appx` module, part of Windows, run the launcher. From `v1.2.0`
-the release zip also carries lpac for eSIM — `lpac.exe` and the `libcurl.dll` it loads, in the
-`lpac` folder (see *eSIM*); nothing has to be installed separately.
+the release zip also carries lpac for eSIM — `lpac.exe`, in the `lpac` folder (see *eSIM*);
+nothing has to be installed separately.
 
 ## Invariants
 

@@ -4,6 +4,65 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-04 — M9: a commercial profile downloaded through the app; the timeouts decided
+
+The second device session, the free BetterRoaming profile, every step through the worker's own
+commands and the app's HTTPS (`AT-COMMANDS.md` §8): downloaded in 16.5 s — the SM-DP+'s
+certificate taken through the GSMA's root CI, lpac's GET RESPONSE carried for answers over 256
+bytes —, enabled and registered on a real network in roaming within 14 s, disabled, deleted,
+downloaded again and deleted again, each of the four kinds of notification sent at the next read.
+The eUICC and the modem were compared with their start at the end, and equal.
+
+Decided by the maintainer from its numbers:
+- **`AT+CGLA` 10 s**: an APDU of the profile's installation took up to 1.7 s, and a timeout halfway
+  fails the download. Rejected: the 3 s of the rule for commands the manual doesn't document (1.75
+  times what was seen); 30 s (a hung modem noticed late).
+- **lpac's run limited to 5 min for a download, 1 min otherwise** — about 18 and 20 times what was
+  seen. Rejected: 2 min and 30 s (a slow network cut off); 10 and 2 min.
+
+## 2026-10-04 — Decided: lpac 2.2.1, the app's own HTTPS, the eSIM tab
+
+Taken by the maintainer:
+- **lpac `v2.2.1`**, whose `stdio` backend works, its SHA-256 the one computed at the first
+  download (GitHub lists none for it). Rejected: building lpac from a pinned commit of `main` in
+  the release workflow (a toolchain in CI, a binary of our own making instead of an official
+  release); waiting for an upstream release (M9 blocked, no date).
+- **The app makes lpac's HTTPS requests** (lpac's `stdio` HTTP backend), the server's certificate
+  checked against the GSMA's root CI: no `libcurl.dll` in the zip. Rejected: lpac's `curl` (an old
+  TLS stack running elevated, no certificate checked, licenses missing); the app's requests with
+  no check (the same code for less).
+- **The window** — a new *eSIM* tab: the slot in use and *Use this slot*; the profiles with
+  *Enable*, *Disable*, *Rename*, *Delete*; *Download a profile* from the code as text or **a QR
+  code read from an image** (ZXing.Net, bundled like lpac); the chip's facts and the
+  notifications waiting; the **EID shown, with *Copy*** — never in the log or the tooltip.
+  Rejected: sections in the *SIM* tab; a window of its own; the EID hidden or masked; the code as
+  text alone, or as two fields.
+- **The slot in use always in view**: the window's top panel and the tab; not the tooltip, whose
+  127 characters are taken.
+- **Confirmations**: a slot switch — *No* preselected — says that the modem keeps it, that the
+  connection drops, and that an eSIM with no profile enabled has no network; enabling or disabling a
+  profile asks too (the connection drops a few seconds); deleting one names it, says that it can't
+  be undone and that the provider must give a new code to have it back, and asks for its name to be
+  typed; a download asks nothing more, the tab saying that the EID reaches the provider's server.
+- **The tray, for an eSIM with no profile enabled**: red, *no eSIM profile enabled*, the window's
+  blocker with *Open eSIM*, as the other states that wait for the user. **No Windows notification**
+  for the eSIM: the outcomes are in the window, where the user started them.
+
+## 2026-10-04 — M9: the app's own HTTPS for lpac, and the first device session
+
+- **lpac `v2.2.1` through the app's worker code, on our eUICC**: the eUICC read, the test profile
+  enabled — the SIM ready at once —, nicknamed and cleared, disabled; slot 1 and back, the start
+  state compared afterwards, answer by answer, and equal (`AT-COMMANDS.md` §8). A nickname set
+  empty is removed, as the profile had none: the eUICC ended as it began.
+- **HTTPS by the app**: lpac's request checked first, then sent with .NET; the certificate taken
+  when Windows trusts it or when it names the host and chains to the GSMA's root CI, kept as data
+  from two sources that agree. The check is C#, as a TLS callback runs where no runspace is. Tested
+  with a CI and certificates made by the tests, a local server that echoes what it got — the
+  test that found a header collection unrolled by an `if` expression, nothing sent — and against
+  a real SM-DP+ with an empty request.
+- **The package takes the files the pin lists**: lpac.exe, its README and licenses; libcurl.dll
+  stays out.
+
 ## 2026-10-04 — M9: lpac pinned, the bridge, the eSIM in the worker, lpac in the zip
 
 lpac's facts read from its release `v2.3.0` — the latest —, at the tag, before the bridge was

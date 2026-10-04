@@ -169,8 +169,8 @@ modem alone (decided 2026-10-03).
 
 - [x] Device session, first part: our module's eUICC found on slot 1 and reached (`AT-COMMANDS.md` §8) — the slot switched there and back with `AT+GTDUALSIM`, the ISD-R through `+CCHO` / `+CGLA`; one profile on it, of class test.
 - [x] Device session, the rest of §8's open questions: a 131-byte APDU arrives intact; the modem routes by the session ID; enabling or disabling a profile with the refresh flag resets the SIM by itself and closes the logical channels (`AT-COMMANDS.md` §8). The test profile enabled and disabled again.
-- [ ] Device session: lpac `v2.3.0` through the app's bridge on our eUICC (`AT-COMMANDS.md` §8, questions 4, 5 and 7) — the factory test profile listed, enabled, disabled and nicknamed by the worker's commands; never deleted.
-- [ ] Download and delete verified on a free commercial profile that can be downloaded again any number of times — the Osmocom eUICC manual's *Known Test Profiles* page lists some for the GSMA production root, which our eUICC trusts (`AT-COMMANDS.md` §8, question 6) —, enabled to see a real registration; never on the factory test profile.
+- [x] Device session: lpac through the app's bridge on our eUICC (`AT-COMMANDS.md` §8, questions 4, 5 and 7) — the factory test profile listed, enabled, disabled and nicknamed by the worker's commands; never deleted. *lpac `v2.2.1`, `lpac.exe` alone; the start state compared at the end and equal. A download's `AT+CGLA` times wait for the session below.*
+- [x] Download and delete verified on a free commercial profile that can be downloaded again any number of times — the Osmocom eUICC manual's *Known Test Profiles* page lists some for the GSMA production root, which our eUICC trusts (`AT-COMMANDS.md` §8, question 6) —, enabled to see a real registration; never on the factory test profile. *Through the worker's commands, the app's own HTTPS: downloaded, enabled — registered, roaming —, disabled, deleted, downloaded again and deleted again, each notification sent; the eUICC and the modem compared with their start, and equal.*
 - [x] `+CPIN: EMPTY_EUICC` — an eUICC with no profile enabled — told apart from the other SIM states (today it reads as *Other*). *`NoProfile`: blocked, never escalated (a device fixture); its words in the tray wait for the UI's decisions.*
 - [x] APDU bridge in the worker: lpac's `stdio` protocol ↔ `AT+CCHO` / `AT+CGLA` / `AT+CCHC` on the AT port the worker owns; the protocol translation as pure functions with a matrix of tests; lpac simulated in the tests. *`Esim.ps1`: the translation, lpac's command lines and results; `Invoke-LpacOperation` on any AT channel; the real process tested with a stand-in for lpac. Proven on the simulated modem; the device session above verifies it.*
 - [ ] Slot selection (`AT+GTDUALSIM`) and profile switches inside a maintenance window. The slot is persistent modem state: it is switched only after a confirmation that says so, and the active slot is always shown. *In the worker (`SelectSimSlot`, `EnableProfile`, `DisableProfile`: a maintenance window each, none while a network mode is on trial); the confirmation and the slot shown wait for the UI.*
@@ -214,20 +214,7 @@ Decided by the maintainer (2026-10-04, `DEVLOG.md`):
 Decisions that change what happens next and are the maintainer's to take. Remove a line when it is
 decided, and record the decision in `DEVLOG.md`.
 
-- **M9 — which lpac ships**: `v2.3.0`'s `stdio` backend doesn't work (`AT-COMMANDS.md` §8). Pin
-  `v2.2.1`, whose assets have no published SHA-256 (the one computed at the first download would
-  be pinned); build lpac from a pinned commit of `main` in the release workflow; or wait for an
-  upstream release. The device sessions wait for it.
-- **M9 — how lpac reaches the SM-DP+**: its `curl` backend (`libcurl.dll` in the zip, no
-  certificate checked; the eUICC authenticates the server), or its `stdio` HTTP backend, the app
-  making the HTTPS requests with .NET and checking the server's chain against the GSMA CI the
-  eUICC trusts (no `libcurl.dll`).
-- **M9 — timeouts**: one `AT+CGLA` (3 s by the rule for undocumented commands; measured in the
-  device session), one run of lpac (provisional: 5 min for a download, 1 min otherwise).
-- **M9 — the window and the tray**: the eSIM page; how the slot in use is shown; the
-  confirmations of a slot switch, a profile switch and a deletion; what the tray says for an eSIM
-  with no profile enabled; notifications; a QR code read from an image or the code as text; the EID
-  shown or not.
+*None at the moment.*
 
 ---
 
