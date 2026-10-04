@@ -9,7 +9,8 @@ BeforeAll {
     function Get-WriteCommand {
         param($Modem)
         @($Modem.Received | Where-Object {
-                $_ -match '=' -and $_ -notmatch '=\?$' -and $_ -notin 'AT+CMEE=1', 'AT+CLCK="SC",2' -and $_ -notmatch '^AT\+(CGCONTRDP|CGPADDR|GTDNS)='
+                $_ -match '=' -and $_ -notmatch '=\?$' -and $_ -notin 'AT+CMEE=1', 'AT+CLCK="SC",2', 'AT+CMGF=0', 'AT+CNMI=2,1,0,0,0', 'AT+CMGL=4' -and
+                $_ -notmatch '^AT\+(CGCONTRDP|CGPADDR|GTDNS)='
             })
     }
 

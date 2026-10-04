@@ -305,17 +305,30 @@ class SimulatedMessaging {
     # A message that comes in: stored at the lowest free place, and announced with +CMTI when
     # the notices are on (+CNMI's second value 1). A full storage keeps nothing.
     [void] Deliver([string] $pdu, [object] $modem) {
+        $index = $this.Store(0, $pdu)
+        if ($index -gt 0 -and $this.Notices[1] -eq '1') {
+            $modem.EmitUnsolicited("+CMTI: `"$($this.Memory)`",$index", 0)
+        }
+    }
+
+    # A message put in the storage with its status, at the lowest free place: that place, or 0
+    # when the storage is full.
+    [int] Store([int] $status, [string] $pdu) {
         if ($this.Stored.Count -ge $this.Capacity) {
-            return
+            return 0
         }
         $index = 1
         while (@($this.Stored | Where-Object Index -EQ $index).Count -gt 0) {
             $index++
         }
-        $this.Stored.Add([pscustomobject]@{ Index = $index; Status = 0; Pdu = $pdu.ToUpperInvariant() })
-        if ($this.Notices[1] -eq '1') {
-            $modem.EmitUnsolicited("+CMTI: `"$($this.Memory)`",$index", 0)
-        }
+        $this.Stored.Add([pscustomobject]@{ Index = $index; Status = $status; Pdu = $pdu.ToUpperInvariant() })
+        return $index
+    }
+
+    # Back from a restart, as at power-on: PDU mode, notices off. The SIM keeps its messages.
+    [void] Restarted() {
+        $this.Format = '0'
+        $this.Notices = @('0', '0', '0', '0', '0')
     }
 
     # The answer to a PDU given after AT+CMGS's prompt.
@@ -444,6 +457,9 @@ class SimulatedModem {
     [void] Reappear([string] $portName) {
         if ($this.NetworkMode) {
             $this.NetworkMode.Restarted()
+        }
+        if ($this.Messaging) {
+            $this.Messaging.Restarted()
         }
         $this.PortName = $portName
         $this.Lost = $false

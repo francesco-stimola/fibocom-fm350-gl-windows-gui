@@ -106,13 +106,17 @@ Describe 'Fixture <Name>' -ForEach $script:fixtureCases {
 }
 
 Describe 'The simulated modem of development mode' {
-    It 'answers with no identifier other than the documented fakes' {
+    It 'answers with no identifier other than the documented fakes, its messages too' {
         $data = Import-PowerShellDataFile -Path "$PSScriptRoot/../src/FibocomFm350/Data/Simulation.psd1"
         # Every answer line: the base answers, and each scenario's answers and changes.
         $answers = @($data.Answers) + @($data.Scenarios.Values | ForEach-Object { $_['Answers'] } | Where-Object { $_ })
         $answers += @($data.Scenarios.Values | ForEach-Object { $_['Then'] } | Where-Object { $_ } | ForEach-Object { $_.Values } | Where-Object { $_ -is [hashtable] })
         $lines = @($answers | ForEach-Object { $_.Values } | ForEach-Object { $_ } | Where-Object { $_ -is [string] })
         $lines.Count | Should -BeGreaterThan 30
+        # And the messages on its SIM, and the one that comes in.
+        $pdus = @(@($data.Messages.Stored) + @($data.Messages.Arrivals) | ForEach-Object { $_.Pdu })
+        $pdus.Count | Should -Be 5
+        $lines += $pdus
         $found = foreach ($line in $lines) {
             Find-UnredactedValue -Line $line
         }

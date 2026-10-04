@@ -302,7 +302,9 @@ function New-SimulatedDevice {
           network until another mode is chosen.
         - Standalone: online, in a network that offers 5G SA: NR-only mode registers on it.
         Every scenario's modem keeps a network mode (AT+GTACT): a change registers it again, in a
-        network with LTE on B1, B3, B7 and B20 and NR on n78 (EN-DC; 5G SA in Standalone).
+        network with LTE on B1, B3, B7 and B20 and NR on n78 (EN-DC; 5G SA in Standalone). And
+        messages on its SIM - one read, two unread, one of them in two parts -, one more coming
+        in a minute after it starts; sending one succeeds.
 
         Returns an object with Scenario, Modem (New-SimulatedModem's), Adapter, Presence, and
         the methods the worker calls: Find() (the modem as PnP would report it), Open() (its
@@ -355,7 +357,13 @@ function New-SimulatedDevice {
         $then
     }
 
-    $modem = New-SimulatedModem -PortName $PortName
+    $modem = New-SimulatedModem -PortName $PortName -Messaging
+    foreach ($stored in $data.Messages.Stored) {
+        [void]$modem.Messaging.Store($stored.Status, $stored.Pdu)
+    }
+    foreach ($arrival in $data.Messages.Arrivals) {
+        $modem.Messaging.Arrivals.Add([pscustomobject]@{ AtMs = $arrival.AfterMs; Pdu = $arrival.Pdu })
+    }
     foreach ($command in $base.Keys) {
         $modem.SetAnswer($command, [string[]]$base[$command])
     }

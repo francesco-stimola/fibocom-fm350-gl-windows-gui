@@ -14,11 +14,13 @@ BeforeAll {
     Import-Module $script:modulePath -Force
     $script:probe = & (Get-Module FibocomFm350) { $script:DataProbe }
 
-    # Commands that change the modem's state; reads and the channel's own setup left out.
+    # Commands that change the modem's state; reads and the channel's own setup left out, and the
+    # messages' (their mode and notices, which the modem doesn't keep, and their listing).
     function Get-WriteCommand {
         param($Modem)
         @($Modem.Received | Where-Object {
-                $_ -match '=' -and $_ -notmatch '=\?$' -and $_ -notin 'AT+CMEE=1', 'AT+CLCK="SC",2' -and $_ -notmatch '^AT\+(CGCONTRDP|CGPADDR|GTDNS)='
+                $_ -match '=' -and $_ -notmatch '=\?$' -and $_ -notin 'AT+CMEE=1', 'AT+CLCK="SC",2', 'AT+CMGF=0', 'AT+CNMI=2,1,0,0,0', 'AT+CMGL=4' -and
+                $_ -notmatch '^AT\+(CGCONTRDP|CGPADDR|GTDNS)='
             })
     }
 
@@ -1299,6 +1301,311 @@ Describe 'Data usage on the simulated modem' {
 
         $saved.Days.Count | Should -Be 0 -Because 'saved at the first reading, then not again within the interval'
         @((Import-DataUsage -Path $path).Days.Values)[0].Received | Should -Be 2000000
+    }
+}
+
+Describe 'Messages on the simulated modem' {
+    BeforeAll {
+        # The simulated SIM holds a read message from 'Operator' (place 1), an unread one from
+        # +10000000000 (place 2) and an unread one from 'Info' in two parts (places 3 and 4).
+        $script:simulation = Import-PowerShellDataFile -Path "$PSScriptRoot/../src/FibocomFm350/Data/Simulation.psd1"
+        $script:arrival = $script:simulation.Messages.Arrivals[0].Pdu
+        # From +10000000000, 'hello', a protocol identifier of 0x40: a silent message.
+        $script:silent = '07910100000000F0040B910100000000F0400062014021436580' + '05E8329BFD06'
+
+        function Get-TestMessage {
+            param([string] $Address)
+            @($script:link['Snapshot'].Messages.Items | Where-Object Address -EQ $Address)
+        }
+    }
+
+    BeforeEach {
+        $script:folder = Join-Path $TestDrive ([guid]::NewGuid())
+        $script:now = 100000
+    }
+
+    It 'sets the notices once the SIM is ready, reads the storage, and announces what is new: how many, and from whom' {
+        $device = New-SimulatedDevice -Scenario Online
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $snapshot = $script:link['Snapshot']
+
+        @($device.Modem.Received | Where-Object { $_ -in 'AT+CMGF=0', 'AT+CNMI=2,1,0,0,0' }) | Should -Be @('AT+CMGF=0', 'AT+CNMI=2,1,0,0,0')
+        @($snapshot.Messages.Items | ForEach-Object Address) | Should -Be @('Info', '+10000000000', 'Operator') -Because 'the newest first'
+        $snapshot.Messages.Items.New | Should -Be @($true, $true, $false)
+        (Get-TestMessage 'Info').Text | Should -Match '^Your data bundle renews .+ before showing it\.$'
+        (Get-TestMessage 'Info').Fingerprints.Count | Should -Be 2
+        $snapshot.Messages.New | Should -Be 2
+        $snapshot.Messages.Used | Should -Be 4
+        $snapshot.Messages.Total | Should -Be 70
+        $snapshot.Messages.Full | Should -BeFalse
+        $snapshot.MessageNotice.Count | Should -Be 2
+        $snapshot.MessageNotice.Sender | Should -Be 'Info'
+        $snapshot.MessageNotice.Id | Should -Be 1
+        $log = @(Get-TestLog) -join "`n"
+        $log | Should -Match 'Messages: 2 new'
+        $log | Should -Not -Match '10000000000|Ciao|bundle|Welcome' -Because 'no sender and no text goes to the log'
+    }
+
+    It 'keeps what is new for the next worker, though the modem marked it read, and announces nothing again' {
+        $device = New-SimulatedDevice -Scenario Online
+        $first = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $first
+        $last = $script:link['Snapshot']
+        Close-ModemWorker -Worker $first
+
+        $second = Get-TestWorker -Device $device -Extra @{ Previous = $last; Generation = 2 }
+        Invoke-ModemWorkerCycle -Worker $second
+        $snapshot = $script:link['Snapshot']
+        @($device.Modem.Messaging.Stored | Where-Object Status -EQ 0).Count | Should -Be 0 -Because 'the first listing marked them read'
+        $snapshot.Messages.Items.New | Should -Be @($true, $true, $false)
+        $snapshot.MessageNotice.Id | Should -Be 1
+        Get-Content -LiteralPath (Join-Path $script:folder 'sms-new.dat') -Raw | Should -Not -Match (Get-TestMessage 'Info').Fingerprints[0] -Because 'the file is encrypted'
+    }
+
+    It 'reads a message on its notice, and announces its sender' {
+        $device = New-SimulatedDevice -Scenario Online
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $device.Modem.Messaging.Deliver($script:arrival, $device.Modem)
+        $script:now += 5000
+        Invoke-ModemWorkerCycle -Worker $worker
+        $snapshot = $script:link['Snapshot']
+
+        $snapshot.Messages.Items.Count | Should -Be 4
+        $snapshot.Messages.Items[0].Text | Should -Match '^You have used 80%'
+        $snapshot.Messages.Items[0].New | Should -BeTrue
+        $snapshot.MessageNotice.Id | Should -Be 2
+        $snapshot.MessageNotice.Count | Should -Be 1
+        $snapshot.MessageNotice.Sender | Should -Be 'Info'
+    }
+
+    It 'announces a long message once, its parts coming one after the other' {
+        $device = New-SimulatedDevice -Scenario Online
+        $device.Modem.Messaging.Stored.Clear()
+        $parts = @($script:simulation.Messages.Stored[2].Pdu, $script:simulation.Messages.Stored[3].Pdu)
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $notices = foreach ($part in $parts) {
+            $device.Modem.Messaging.Deliver($part, $device.Modem)
+            $script:now += 5000
+            Invoke-ModemWorkerCycle -Worker $worker
+            $script:link['Snapshot'].MessageNotice.Id
+        }
+
+        $notices | Should -Be @(1, 1)
+        $script:link['Snapshot'].Messages.Items.Count | Should -Be 1
+        $script:link['Snapshot'].Messages.Items[0].Complete | Should -BeTrue
+    }
+
+    It 'finds a message stored without a notice, once a pass sees the storage grow' {
+        $device = New-SimulatedDevice -Scenario Online
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $script:now += 30000
+        Invoke-ModemWorkerCycle -Worker $worker
+        @($device.Modem.Received | Where-Object { $_ -eq 'AT+CMGL=4' }).Count | Should -Be 1 -Because 'a pass that finds the storage as it was lists nothing'
+        [void]$device.Modem.Messaging.Store(0, $script:arrival)
+        $script:now += 5000
+        Invoke-ModemWorkerCycle -Worker $worker
+        $script:link['Snapshot'].Messages.Items.Count | Should -Be 3 -Because 'no notice came, and no pass ran yet'
+
+        $script:now += 30000
+        Invoke-ModemWorkerCycle -Worker $worker
+        $script:link['Snapshot'].Messages.Items.Count | Should -Be 4
+        $script:link['Snapshot'].MessageNotice.Id | Should -Be 2
+    }
+
+    It 'leaves out a silent message' {
+        $device = New-SimulatedDevice -Scenario Online
+        [void]$device.Modem.Messaging.Store(0, $script:silent)
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+
+        $script:link['Snapshot'].Messages.Items.Count | Should -Be 3
+        $script:link['Snapshot'].Messages.Used | Should -Be 5
+        $script:link['Snapshot'].MessageNotice.Count | Should -Be 2
+    }
+
+    It 'says when the storage is full' {
+        $device = New-SimulatedDevice -Scenario Online
+        $device.Modem.Messaging.Capacity = 4
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+
+        $script:link['Snapshot'].Messages.Full | Should -BeTrue
+    }
+
+    It 'opens a message: new no more, for the next worker too' {
+        $device = New-SimulatedDevice -Scenario Online
+        $first = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $first
+        $result = Invoke-TestCommand -Worker $first -Kind OpenMessage -Parameter @{ Fingerprints = (Get-TestMessage '+10000000000').Fingerprints }
+        $result.Result | Should -Be 'Done'
+        (Get-TestMessage '+10000000000').New | Should -BeFalse
+        $last = $script:link['Snapshot']
+        Close-ModemWorker -Worker $first
+
+        $second = Get-TestWorker -Device $device -Extra @{ Previous = $last; Generation = 2 }
+        Invoke-ModemWorkerCycle -Worker $second
+        $script:link['Snapshot'].Messages.Items.New | Should -Be @($true, $false, $false)
+    }
+
+    It 'deletes a message, every part of it, where the storage keeps them now' {
+        $device = New-SimulatedDevice -Scenario Online
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $result = Invoke-TestCommand -Worker $worker -Kind DeleteMessage -Parameter @{ Fingerprints = (Get-TestMessage 'Info').Fingerprints }
+
+        $result.Result | Should -Be 'Done'
+        @($device.Modem.Received | Where-Object { $_ -like 'AT+CMGD=*' }) | Should -Be @('AT+CMGD=3', 'AT+CMGD=4')
+        @($script:link['Snapshot'].Messages.Items | ForEach-Object Address) | Should -Be @('+10000000000', 'Operator')
+        $script:link['Snapshot'].Messages.Used | Should -Be 2
+    }
+
+    It 'deletes nothing for a message no longer stored' {
+        $device = New-SimulatedDevice -Scenario Online
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $result = Invoke-TestCommand -Worker $worker -Kind DeleteMessage -Parameter @{ Fingerprints = @('0' * 64) }
+
+        $result.Result | Should -Be 'NotFound'
+        @($device.Modem.Received | Where-Object { $_ -like 'AT+CMGD=*' }).Count | Should -Be 0
+    }
+
+    It 'sends a message part by part, logging neither the number nor the text' {
+        $device = New-SimulatedDevice -Scenario Online
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $text = 'A message long enough for two parts. ' * 6
+        $result = Invoke-TestCommand -Worker $worker -Kind SendMessage -Parameter @{ Number = '+1 000 000-0000'; Text = $text }
+
+        $result.Result | Should -Be 'Sent'
+        $result.Parts.Sent | Should -Be 2
+        $result.Parts.Count | Should -Be 2
+        $device.Modem.Messaging.Sent.Count | Should -Be 2
+        (ConvertFrom-SmsPdu -Pdu $device.Modem.Messaging.Sent[0]).Address | Should -Be '+10000000000'
+        $script:link['Snapshot'].MessageOperation | Should -BeNullOrEmpty
+        $log = @(Get-TestLog) -join "`n"
+        $log | Should -Match 'Command SendMessage: Sent'
+        $log | Should -Not -Match '10000000000|1 000 000|long enough'
+    }
+
+    It 'stops at a part the modem refuses, and sends nothing again by itself' {
+        $device = New-SimulatedDevice -Scenario Online
+        $device.Modem.Messaging.SendError = '331'
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $result = Invoke-TestCommand -Worker $worker -Kind SendMessage -Parameter @{ Number = '+10000000000'; Text = 'hello ' * 40 }
+        Invoke-TestCycle -Worker $worker -Max 5 | Out-Null
+
+        $result.Result | Should -Be 'Failed'
+        $result.Detail | Should -Be 'part 1 of 2: CmsError 331'
+        $result.Parts.Sent | Should -Be 0
+        @($device.Modem.Received | Where-Object { $_ -like 'AT+CMGS=*' }).Count | Should -Be 1
+    }
+
+    It 'says the message is going out before its parts are sent' {
+        $device = New-SimulatedDevice -Scenario Online
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $script:seen = $null
+        Mock Send-AtMessagePdu -ModuleName FibocomFm350 {
+            $script:seen = $script:link['Snapshot'].MessageOperation
+            [pscustomobject]@{ Command = 'AT+CMGS=18'; Status = 'OK'; Reference = 1; ErrorCode = $null; ElapsedMs = 1 }
+        }
+        $result = Invoke-TestCommand -Worker $worker -Kind SendMessage -Parameter @{ Number = '+10000000000'; Text = 'hello' }
+
+        $result.Result | Should -Be 'Sent'
+        $script:seen | Should -Be 'Sending'
+        $script:link['Snapshot'].MessageOperation | Should -BeNullOrEmpty
+    }
+
+    It 'gives only the type of an error, which may hold the number or the text' {
+        $device = New-SimulatedDevice -Scenario Online
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        Mock ConvertTo-SmsPdu -ModuleName FibocomFm350 { throw [System.FormatException]::new("Not a number: $Number") }
+        $result = Invoke-TestCommand -Worker $worker -Kind SendMessage -Parameter @{ Number = '+10000000000'; Text = 'hello' }
+
+        $result.Result | Should -Be 'Failed'
+        $result.Detail | Should -Be 'FormatException'
+        @(Get-TestLog) -join "`n" | Should -Not -Match '10000000000'
+    }
+
+    It 'refuses <Name>, saying nothing of it' -ForEach @(
+        @{ Name = 'a number that is not one'; Number = 'Mario'; Text = 'hello' }
+        @{ Name = 'an empty text'; Number = '+10000000000'; Text = '' }
+        @{ Name = 'a text longer than 255 parts'; Number = '+10000000000'; Text = 'x' * 40000 }
+    ) {
+        $device = New-SimulatedDevice -Scenario Online
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $result = Invoke-TestCommand -Worker $worker -Kind SendMessage -Parameter @{ Number = $Number; Text = $Text }
+
+        $result.Result | Should -Be 'Invalid'
+        @($device.Modem.Received | Where-Object { $_ -like 'AT+CMGS=*' }).Count | Should -Be 0
+        @(Get-TestLog) -join "`n" | Should -Not -Match 'Mario'
+    }
+
+    It 'only observing: no notices, no listing, nothing deleted or sent' {
+        $device = New-SimulatedDevice -Scenario Online
+        $worker = Get-TestWorker -Device $device -Extra @{ ObserveOnly = $true }
+        Invoke-ModemWorkerCycle -Worker $worker
+        $delete = Invoke-TestCommand -Worker $worker -Kind DeleteMessage -Parameter @{ Fingerprints = @('0' * 64) }
+        $send = Invoke-TestCommand -Worker $worker -Kind SendMessage -Parameter @{ Number = '+10000000000'; Text = 'hello' }
+
+        $script:link['Snapshot'].Messages | Should -BeNullOrEmpty
+        $delete.Result | Should -Be 'Refused'
+        $send.Result | Should -Be 'Refused'
+        @($device.Modem.Received | Where-Object { $_ -match '^AT\+(CMGF|CNMI|CMGL|CMGD|CMGS)' }) | Should -BeNullOrEmpty
+    }
+
+    It 'without a ready SIM: no messages, and nothing deleted or sent' {
+        $device = New-SimulatedDevice -Scenario PinRequired
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $send = Invoke-TestCommand -Worker $worker -Kind SendMessage -Parameter @{ Number = '+10000000000'; Text = 'hello' }
+
+        $script:link['Snapshot'].Messages | Should -BeNullOrEmpty
+        $send.Result | Should -Be 'NotReady'
+        @($device.Modem.Received | Where-Object { $_ -match '^AT\+(CNMI|CMGL|CMGS)' }) | Should -BeNullOrEmpty
+    }
+
+    It 'says once that the modem refused the notices, and tries again after the next pass' {
+        $device = New-SimulatedDevice -Scenario Online
+        $device.Modem.Script('AT+CNMI=2,1,0,0,0', @{ Lines = @('+CMS ERROR: 302') })
+        $device.Modem.Script('AT+CNMI=2,1,0,0,0', @{ Lines = @('+CMS ERROR: 302') })
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $script:now += 5000
+        Invoke-ModemWorkerCycle -Worker $worker
+        $tries = @($device.Modem.Received | Where-Object { $_ -eq 'AT+CNMI=2,1,0,0,0' }).Count
+        $script:link['Snapshot'].Messages | Should -BeNullOrEmpty
+
+        $script:now += 30000
+        Invoke-ModemWorkerCycle -Worker $worker
+        $script:now += 30000
+        Invoke-ModemWorkerCycle -Worker $worker
+        $tries | Should -Be 1 -Because 'a refused step waits for the next pass'
+        $script:link['Snapshot'].Messages.Items.Count | Should -Be 3
+        @(Get-TestLog | Where-Object { $_ -match 'Messages: AT\+CNMI=2,1,0,0,0 CmsError 302' }).Count | Should -Be 1
+    }
+
+    It 'forgets the messages with a lost port, and sets the notices again on the next' {
+        $device = New-SimulatedDevice -Scenario Online
+        $device.AwayMs = 0
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $device.Restart()
+        $script:now += 5000
+        Invoke-ModemWorkerCycle -Worker $worker
+        $script:link['Snapshot'].Messages | Should -BeNullOrEmpty
+
+        Invoke-TestCycle -Worker $worker -Until { param($snapshot) $snapshot.Messages } -Max 10 | Out-Null
+        $script:link['Snapshot'].Messages.Items.Count | Should -Be 3
+        $device.Modem.Messaging.Notices[1] | Should -Be '1'
+        @($device.Modem.Received | Where-Object { $_ -eq 'AT+CNMI=2,1,0,0,0' }).Count | Should -Be 2
     }
 }
 

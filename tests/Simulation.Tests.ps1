@@ -52,6 +52,33 @@ Describe 'New-SimulatedDevice' {
             $answer.Status | Should -BeIn 'OK', 'CmeError' -Because "$command has a standing answer"
         }
     }
+
+    It 'holds the messages of the data file on its SIM, and one coming in later' {
+        $device = New-SimulatedDevice
+        $channel = New-AtChannel -Transport $device.Open()
+        try {
+            $listing = Invoke-AtCommand -Channel $channel -Command 'AT+CMGL=4' -TimeoutMs 3000
+        }
+        finally {
+            Close-AtChannel -Channel $channel
+        }
+        $entries = @(ConvertFrom-AtMessageList -Lines $listing.Lines)
+        @($entries | ForEach-Object Status) | Should -Be @('Read', 'Unread', 'Unread', 'Unread')
+        @($entries | ForEach-Object { (ConvertFrom-SmsPdu -Pdu $_.Pdu).Problem } | Where-Object { $_ }) | Should -BeNullOrEmpty
+        $device.Modem.Messaging.Arrivals.Count | Should -Be 1
+        $device.Modem.Messaging.Arrivals[0].AtMs | Should -Be 60000
+    }
+
+    It 'keeps its messages across a restart, its notices off again' {
+        $device = New-SimulatedDevice
+        $device.AwayMs = 0
+        $device.Modem.Messaging.Notices = @('2', '1', '0', '0', '0')
+        $device.Restart()
+        $device.Find().Device | Should -Be 'Present'
+
+        $device.Modem.Messaging.Notices | Should -Be @('0', '0', '0', '0', '0')
+        $device.Modem.Messaging.Stored.Count | Should -Be 4
+    }
 }
 
 Describe 'The simulated adapter' {

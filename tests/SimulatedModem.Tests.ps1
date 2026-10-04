@@ -139,6 +139,17 @@ Describe 'The simulated modem''s messages' {
         @($script:modem.Messaging.Stored | ForEach-Object Index | Sort-Object) | Should -Be @(1, 2)
     }
 
+    It 'takes a message already stored, read or not, without a notice' {
+        (& $script:ask 'AT+CNMI=2,1,0,0,0').Status | Should -Be 'OK'
+        $script:modem.Messaging.Store(1, $script:pdu) | Should -Be 1
+        $script:modem.Messaging.Store(0, $script:pdu) | Should -Be 2
+        $script:modem.Messaging.Capacity = 2
+        $script:modem.Messaging.Store(0, $script:pdu) | Should -Be 0 -Because 'the storage is full'
+
+        (& $script:ask 'AT+CMGL=4').Lines -match '^\+CMGL' | Should -Be @('+CMGL: 1,1,,24', '+CMGL: 2,0,,24')
+        Receive-AtUrc -Channel $script:channel | Should -BeNullOrEmpty
+    }
+
     It 'delivers a message that comes in on its own once its time has come' {
         (& $script:ask 'AT+CNMI=2,1,0,0,0').Status | Should -Be 'OK'
         $script:modem.Messaging.Arrivals.Add([pscustomobject]@{ AtMs = 0; Pdu = $script:pdu })

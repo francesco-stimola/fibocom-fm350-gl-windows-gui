@@ -3,6 +3,39 @@
 
 BeforeAll {
     Import-Module "$PSScriptRoot/../src/FibocomFm350/FibocomFm350.psd1" -Force
+
+    # A transport with the shape of Transport.ps1 that keeps what is written to it and answers
+    # a write matching a reply's When with its Text, read in one piece.
+    function Get-TestTransport {
+        param([hashtable[]] $Reply = @())
+        $transport = [pscustomobject]@{
+            PortName = 'TEST'
+            Lost     = $false
+            Written  = [System.Collections.Generic.List[string]]::new()
+            Pending  = [System.Collections.Generic.Queue[string]]::new()
+            Replies  = $Reply
+        }
+        $transport | Add-Member -MemberType ScriptMethod -Name Write -Value {
+            param([string] $text)
+            $this.Written.Add($text)
+            foreach ($candidate in $this.Replies) {
+                if ($text -match $candidate.When) {
+                    $this.Pending.Enqueue($candidate.Text)
+                    break
+                }
+            }
+        }
+        $transport | Add-Member -MemberType ScriptMethod -Name Read -Value {
+            param([int] $timeoutMs)
+            if ($this.Pending.Count -gt 0) {
+                return $this.Pending.Dequeue()
+            }
+            Start-Sleep -Milliseconds ([Math]::Min([Math]::Max($timeoutMs, 0), 20))
+            ''
+        }
+        $transport | Add-Member -MemberType ScriptMethod -Name Close -Value { }
+        $transport
+    }
 }
 
 AfterAll {
@@ -403,12 +436,43 @@ Describe 'Send-AtMessagePdu' {
         Receive-AtUrc -Channel $script:channel | Should -Be @('+CMTI: "MT",1')
     }
 
+    It 'queues the codes that arrive with the answer, and after it' {
+        $transport = Get-TestTransport -Reply @(
+            @{ When = '^AT\+CMGS=18\r$'; Text = "AT+CMGS=18`r`r`n> " }
+            @{ When = "$([char]0x1A)$"; Text = "$($script:part.Pdu)$([char]0x1A)`r`n+CMTI: `"MT`",4`r`n`r`n+CMGS: 7`r`n`r`nOK`r`n`r`n+CMTI: `"MT`",5`r`n" }
+        )
+        $channel = New-AtChannel -Transport $transport
+        $sent = Send-AtMessagePdu -Channel $channel -Length 18 -Pdu $script:part.Pdu -TimeoutMs 2000
+
+        $sent.Status | Should -Be 'OK'
+        $sent.Reference | Should -Be 7
+        Receive-AtUrc -Channel $channel | Should -Be @('+CMTI: "MT",4', '+CMTI: "MT",5')
+    }
+
+    It 'ends the modem''s input with ESC: <Name>' -ForEach @(
+        # The modem may be waiting for a PDU, or for the rest of one: what follows would be taken
+        # as one, unless ESC ends its input.
+        @{ Name = 'no prompt'; Prompt = $false; Status = 'NoPrompt' }
+        @{ Name = 'no answer'; Prompt = $true; Status = 'Timeout' }
+    ) {
+        $transport = Get-TestTransport -Reply @(if ($Prompt) { @{ When = '^AT\+CMGS=18\r$'; Text = "AT+CMGS=18`r`r`n> " } })
+        $channel = New-AtChannel -Transport $transport
+        $sent = Send-AtMessagePdu -Channel $channel -Length 18 -Pdu $script:part.Pdu -PromptTimeoutMs 200 -TimeoutMs 400
+
+        $sent.Status | Should -Be $Status
+        $transport.Written[-1] | Should -Be ([string][char]0x1B)
+    }
+
     It 'reports a port lost without touching it again' {
-        $script:modem.Vanish()
-        $sent = Send-AtMessagePdu -Channel $script:channel -Length 18 -Pdu $script:part.Pdu
+        $transport = Get-TestTransport -Reply @()
+        $channel = New-AtChannel -Transport $transport
+        $transport.Lost = $true
+        $sent = Send-AtMessagePdu -Channel $channel -Length 18 -Pdu $script:part.Pdu
+        $written = $transport.Written.Count
 
         $sent.Status | Should -Be 'PortLost'
-        (Send-AtMessagePdu -Channel $script:channel -Length 18 -Pdu $script:part.Pdu).Status | Should -Be 'PortLost'
+        (Send-AtMessagePdu -Channel $channel -Length 18 -Pdu $script:part.Pdu).Status | Should -Be 'PortLost'
+        $transport.Written.Count | Should -Be $written -Because 'a port known lost is not written to'
     }
 
     It 'refuses <Name>' -ForEach @(
@@ -422,6 +486,6 @@ Describe 'Send-AtMessagePdu' {
 
     It 'refuses a closed channel' {
         Close-AtChannel -Channel $script:channel
-        { Send-AtMessagePdu -Channel $script:channel -Length 18 -Pdu $script:part.Pdu -ErrorAction Stop } | Should -Throw -ExceptionType ([System.InvalidOperationException])
+        { Send-AtMessagePdu -Channel $script:channel -Length 18 -Pdu $script:part.Pdu -ErrorAction Stop } | Should -Throw -ExpectedMessage 'The AT channel is closed.'
     }
 }

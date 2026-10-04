@@ -28,6 +28,16 @@ $script:WorkerIntervals = @{
 # counters last saved, unless they restarted meanwhile.
 $script:WorkerUsageSaveMs = 300000
 
+# The modem's new-message notices (AT-COMMANDS section 9): each message stored, then announced on
+# the AT port with +CMTI. The modem starts with them off, so they are set on every port opened.
+$script:WorkerMessageNotices = 'AT+CNMI=2,1,0,0,0'
+
+# A new message stored: the storage is read again.
+$script:WorkerMessageUrcPattern = '^\s*\+CMTI\s*:'
+
+# The commands about messages: what they carry - a number, a text - is never logged.
+$script:MessageCommandKinds = @('OpenMessage', 'DeleteMessage', 'SendMessage')
+
 # The longest the worker goes without a sign of life, a wait for the modem's answer included
 # (WorkerTransport): the supervisor's hang timeout is far above it.
 $script:WorkerBeatMs = 1000
@@ -49,7 +59,7 @@ $script:WorkerPassUrcPattern = '^\s*\+(CREG|CGREG|CEREG|C5GREG|CGEV)\s*:'
 
 # The commands the UI can send (Send-ModemCommand).
 $script:WorkerCommandKinds = @('ConnectNow', 'SaveSettings', 'SetNetworkMode', 'SaveSimPin', 'ForgetSimPin', 'DisableSimPin', 'UnlockFcc', 'EnableAdapter',
-    'CheckDriverPackage', 'InstallDriver', 'UninstallDriver')
+    'CheckDriverPackage', 'InstallDriver', 'UninstallDriver', 'OpenMessage', 'DeleteMessage', 'SendMessage')
 
 # The commands about the AT port's driver: they change the system, and may take a while.
 $script:DriverCommandKinds = @('CheckDriverPackage', 'InstallDriver', 'UninstallDriver')
@@ -191,6 +201,11 @@ function Send-ModemCommand {
           after the user confirmed it.
         - SetStartAtLogon: turns the installer's logon task on or off (Set-AppLogonTask); Enabled.
           'NoTask' when the app is not installed.
+        - OpenMessage: Fingerprints, a message's as the snapshot gives them; it is new no more.
+        - DeleteMessage: Fingerprints; deletes those messages from the modem's storage, every
+          part.
+        - SendMessage: Number and Text; sent part by part, never sent again by itself. Neither
+          is logged, nor comes back in a snapshot.
         Secrets travel as SecureStrings, stay in the process, and never come back in a snapshot.
     .EXAMPLE
         Send-ModemCommand -Link $link -Kind SaveSimPin -Parameter @{ Pin = $passwordBox.SecurePassword }
@@ -203,7 +218,7 @@ function Send-ModemCommand {
 
         [Parameter(Mandatory)]
         [ValidateSet('ConnectNow', 'SaveSettings', 'SetNetworkMode', 'SaveSimPin', 'ForgetSimPin', 'DisableSimPin', 'UnlockFcc', 'EnableAdapter',
-            'CheckDriverPackage', 'InstallDriver', 'UninstallDriver', 'SetStartAtLogon')]
+            'CheckDriverPackage', 'InstallDriver', 'UninstallDriver', 'SetStartAtLogon', 'OpenMessage', 'DeleteMessage', 'SendMessage')]
         [string] $Kind,
 
         [hashtable] $Parameter = @{}
@@ -350,6 +365,45 @@ function Resolve-WorkerSchedule {
     }
 }
 
+function Get-WorkerMessageView {
+    # The messages as a snapshot shows them, newest first: what Join-SmsPart gives, each with New
+    # (a part of it still new), but not where the storage keeps them; and how full the storage
+    # is. $null while they were not read: no port, the SIM not ready, or observe only.
+    param([hashtable] $Worker)
+
+    if ($null -eq $Worker.Messages) {
+        return $null
+    }
+    $unread = [System.Collections.Generic.HashSet[string]]::new([string[]]@($Worker.SmsUnread), [System.StringComparer]::OrdinalIgnoreCase)
+    $items = foreach ($message in $Worker.Messages) {
+        [pscustomobject]@{
+            Fingerprints     = [string[]]$message.Fingerprints
+            New              = @($message.Fingerprints | Where-Object { $unread.Contains($_) }).Count -gt 0
+            Address          = $message.Address
+            AddressType      = $message.AddressType
+            Time             = $message.Time
+            Text             = $message.Text
+            Content          = $message.Content
+            Class            = $message.Class
+            Waiting          = $message.Waiting
+            NationalLanguage = $message.NationalLanguage
+            Problem          = $message.Problem
+            Count            = $message.Count
+            Missing          = [int[]]$message.Missing
+            Complete         = $message.Complete
+        }
+    }
+    $items = @($items)
+    $storage = $Worker.MessageStorage
+    [pscustomobject]@{
+        Items = [object[]]$items
+        New   = @($items | Where-Object New).Count
+        Used  = if ($storage) { $storage.Receive.Used } else { $null }
+        Total = if ($storage) { $storage.Receive.Total } else { $null }
+        Full  = [bool]($storage -and $storage.Receive.Used -ge $storage.Receive.Total)
+    }
+}
+
 function New-ModemSnapshot {
     <#
     .SYNOPSIS
@@ -379,9 +433,14 @@ function New-ModemSnapshot {
         Windows has a DoH template for -, Name - a DoH server named by its template: Host,
         Addresses, LookedUp, Via, Next, Failure); Usage (Measure-DataUsage's: today, the cycle,
         the quota) and UsageNotice (the last quota threshold said: Threshold, Id - one more for
-        each, across worker restarts -, Time); AppVersion; Settings, ApnPasswordStored,
+        each, across worker restarts -, Time); Messages (Get-WorkerMessageView: the messages on
+        the modem, newest first, and how full its storage is; $null while not read),
+        MessageNotice (the last new messages announced: Sender - the newest one's -, Count, Id -
+        one more each time, across worker restarts -, Time) and MessageOperation ('Sending'
+        while a message goes out); AppVersion; Settings, ApnPasswordStored,
         SettingsProblems and SettingsIssues (ConvertTo-AppSetting's Problems and Issues); Results
-        (the last commands' outcomes: Id, Kind, Result, Detail, AttemptsLeft, Time).
+        (the last commands' outcomes: Id, Kind, Result, Detail, AttemptsLeft, Parts - of a
+        message sent: Sent, Count -, Time).
     .EXAMPLE
         $Link['Snapshot'] = New-ModemSnapshot -Worker $worker -Time ([DateTimeOffset]::Now)
     #>
@@ -480,6 +539,9 @@ function New-ModemSnapshot {
         Update            = $Worker.Update
         Usage             = $Worker.UsageView
         UsageNotice       = $Worker.UsageNotice
+        Messages          = Get-WorkerMessageView -Worker $Worker
+        MessageNotice     = $Worker.MessageNotice
+        MessageOperation  = $Worker.MessageOperation
         AppVersion        = if ($Worker.AppVersion) { $Worker.AppVersion.ToString() } else { $null }
         StartAtLogon      = $Worker.StartAtLogon
         Settings          = if ($Worker.Settings) { $Worker.Settings | Select-Object -Property * } else { $null }
@@ -545,6 +607,7 @@ function New-ModemWorker {
             Log              = Join-Path -Path $DataFolder -ChildPath 'logs'
             DriverStaging    = Join-Path -Path $DataFolder -ChildPath 'driver-staging'
             Usage            = Join-Path -Path $DataFolder -ChildPath 'usage.json'
+            SmsNew           = Join-Path -Path $DataFolder -ChildPath 'sms-new.dat'
             DriverAdminOnly  = $false
         }
     }
@@ -556,6 +619,7 @@ function New-ModemWorker {
             Log              = Get-AppDataPath -Name 'logs' -Local
             DriverStaging    = Join-Path -Path ([Environment]::GetFolderPath('Windows')) -ChildPath 'Temp'
             Usage            = Get-AppDataPath -Name 'usage.json' -Local
+            SmsNew           = Get-AppDataPath -Name 'sms-new.dat' -Local
             DriverAdminOnly  = $true
         }
     }
@@ -658,6 +722,21 @@ function New-ModemWorker {
         UsageSavedAt      = $null
         UsageDirty        = $false
         UsageFailure      = $null
+        # Messages - none in observe-only mode: listing them marks them read on the modem -:
+        # whether the notices are set on this port, whether the storage is to be read whole, the
+        # messages read (Join-SmsPart's) and how full the storage is, the fingerprints of the
+        # parts still new (read from their file at the first reading), the last new messages
+        # announced - carried over from the worker this one replaces -, the message going out,
+        # and the last failure, logged once.
+        MessagesReady     = $false
+        MessagesDue       = $true
+        Messages          = $null
+        MessageStorage    = $null
+        SmsUnread         = [string[]]@()
+        SmsUnreadLoaded   = $false
+        MessageNotice     = if ($Previous -and $Previous.PSObject.Properties['MessageNotice']) { $Previous.MessageNotice } else { $null }
+        MessageOperation  = $null
+        MessagesFailure   = $null
         # The computer slept: Invoke-ModemWorker sets it, the next cycle takes it into account.
         Resumed           = $false
     }
@@ -728,6 +807,165 @@ function Update-WorkerUsage {
         }
         $Worker.UsageFailure = $failure
     }
+}
+
+function Test-WorkerSimReady {
+    # Whether the connection has come as far as a ready SIM.
+    param([hashtable] $Worker)
+
+    [bool]($Worker.State -and $script:ConnectionStates.IndexOf($Worker.State) -ge $script:ConnectionStates.IndexOf('SimReady'))
+}
+
+function Register-WorkerMessagesFailure {
+    # A step of the messages the modem refused: logged once per cause - the command and the
+    # modem's answer, never a number or a text -, and tried again after the next pass.
+    param([hashtable] $Worker, [string] $Failure)
+
+    if ($Failure -ne $Worker.MessagesFailure) {
+        Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Messages: $Failure; tried again after the next pass"
+    }
+    $Worker.MessagesFailure = $Failure
+}
+
+function Save-WorkerSmsUnread {
+    # Writes the fingerprints of the parts still new to their file. A file that can't be written
+    # stops nothing: what is new is still shown, and the file is written again at the next change.
+    param([hashtable] $Worker)
+
+    try {
+        Export-SmsUnread -Fingerprint $Worker.SmsUnread -Path $Worker.Paths.SmsNew -Confirm:$false
+    }
+    catch {
+        Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Messages: the list of new messages not saved ($($_.Exception.GetType().Name))"
+    }
+}
+
+function Read-WorkerInbox {
+    # Reads the modem's whole storage - AT+CMGL=4, which marks every message read there - and how
+    # full it is, keeps which parts are new (Update-SmsUnread, and its file when that changed),
+    # and announces the messages new since the last reading: how many, and the newest one's
+    # sender. Silent messages (23.040: never shown) are left out. Returns the listing's status.
+    param([hashtable] $Worker)
+
+    $listing = Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+CMGL=4'
+    if ($listing.Status -ne 'OK') {
+        Register-WorkerMessagesFailure -Worker $Worker -Failure "AT+CMGL=4 $($listing.Status)$(if ($null -ne $listing.ErrorCode) { " $($listing.ErrorCode)" })"
+        return $listing.Status
+    }
+    $entries = @(ConvertFrom-AtMessageList -Lines $listing.Lines | ForEach-Object {
+            $_ | Add-Member -NotePropertyName Sms -NotePropertyValue (ConvertFrom-SmsPdu -Pdu $_.Pdu) -PassThru
+        })
+    $storage = ConvertFrom-AtMessageStorage -Lines (Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+CPMS?').Lines
+    if (-not $Worker.SmsUnreadLoaded) {
+        $unreadable = $null
+        $Worker.SmsUnread = [string[]]@(Import-SmsUnread -Path $Worker.Paths.SmsNew -WarningVariable unreadable -WarningAction SilentlyContinue)
+        if ($unreadable) {
+            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Messages: $unreadable"
+        }
+        $Worker.SmsUnreadLoaded = $true
+    }
+    $before = [string[]]@($Worker.SmsUnread)
+    $unread = [string[]]@(Update-SmsUnread -Unread $before -Entry $entries)
+    $messages = @(Join-SmsPart -Entry $entries | Where-Object { -not $_.Silent })
+    # New since the last reading: a part new now, and none of it new before - a long message's
+    # second part, coming after the first, is not announced again.
+    $fresh = @($messages | Where-Object {
+            $prints = @($_.Fingerprints)
+            @($prints | Where-Object { $_ -in $unread }).Count -gt 0 -and @($prints | Where-Object { $_ -in $before }).Count -eq 0
+        })
+    if ($fresh.Count -gt 0) {
+        $id = if ($Worker.MessageNotice) { [int]$Worker.MessageNotice.Id + 1 } else { 1 }
+        $Worker.MessageNotice = [pscustomobject]@{ Sender = $fresh[0].Address; Count = $fresh.Count; Id = $id; Time = [DateTimeOffset]::Now }
+        Write-WorkerLog -Worker $Worker -Level 'Info' -Message "Messages: $($fresh.Count) new"
+    }
+    $Worker.SmsUnread = $unread
+    if (($unread -join ',') -ne ($before -join ',')) {
+        Save-WorkerSmsUnread -Worker $Worker
+    }
+    $Worker.Messages = $messages
+    $Worker.MessageStorage = $storage
+    $Worker.MessagesDue = $false
+    $Worker.MessagesFailure = $null
+    'OK'
+}
+
+function Update-WorkerInbox {
+    # The messages' part of a cycle: the notices set once per port - with PDU mode, which the
+    # codec reads -, then the storage read whole when due, or else how full it is checked, so a
+    # message stored without a notice is read too. Returns whether the storage was read.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Sets the modem''s new-message notices, a setting that is not kept; the worker''s state otherwise.')]
+    param([hashtable] $Worker)
+
+    if (-not $Worker.MessagesReady) {
+        foreach ($command in 'AT+CMGF=0', $script:WorkerMessageNotices) {
+            $answer = Invoke-AtCommand -Channel $Worker.Channel -Command $command
+            if ($answer.Status -ne 'OK') {
+                Register-WorkerMessagesFailure -Worker $Worker -Failure "$command $($answer.Status)$(if ($null -ne $answer.ErrorCode) { " $($answer.ErrorCode)" })"
+                return $false
+            }
+        }
+        $Worker.MessagesReady = $true
+        $Worker.MessagesDue = $true
+    }
+    if (-not $Worker.MessagesDue) {
+        $storage = ConvertFrom-AtMessageStorage -Lines (Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+CPMS?').Lines
+        if ($storage -and $Worker.MessageStorage -and $storage.Read.Used -eq $Worker.MessageStorage.Read.Used) {
+            return $false
+        }
+    }
+    (Read-WorkerInbox -Worker $Worker) -eq 'OK'
+}
+
+function Remove-WorkerMessage {
+    # Deletes the messages that have a part with one of these fingerprints, every part: the
+    # storage is read again first, so the places deleted are where the parts are now. Result:
+    # 'Done', 'NotFound', or 'Failed' with the command and the modem's answer in Detail.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'The user''s command, carried out by the worker as asked.')]
+    param([hashtable] $Worker, [string[]] $Fingerprint)
+
+    $status = Read-WorkerInbox -Worker $Worker
+    if ($status -ne 'OK') {
+        return [pscustomobject]@{ Result = 'Failed'; Detail = "AT+CMGL=4 $status" }
+    }
+    $doomed = @($Worker.Messages | Where-Object { @($_.Fingerprints | Where-Object { $_ -in $Fingerprint }).Count -gt 0 })
+    if ($doomed.Count -eq 0) {
+        return [pscustomobject]@{ Result = 'NotFound'; Detail = $null }
+    }
+    foreach ($index in @($doomed | ForEach-Object { $_.Indexes })) {
+        $answer = Invoke-AtCommand -Channel $Worker.Channel -Command "AT+CMGD=$index"
+        if ($answer.Status -ne 'OK') {
+            return [pscustomobject]@{ Result = 'Failed'; Detail = "AT+CMGD=$index $($answer.Status)$(if ($null -ne $answer.ErrorCode) { " $($answer.ErrorCode)" })" }
+        }
+    }
+    [pscustomobject]@{ Result = 'Done'; Detail = $null }
+}
+
+function Send-WorkerMessage {
+    # Sends a message part by part (Send-AtMessagePdu). A part refused or unanswered ends it there,
+    # and nothing is sent again by itself: an unanswered part may have gone out, and each part
+    # costs (ARCHITECTURE -> SMS). Blanks, dashes, dots and brackets in the number are left out.
+    # The number and the text are never logged nor returned. Result: 'Sent'; 'Invalid' - no
+    # number, no text, or more parts than a message may have -; 'Failed', with the part and the
+    # modem's answer in Detail. Sent and Parts: how many parts went out, of how many.
+    param([hashtable] $Worker, [string] $Number, [string] $Text)
+
+    $digits = $Number -replace '[\s\-\.\(\)]', ''
+    if ($digits -notmatch '^\+?[0-9]{1,20}$' -or -not $Text -or (Measure-SmsText -Text $Text).TooLong) {
+        return [pscustomobject]@{ Result = 'Invalid'; Detail = $null; Sent = 0; Parts = 0 }
+    }
+    $parts = @(ConvertTo-SmsPdu -Number $digits -Text $Text -Reference (Get-Random -Minimum 0 -Maximum 256))
+    $sent = 0
+    foreach ($part in $parts) {
+        $answer = Send-AtMessagePdu -Channel $Worker.Channel -Length $part.Length -Pdu $part.Pdu
+        if ($answer.Status -ne 'OK') {
+            $code = if ($null -ne $answer.ErrorCode) { " $($answer.ErrorCode)" } else { '' }
+            return [pscustomobject]@{ Result = 'Failed'; Detail = "part $($sent + 1) of $($parts.Count): $($answer.Status)$code"; Sent = $sent; Parts = $parts.Count }
+        }
+        $sent++
+    }
+    [pscustomobject]@{ Result = 'Sent'; Detail = $null; Sent = $sent; Parts = $parts.Count }
 }
 
 function Get-WorkerDohNameState {
@@ -1004,6 +1242,12 @@ function Close-WorkerChannel {
     # read again, and a write it refused or didn't keep is tried once more.
     $Worker.NetworkModeSupport = $null
     $Worker.NetworkModeWrite = $null
+    # The notices are set again on the next port, and the storage read again through it.
+    $Worker.MessagesReady = $false
+    $Worker.MessagesDue = $true
+    $Worker.Messages = $null
+    $Worker.MessageStorage = $null
+    $Worker.MessagesFailure = $null
     $Worker.LastScan = $null
     $Worker.LastAdapterLook = $null
     Set-WorkerProbeAddress -Worker $Worker -Address $null
@@ -1746,8 +1990,9 @@ function Invoke-WorkerCommand {
     $result = 'Done'
     $detail = $null
     $attemptsLeft = $null
+    $parts = $null
     $channelOpen = $Worker.Channel -and $Worker.Channel.State -eq 'Open'
-    $writes = $Command.Kind -in @('DisableSimPin', 'UnlockFcc', 'EnableAdapter', 'SetStartAtLogon') + $script:DriverCommandKinds
+    $writes = $Command.Kind -in @('DisableSimPin', 'UnlockFcc', 'EnableAdapter', 'SetStartAtLogon', 'DeleteMessage', 'SendMessage') + $script:DriverCommandKinds
     try {
         if ($writes -and $Worker.ObserveOnly) {
             $result = 'Refused'
@@ -1755,8 +2000,11 @@ function Invoke-WorkerCommand {
         elseif ($Command.Kind -in @('SetStartAtLogon') + $script:DriverCommandKinds -and -not $Worker.Elevated) {
             $result = 'NotElevated'
         }
-        elseif ($Command.Kind -in 'SaveSimPin', 'DisableSimPin', 'UnlockFcc' -and -not $channelOpen) {
+        elseif ($Command.Kind -in 'SaveSimPin', 'DisableSimPin', 'UnlockFcc', 'DeleteMessage', 'SendMessage' -and -not $channelOpen) {
             $result = 'NoModem'
+        }
+        elseif ($Command.Kind -in 'DeleteMessage', 'SendMessage' -and -not (Test-WorkerSimReady -Worker $Worker)) {
+            $result = 'NotReady'
         }
         else {
             switch ($Command.Kind) {
@@ -1845,6 +2093,27 @@ function Invoke-WorkerCommand {
                     $result = $outcome.Result
                     $detail = if ($outcome.Result -eq 'Failed') { "pnputil exit code $($outcome.ExitCode)" } else { $null }
                 }
+                'OpenMessage' {
+                    # Only the app's own record changes: the modem marked it read already.
+                    $opened = [string[]]@($parameter['Fingerprints'])
+                    $left = [string[]]@($Worker.SmsUnread | Where-Object { $_ -notin $opened })
+                    if ($left.Count -ne @($Worker.SmsUnread).Count) {
+                        $Worker.SmsUnread = $left
+                        Save-WorkerSmsUnread -Worker $Worker
+                    }
+                }
+                'DeleteMessage' {
+                    $outcome = Remove-WorkerMessage -Worker $Worker -Fingerprint ([string[]]@($parameter['Fingerprints']))
+                    $result = $outcome.Result
+                    $detail = $outcome.Detail
+                    $Worker.MessagesDue = $true
+                }
+                'SendMessage' {
+                    $outcome = Send-WorkerMessage -Worker $Worker -Number ([string]$parameter['Number']) -Text ([string]$parameter['Text'])
+                    $result = $outcome.Result
+                    $detail = $outcome.Detail
+                    $parts = [pscustomobject]@{ Sent = $outcome.Sent; Count = $outcome.Parts }
+                }
                 default {
                     $result = 'Unknown'
                 }
@@ -1853,7 +2122,8 @@ function Invoke-WorkerCommand {
     }
     catch {
         $result = 'Failed'
-        $detail = $_.Exception.Message
+        # A message's number or text may be in the error's text: its type only, then.
+        $detail = if ($Command.Kind -in $script:MessageCommandKinds) { $_.Exception.GetType().Name } else { $_.Exception.Message }
     }
     $outcome = [pscustomobject]@{
         Id           = $Command.Id
@@ -1861,9 +2131,10 @@ function Invoke-WorkerCommand {
         Result       = $result
         Detail       = $detail
         AttemptsLeft = $attemptsLeft
+        Parts        = $parts
         Time         = [DateTimeOffset]::Now
     }
-    $level = if ($result -in 'Done', 'Disabled', 'Enabled', 'AlreadyOff', 'Restarted', 'NotLocked', 'Verified', 'Signed', 'RestartNeeded', 'NoDevice') { 'Info' } else { 'Warning' }
+    $level = if ($result -in 'Done', 'Disabled', 'Enabled', 'AlreadyOff', 'Restarted', 'NotLocked', 'Verified', 'Signed', 'RestartNeeded', 'NoDevice', 'Sent') { 'Info' } else { 'Warning' }
     Write-WorkerLog -Worker $Worker -Level $level -Message "Command $($Command.Kind): $result$(if ($detail) { " - $detail" })"
     $outcome
 }
@@ -1878,7 +2149,7 @@ function Invoke-ModemWorkerCycle {
         modem by PnP when no port is open, and opens its AT port; runs a connect pass when one is
         due (Invoke-ModemConnect: on a connection that is up it changes nothing); sends a
         data-path round from the adapter's address when due (H7); reads the radio for display
-        when due; decides on recovery (Resolve-HealthCheck, Resolve-RecoveryAction) and takes
+        when due; reads the messages when they may have changed; decides on recovery (Resolve-HealthCheck, Resolve-RecoveryAction) and takes
         the step it calls for. Publishes a new snapshot in the link when anything was done, and
         sets the worker's WaitMs: how long it may wait before the next cycle
         (Resolve-WorkerSchedule).
@@ -1947,8 +2218,14 @@ function Invoke-ModemWorkerCycle {
             $Worker.DriverOperation = $command.Kind
             & $publish
         }
+        if ($command.Kind -eq 'SendMessage') {
+            # A message's parts can take a minute each: the window says it is going out.
+            $Worker.MessageOperation = 'Sending'
+            & $publish
+        }
         $Worker.Results.Add((Invoke-WorkerCommand -Worker $Worker -Command $command))
         $Worker.DriverOperation = $null
+        $Worker.MessageOperation = $null
         if ($command.Kind -eq 'SetNetworkMode') {
             # A mode on trial is published at once, with its maintenance window: should the rest
             # of the cycle fail, the worker that replaces this one carries them on.
@@ -2005,7 +2282,9 @@ function Invoke-ModemWorkerCycle {
     }
 
     # A connect pass.
+    $passRan = $false
     if ((& $due).Pass) {
+        $passRan = $true
         $started = & $Worker.Clock
         $options = @{}
         if ($Worker.State) {
@@ -2123,9 +2402,24 @@ function Invoke-ModemWorkerCycle {
                 if ($code -match $script:WorkerPassUrcPattern) {
                     $Worker.PassForced = $true
                 }
+                if ($code -match $script:WorkerMessageUrcPattern) {
+                    $Worker.MessagesDue = $true
+                }
             }
         }
         $published = $true
+        & $lost
+    }
+
+    # Messages: the notices set once per port, the storage read when it may have changed - on a
+    # notice, after a command, when how full it is changed, checked after each pass. A step the
+    # modem refused waits for the next pass. None in observe-only mode: listing marks messages
+    # read on the modem.
+    if ($Worker.Channel -and $Worker.Channel.State -eq 'Open' -and -not $Worker.ObserveOnly -and (Test-WorkerSimReady -Worker $Worker) -and
+        ($passRan -or (-not $Worker.MessagesFailure -and ($Worker.MessagesDue -or -not $Worker.MessagesReady)))) {
+        if (Update-WorkerInbox -Worker $Worker) {
+            $published = $true
+        }
         & $lost
     }
 
