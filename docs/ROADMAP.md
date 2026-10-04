@@ -23,6 +23,7 @@ written `(planned)`.
 | [M7 — Packaging & first release](#m7) — tag `v1.0.0` | ✅ complete |
 | [M8 — SMS, USSD & data usage](#m8) — tag `v1.1.0` | ✅ complete |
 | [M9 — eSIM](#m9) — tag `v1.2.0` (planned) | 📋 planned |
+| [M10 — Driverless AT port & Windows on Arm](#m10) — tag `v2.0.0` (planned) | 📋 planned |
 
 ---
 
@@ -111,7 +112,8 @@ Optional, not scheduled: `+GTCAINFO` on 5G SA (question 10), where a SIM's opera
 
 "Bring your own driver", guided: the app never downloads or bundles a driver. It tells the user
 where a known copy is published and by whom; the user downloads it and hands it over; the app
-verifies it and installs it (design: ARCHITECTURE → *Drivers*).
+verifies it and installs it (design: ARCHITECTURE → *Drivers*). *Replaced in [M10](#m10): the AT
+port on Windows' own WinUSB, with no driver to bring.*
 
 - [x] Classify the modem's USB functions and their driver state (AT ports present without a driver) as a pure function, tested on a device capture: `Resolve-ModemUsbDevice`.
 - [x] Read the PnP records it classifies: done in M2 (`Get-ModemPnpRecord`), which needs it to find the AT port.
@@ -175,6 +177,34 @@ modem alone (decided 2026-10-03).
 - [ ] EID, ICCIDs and activation codes redacted in logs and fixtures.
 - [ ] UI: an eSIM page in the main window.
 - [ ] lpac bundled in the release: the release workflow downloads the pinned lpac version from its official GitHub releases, verifies its SHA-256, and puts `lpac.exe` with its license in the zip; lpac's source archive for the same tag is attached to the GitHub Release (AGPL-3.0 corresponding source). Never committed to git.
+
+<a id="m10"></a>
+## M10 — Driverless AT port & Windows on Arm
+
+The modem's vendor functions on Windows' own WinUSB driver, bound by the app: nothing for the user
+to find, download or install, and no driver in the way of Windows on Arm (facts: `AT-COMMANDS.md`
+§1.2; design: ARCHITECTURE → *Drivers*, rewritten here). A major version: the AT port stops being a
+COM port, and M6's *bring your own driver* goes.
+
+Decided by the maintainer (2026-10-04, `DEVLOG.md`):
+- **WinUSB only**, also where MediaTek's driver is installed: one transport. The serial transport and M6's driver intake are removed.
+- **Every vendor function of the modem bound**: the AT port, and those the app never opens (GNSS, log, META, NPT, debug), so none stands as an unknown device. Never the network function.
+- **Bound automatically** by the worker, when it finds a vendor function on another driver or none.
+- **Windows on Arm64 compatible in software, not verified on hardware** (none available); the README and the release notes say so.
+- **Three review passes** instead of one — an exception to `CLAUDE.md`'s single pass, for a change under every feature: after the core (transport, binding, finding the modem), after M6's removal and the UI, and at the end on the whole change since `v1.x`. Each pass's fixes with tests.
+- **The C# compiled at run time** by `Add-Type`, like the app's other Windows API calls: no DLL built or shipped.
+
+- [x] Feasibility on the device (`AT-COMMANDS.md` §1.2): the AT function bound by code to `winusb.inf`'s generic model and back to `usb2ser_tm`; the modem answering over its bulk pipes with no modem-control request; the network function up throughout, the modem never reset.
+- [ ] ARCHITECTURE: *Drivers* rewritten — the binding, the way back, what takes the *Driver* tab's place —, *AT channel* with the WinUSB transport, *Module layout*. Invariant 1 names the AT port instead of the COM port; invariant 8 covers the modem's own USB functions, whose driver is a persistent change by nature, put back by the uninstallation.
+- [ ] WinUSB transport with the serial one's shape (`Write`, `Read`, `Close`, `Lost`; `[NoRunspaceAffinity()]`): the AT function's interface found by its interface class, the bulk pair read from the interface, read timeouts by pipe policy, the errors that mean the device left → `Lost`. Tested with WinUSB mocked at the P/Invoke boundary; the AT channel, the worker and the simulated modem unchanged.
+- [ ] Binding: which functions to bind, leave or report as a pure decision over the PnP records (`Resolve-ModemUsbDevice` extended — on WinUSB with its interface class, on another driver, none; both compositions), with a matrix of tests. The I/O thin, in the worker, with administrator rights, never on the UI thread: `DeviceInterfaceGUIDs` written for the AT function first, the device's class set to `USBDevice`, the generic model chosen by its hardware ID `USB\MS_COMP_WINUSB` — never by its localized name —, `DiInstallDevice` with no UI. Never the network function, never a modem reset, never while a network mode is on trial (only the AT port can write it back). A function back as a new instance — another USB port, a re-enumeration — is bound again: an intended operation, never a failed health check.
+- [ ] Finding the modem: the AT function by PnP, no COM name anywhere — the window, the tooltip, the log and the settings say WinUSB where they named a COM port. The simulated modem's driver scenarios (`NoDriver`) follow.
+- [ ] M6's intake removed: the *Driver* tab, the blocker's *Install the driver…*, `Data/Drivers.psd1`, the package intake and verification (`Copy-DriverPackage`, `Resolve-DriverPackage`, `WinVerifyTrust`), the pnputil install and uninstall commands, their texts in the eight languages, their tests. In the tab's place: which functions are on WinUSB, and the last binding's outcome.
+- [ ] Recovery ladder reviewed for WinUSB: the steps that restart a function or the USB device, and what follows a lost transport.
+- [ ] Uninstallation: every function the app bound back on the best-matching driver (`DiInstallDevice` with no driver named) — MediaTek's when it is in the driver store, none otherwise —, `DeviceInterfaceGUIDs` removed.
+- [ ] Windows on Arm64: the installer's and the launcher's platform check accepts 64-bit Windows on x64 and on Arm64 (`AT-COMMANDS.md` §11.2); the P/Invoke declarations free of size assumptions; lpac's Arm64 build bundled beside the x64 one — pinned, SHA-256 checked, its source attached —, the app choosing by architecture.
+- [ ] Device sessions on x64: `AT-COMMANDS.md` §1.2's open questions 1–4; then a regression session repeating the earlier milestones' device checks on WinUSB — attach and connect, the recovery steps, modes and bands, messages, the eSIM's APDUs, installation and uninstallation.
+- [ ] README and `CHANGELOG.md`: the breaking change (no COM port, MediaTek's driver unused), Arm64 untested on hardware. Set `ModuleVersion` to `2.0.0` and tag `v2.0.0`.
 
 ---
 

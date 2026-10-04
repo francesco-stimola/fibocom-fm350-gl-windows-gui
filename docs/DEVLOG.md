@@ -4,6 +4,51 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-04 — Decided: M10, the AT port on Windows' own WinUSB, and Windows on Arm
+
+Taken by the maintainer, once the AT port was proven on WinUSB (next entry); planned as M10, `v2.0.0`:
+- **WinUSB only**, also where MediaTek's driver is installed. Rejected: WinUSB only where that
+  driver is missing — two transports, two ways to find the port, M6's code and every device check
+  twice, for nothing: the app owns the AT port whichever driver serves it, so a COM port helps only
+  once the app is gone, and the uninstallation gives it back (the best-matching driver).
+- **M6's driver intake removed** — the *Driver* tab, the package's verification and installation,
+  the link to a third party's copy of MediaTek's driver —, the tab replaced by the binding's state.
+- **The vendor functions the app never opens bound too**, so none stands in Device Manager as an
+  unknown device. Rejected: leaving them without a driver.
+- **Bound automatically** by the worker. Rejected: a button the first time.
+- **Windows on Arm64 compatible in software only**: no Arm64 hardware to verify it on; the README and
+  the release notes say so.
+- **Three review passes**, an exception to the single pass per milestone, for a change that sits
+  under every feature: after the core, after M6's removal and the UI, at the end on the whole change
+  since `v1.x` — plus a device session that repeats the earlier milestones' device checks.
+- **The C# compiled at run time** by `Add-Type`, like the app's other Windows API calls: a block costs
+  about 36 ms once the first is compiled, against a module import of about 0.7 s, and the same code
+  runs on x64 and Arm64. Rejected: a DLL built by the release workflow (a binary to build and ship,
+  unsigned); compiling at installation.
+- **The routes not taken to a port without MediaTek's driver**: `usbser.sys` (offered to CDC devices
+  only, excluded from selection by hand, undocumented on a bulk-only vendor interface); an INF of our
+  own (staging needs a trusted catalog signature — self-signing puts a certificate among the
+  machine's trusted roots — and Arm64 a WHQL one); a driver of our own (kernel code signed by
+  Microsoft through its hardware program, and its crash takes Windows down).
+
+## 2026-10-04 — The AT port on Windows' own WinUSB, proven on the device
+
+Whether the modem's AT port can do without MediaTek's driver — which has no Arm64 build and no
+redistribution license (`AT-COMMANDS.md` §1.2):
+- **The serial interfaces are two bulk pipes**: no interrupt endpoint, no class-specific descriptor
+  (the configuration descriptor, read from the hub). That is the shape WinUSB serves generically,
+  as Linux's `option` driver does; `usbser.sys` expects a CDC device and is hidden from selection.
+- **Bound by code**, as Device Manager does: `winusb.inf`'s generic model is offered only to a device
+  of its class, so the AT function, in `Ports`, got nothing until its class was set to `USBDevice`;
+  then `DiInstallDevice` — no restart, no package staged, nothing to sign. `DeviceInterfaceGUIDs`
+  written before the install gives the function its interface at once.
+- **The modem answered** `AT`, `+CGMI`, `+CGMM`, `+CSQ` and `+CLAC` over the bulk pipes within
+  milliseconds, with no modem-control request.
+- **Put back** with `UpdateDriverForPlugAndPlayDevices` forced on the AT port's hardware ID: the same
+  COM number, `AT` answered. The network function stayed up throughout; the modem was never reset.
+- Open (§1.2): hours on WinUSB — the codes, the SMS prompt, the eSIM's APDUs —, a response of a
+  multiple of 512 bytes, the modem leaving USB, sleep, and anything on Arm64 hardware.
+
 ## 2026-10-04 — M8: the app's icon in its notifications
 
 Tried with the real app on the device, a new message's notification showed PowerShell's icon. Probes
