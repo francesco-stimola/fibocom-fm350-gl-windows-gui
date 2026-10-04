@@ -460,8 +460,9 @@ function New-ModemSnapshot {
         MessageNotice (the last new messages announced: Sender - the newest one's -, Count, Id -
         one more each time, across worker restarts -, Time) and MessageOperation ('Sending'
         while a message goes out); Esim (Get-WorkerEsimView: the SIM slot in use and its kind,
-        whether lpac is there, the eUICC's facts and profiles - no EID, no ICCID -, the
-        notifications waiting, the eSIM command under way, the last read's failure); AppVersion; Settings, ApnPasswordStored,
+        whether lpac and ZXing.Net are there, the eUICC's EID - shown with Copy, never logged - and
+        its facts and profiles - no ICCID -, the notifications waiting, the eSIM command under way,
+        the last read's failure); AppVersion; Settings, ApnPasswordStored,
         SettingsProblems and SettingsIssues (ConvertTo-AppSetting's Problems and Issues); Results
         (the last commands' outcomes: Id, Kind, Result, Detail, AttemptsLeft, Parts - of a
         message sent: Sent, Count -, Time).
@@ -764,7 +765,7 @@ function New-ModemWorker {
         MessagesFailure   = $null
         # The eSIM (ARCHITECTURE -> eSIM): the SIM slot in use and the kind of SIM in it, read once
         # per port and after a switch; the eUICC as lpac read it last - its facts, its profiles
-        # and its pending notifications, the EID and the ICCIDs kept here, never in a snapshot -,
+        # and its pending notifications, the ICCIDs kept here, never in a snapshot -,
         # whether it is to be read again, the eSIM command under way, the last read that failed,
         # logged once.
         SimSlot           = $null
@@ -2140,26 +2141,30 @@ function Update-WorkerEsimNotification {
 }
 
 function Get-WorkerEsimView {
-    # The eSIM as a snapshot shows it: the slot in use and the kind of SIM, whether lpac is there,
-    # the eUICC's facts and profiles as read last - no EID, no ICCID -, how many notifications
+    # The eSIM as a snapshot shows it: the slot in use and the kind of SIM, whether lpac and
+    # ZXing.Net are there, the eUICC's EID - the window shows it, with Copy (decided 2026-10-04);
+    # never logged - and its facts and profiles as read last - no ICCID -, how many notifications
     # wait, when it was read, the command under way and the last read's failure.
     param([hashtable] $Worker)
 
     $info = $Worker.EsimInfo
+    # Not an if expression: it would unroll an eUICC's empty list into none read.
+    $profiles = $null
+    if ($null -ne $Worker.EsimProfiles) {
+        $profiles = [object[]]@($Worker.EsimProfiles | ForEach-Object { [pscustomobject]@{ Aid = $_.Aid; State = $_.State; Nickname = $_.Nickname; Provider = $_.Provider; Name = $_.Name; Class = $_.Class } })
+    }
     [pscustomobject]@{
         Slot           = $Worker.SimSlot
         SimType        = $Worker.SimType
         LpacAvailable  = Test-WorkerLpac -Worker $Worker
+        QrAvailable    = Test-Path -LiteralPath (Get-ZxingPath) -PathType Leaf
+        Eid            = if ($info) { $info.Eid } else { $null }
         Specification  = if ($info) { $info.Specification } else { $null }
         Firmware       = if ($info) { $info.Firmware } else { $null }
         FreeMemory     = if ($info) { $info.FreeMemory } else { $null }
         DefaultAddress = if ($info) { $info.DefaultAddress } else { $null }
-        Profiles       = if ($null -ne $Worker.EsimProfiles) {
-            [object[]]@($Worker.EsimProfiles | ForEach-Object { [pscustomobject]@{ Aid = $_.Aid; State = $_.State; Nickname = $_.Nickname; Provider = $_.Provider; Name = $_.Name; Class = $_.Class } })
-        }
-        else {
-            $null
-        }
+        Profiles       = $profiles
+
         Notifications  = if ($null -ne $Worker.EsimNotifications) { @($Worker.EsimNotifications).Count } else { $null }
         ReadAt         = $Worker.EsimReadAt
         Operation      = $Worker.EsimOperation
@@ -2183,6 +2188,7 @@ function ConvertFrom-WorkerSecret {
 
 function Invoke-WorkerEsimCommand {
     # The eSIM commands (Send-ModemCommand). Returns Result and Detail; never the activation code.
+    # A download's code is typed (ActivationCode) or read from the image of its QR code (QrImage).
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
         Justification = 'The user''s command, carried out by the worker.')]
     param([hashtable] $Worker, [string] $Kind, [hashtable] $Parameter)
@@ -2237,7 +2243,16 @@ function Invoke-WorkerEsimCommand {
     $run = $null
     switch ($Kind) {
         'DownloadProfile' {
-            $code = ConvertFrom-EsimActivationCode -Text (ConvertFrom-WorkerSecret -Value $Parameter['ActivationCode'])
+            $text = ConvertFrom-WorkerSecret -Value $Parameter['ActivationCode']
+            $image = [string]$Parameter['QrImage']
+            if ($image) {
+                $read = Read-QrCode -Path $image
+                if ($read.Problem) {
+                    return & $outcome 'NoQrCode' $read.Problem
+                }
+                $text = $read.Text
+            }
+            $code = ConvertFrom-EsimActivationCode -Text $text
             if ($code.Problem) {
                 return & $outcome 'BadCode' $code.Problem
             }

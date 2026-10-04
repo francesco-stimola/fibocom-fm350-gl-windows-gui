@@ -16,6 +16,7 @@
         'Export-AppIcon'
         'Get-AppText'
         'Get-DriverView'
+        'Get-EsimView'
         'Get-GuiResourceCount'
         'Get-MessagesView'
         'Get-NetworkModeView'

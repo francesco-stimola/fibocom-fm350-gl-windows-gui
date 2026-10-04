@@ -15,6 +15,7 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Usage.ps1')
 . (Join-Path $PSScriptRoot 'Sim.ps1')
 . (Join-Path $PSScriptRoot 'Esim.ps1')
+. (Join-Path $PSScriptRoot 'QrCode.ps1')
 . (Join-Path $PSScriptRoot 'Fcc.ps1')
 . (Join-Path $PSScriptRoot 'Modes.ps1')
 . (Join-Path $PSScriptRoot 'Connection.ps1')

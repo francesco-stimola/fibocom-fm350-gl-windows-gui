@@ -13,6 +13,9 @@ $script:NetworkModeNames = @('Automatic', 'LteOnly', 'NrOnly')
 # no more, and a text beyond it is too long without being measured on the UI thread.
 $script:MessageMaxCharacters = 255 * 153
 
+# The eSIM tab's commands: one at a time, the tab waiting for each one's outcome.
+$script:EsimCommands = @('ReadEsim', 'SelectSimSlot', 'EnableProfile', 'DisableProfile', 'SetProfileNickname', 'DeleteProfile', 'DownloadProfile')
+
 function Get-SnapshotRecovery {
     # The snapshot's recovery state, or $null.
     param([object] $Snapshot)
@@ -270,9 +273,9 @@ function ConvertTo-TrayText {
 
 function Resolve-AppBlocker {
     # What the user can do about what blocks the connection, if anything: Kind - 'Apn',
-    # 'ApnPassword', 'Pin', 'EnableAdapter', 'Unlock', 'Driver' (the Driver tab), 'Settings' (the
-    # Connection tab) or $null for a message alone - Message, ActionText, and Enabled ($false
-    # when the app can't do it now).
+    # 'ApnPassword', 'Pin', 'EnableAdapter', 'Unlock', 'Driver' (the Driver tab), 'Esim' (the eSIM
+    # tab), 'Settings' (the Connection tab) or $null for a message alone - Message, ActionText,
+    # and Enabled ($false when the app can't do it now).
     param([object] $Snapshot)
 
     if (Test-NoNetworkForMode -Snapshot $Snapshot) {
@@ -293,6 +296,7 @@ function Resolve-AppBlocker {
         'AdapterDisabled' { 'EnableAdapter', 'Blocker.EnableAdapter' }
         'FccLocked' { 'Unlock', 'Blocker.Unlock' }
         'NoDriver' { 'Driver', 'Blocker.InstallDriver' }
+        'NoProfile' { 'Esim', 'Blocker.OpenEsim' }
         { $_ -like 'Doh*' } { 'Settings', 'Blocker.OpenSettings' }
         default { $null, $null }
     }
@@ -346,9 +350,14 @@ function Get-ResultText {
         return $null
     }
     $parts = if ($last.PSObject.Properties['Parts']) { $last.Parts } else { $null }
+    # An outcome whose detail is a code of its own (an activation code's problem...): its text.
+    $detailed = if ($last.Detail -is [string] -and $last.Detail -match '^[A-Za-z]+$') { "Result.$($last.Kind).$($last.Result).$($last.Detail)" } else { $null }
     $text = if ($last.Kind -eq 'SendMessage' -and $last.Result -eq 'Failed') {
         # How many parts went out, when the worker got as far as sending.
         if ($parts) { Get-AppText 'Result.SendMessage.Failed' $parts.Sent $parts.Count } else { Get-AppText 'Result.Failed' }
+    }
+    elseif ($detailed -and (Test-AppText $detailed)) {
+        Get-AppText $detailed
     }
     elseif (Test-AppText "Result.$($last.Kind).$($last.Result)") {
         Get-AppText "Result.$($last.Kind).$($last.Result)"
@@ -936,6 +945,144 @@ function Get-UsageView {
     }
 }
 
+function Get-EsimProfileName {
+    # A profile as the user knows it: its nickname, its name, or its provider's.
+    param([object] $Entry)
+
+    foreach ($name in @($Entry.Nickname, $Entry.Name, $Entry.Provider)) {
+        if ($name) {
+            return [string]$name
+        }
+    }
+    Get-AppText 'Esim.Unnamed'
+}
+
+function Get-EsimView {
+    <#
+    .SYNOPSIS
+        The eSIM tab, and the SIM in use for the window's top panel, from the snapshot.
+    .DESCRIPTION
+        A pure function. Slots are counted from 1, as the modem names them (SUB1, SUB2). Returns
+        SimInUse (the slot in use and its SIM - the eSIM's profile enabled -, or $null while the
+        slot is unknown), StateText (why the profiles can't be managed, the command under way,
+        the last read's failure, or that there are none), Eid (shown with Copy, decided
+        2026-10-04), ChipText, NotificationText, Profiles - a row each: Aid, Name, Provider, Kind,
+        State, Enabled, Nickname -, OtherSlot (the slot 'Use slot' switches to, as the worker
+        counts it from 0) and SlotText, CanSwitch, CanRead, CanManage (enable, disable, rename,
+        delete), CanDownload, CanReadQr, QrNote, ResultIds (the outcomes of the tab's commands)
+        and Generation (the worker's).
+    .EXAMPLE
+        Get-EsimView -Snapshot $snapshot
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [AllowNull()]
+        [object] $Snapshot
+    )
+
+    $esim = Get-SnapshotValue -Snapshot $Snapshot -Name 'Esim'
+    $slot = if ($esim) { $esim.Slot } else { $null }
+    $inUse = [bool]($esim -and ($esim.SimType -eq 'Esim' -or ($null -eq $esim.SimType -and $slot -eq 1)))
+    # Not an if expression: it would unroll an eUICC's empty list into none read.
+    $profiles = $null
+    if ($esim) {
+        $profiles = $esim.Profiles
+    }
+    $enabled = @($profiles | Where-Object { $_ -and $_.State -eq 'Enabled' }) | Select-Object -First 1
+    $simInUse = if ($null -eq $slot) {
+        $null
+    }
+    elseif ($esim.SimType -eq 'Usim') {
+        Get-AppText 'SimInUse.Physical' ($slot + 1)
+    }
+    elseif ($inUse -and $enabled) {
+        Get-AppText 'SimInUse.Esim' ($slot + 1) (Get-EsimProfileName -Entry $enabled)
+    }
+    elseif ($inUse -and $null -ne $profiles) {
+        Get-AppText 'SimInUse.EsimEmpty' ($slot + 1)
+    }
+    elseif ($inUse) {
+        Get-AppText 'SimInUse.EsimUnread' ($slot + 1)
+    }
+    else {
+        Get-AppText 'SimInUse.Slot' ($slot + 1)
+    }
+
+    $connected = [bool]($Snapshot -and $Snapshot.PortName)
+    $operation = if ($esim) { $esim.Operation } else { $null }
+    $lpac = [bool]($esim -and $esim.LpacAvailable)
+    $sentences = [System.Collections.Generic.List[string]]::new()
+    if ($operation -and (Test-AppText "Esim.Operation.$operation")) {
+        $sentences.Add((Get-AppText "Esim.Operation.$operation"))
+    }
+    elseif (-not $connected) {
+        if ($Snapshot) { $sentences.Add((Get-AppText 'Esim.NoModem')) }
+    }
+    elseif ($null -eq $slot) {
+        $sentences.Add((Get-AppText 'Esim.NoSlot'))
+    }
+    elseif (-not $inUse) {
+        $sentences.Add((Get-AppText 'Esim.NotInUse'))
+    }
+    elseif (-not $lpac) {
+        $sentences.Add((Get-AppText 'Esim.NoLpac'))
+    }
+    elseif ($esim.Failure) {
+        $sentences.Add((Get-AppText 'Esim.ReadFailed' $esim.Failure))
+    }
+    elseif ($null -eq $profiles) {
+        $sentences.Add((Get-AppText 'Esim.NotRead'))
+    }
+    elseif (@($profiles).Count -eq 0) {
+        $sentences.Add((Get-AppText 'Esim.NoProfiles'))
+    }
+    if ($Snapshot -and $Snapshot.ObserveOnly) {
+        $sentences.Add((Get-AppText 'Esim.ObserveOnly'))
+    }
+
+    $rows = foreach ($item in @($profiles | Where-Object { $_ })) {
+        $state = if ($item.State -in 'Enabled', 'Disabled') { $item.State } else { 'Unknown' }
+        $class = if ($item.Class -in 'Operational', 'Test', 'Provisioning') { $item.Class } else { 'Unknown' }
+        [pscustomobject]@{
+            Aid      = [string]$item.Aid
+            Name     = Get-EsimProfileName -Entry $item
+            Provider = [string]$item.Provider
+            Kind     = Get-AppText "Esim.Class.$class"
+            State    = Get-AppText "Esim.State.$state"
+            Enabled  = $state -eq 'Enabled'
+            Nickname = [string]$item.Nickname
+        }
+    }
+    $chip = if ($inUse -and $esim.Specification) {
+        $free = if ($null -ne $esim.FreeMemory) { Format-DataSize $esim.FreeMemory } else { '?' }
+        Get-AppText 'Esim.Chip' $esim.Specification $(if ($esim.Firmware) { $esim.Firmware } else { '?' }) $free
+    }
+    $waiting = if ($inUse -and $esim.Notifications -gt 0) { Get-AppText 'Esim.Notifications' $esim.Notifications } else { $null }
+    $eid = if ($inUse -and $esim.PSObject.Properties['Eid'] -and $esim.Eid) { [string]$esim.Eid } else { $null }
+    $qr = [bool]($esim -and $esim.PSObject.Properties['QrAvailable'] -and $esim.QrAvailable)
+    $writable = $connected -and -not $Snapshot.ObserveOnly -and -not $operation
+    $other = if ($null -ne $slot) { 1 - $slot } else { $null }
+    [pscustomobject]@{
+        SimInUse         = $simInUse
+        StateText        = if ($sentences.Count) { $sentences -join ' ' } else { $null }
+        Eid              = $eid
+        ChipText         = $chip
+        NotificationText = $waiting
+        Profiles         = [object[]]@($rows)
+        OtherSlot        = $other
+        SlotText         = Get-AppText 'Esim.UseSlot' $(if ($null -ne $other) { $other + 1 } else { 2 })
+        CanSwitch        = [bool]($writable -and $null -ne $slot)
+        CanRead          = [bool]($connected -and -not $operation -and $inUse -and $lpac)
+        CanManage        = [bool]($writable -and $inUse -and $lpac -and $null -ne $profiles)
+        CanDownload      = [bool]($writable -and $inUse -and $lpac)
+        CanReadQr        = [bool]($writable -and $inUse -and $lpac -and $qr)
+        QrNote           = if ($esim -and -not $qr) { Get-AppText 'Esim.QrMissing' } else { $null }
+        ResultIds        = [string[]]@(Get-SnapshotValue -Snapshot $Snapshot -Name 'Results' | Where-Object { $_ -and $_.Kind -in $script:EsimCommands } | ForEach-Object Id)
+        Generation       = Get-SnapshotValue -Snapshot $Snapshot -Name 'Generation'
+    }
+}
+
 function Get-TrayNotice {
     <#
     .SYNOPSIS
@@ -983,11 +1130,12 @@ function ConvertTo-WindowView {
         Everything the main window shows, from the snapshot, as text.
     .DESCRIPTION
         A pure function of the snapshot and of the worker's state ('Running', 'Restarting' or
-        'NotResponding'). Returns Tone, Title, Detail, Note, Technology, Operator, Signal (lines),
-        Cells and Carriers (rows of text), Blocker (Resolve-AppBlocker's), Sim (the SIM tab),
-        NetworkMode (the network tab, Get-NetworkModeView's), Driver (the Driver tab,
-        Get-DriverView's), Messages (the Messages tab, Get-MessagesView's), Usage (the Data tab,
-        Get-UsageView's), Settings, ApnPasswordStored, Dns and Startup (the connection tab: its
+        'NotResponding'). Returns Tone, Title, Detail, Note, SimInUse, Technology, Operator,
+        Signal (lines), Cells and Carriers (rows of text), Blocker (Resolve-AppBlocker's), Sim (the
+        SIM tab), Esim (the eSIM tab, Get-EsimView's), NetworkMode (the network tab,
+        Get-NetworkModeView's), Driver (the Driver tab, Get-DriverView's), Messages (the Messages
+        tab, Get-MessagesView's), Usage (the Data tab, Get-UsageView's), Settings,
+        ApnPasswordStored, Dns and Startup (the connection tab: its
         encrypted DNS, the start at sign-in), Result (the newest command's
         outcome, as a sentence) and LastResult (its Id, Kind and Result), and Footer.
     .EXAMPLE
@@ -1080,11 +1228,13 @@ function ConvertTo-WindowView {
         if ($Snapshot.PSObject.Properties['AppVersion'] -and $Snapshot.AppVersion) { $footer.Add((Get-AppText 'Footer.Version' $Snapshot.AppVersion)) }
     }
 
+    $esim = Get-EsimView -Snapshot $Snapshot
     [pscustomobject]@{
         Tone              = $tone
         Title             = Get-AppTitle -Snapshot $Snapshot -Tone $tone
         Detail            = $detail
         Note              = if ($notes.Count) { $notes -join ' ' } else { $null }
+        SimInUse          = if ($Worker -eq 'Running') { $esim.SimInUse } else { $null }
         Technology        = if ($radio -and $radio.NrAvailable) { Get-AppText 'Window.NrAvailable' $radio.Technology } elseif ($radio) { $radio.Technology } else { $null }
         Operator          = if ($radio) { Format-Operator -Operator $radio.Operator } else { $null }
         Bars              = if ($radio) { $radio.Bars } else { $null }
@@ -1093,6 +1243,7 @@ function ConvertTo-WindowView {
         Carriers          = [object[]]$carriers
         Blocker           = if ($Snapshot -and $Worker -eq 'Running') { Resolve-AppBlocker -Snapshot $Snapshot } else { $null }
         Sim               = if ($Snapshot) { Get-SimView -Snapshot $Snapshot } else { $null }
+        Esim              = $esim
         NetworkMode       = Get-NetworkModeView -Snapshot $Snapshot
         Driver            = Get-DriverView -Snapshot $Snapshot -Worker $Worker -Known @(Get-KnownDriverPackage)
         Messages          = Get-MessagesView -Snapshot $Snapshot

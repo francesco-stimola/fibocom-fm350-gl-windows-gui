@@ -896,11 +896,41 @@ Describe 'The worker and the eSIM' {
         $snapshot.Esim.Notifications | Should -Be 0
     }
 
-    It 'carries no EID and no ICCID in its snapshot' {
+    It 'carries the EID in its snapshot, for the window to show (decided 2026-10-04), and no ICCID' {
         $script:worker = Get-EsimWorker -Scenario Esim
-        $text = $script:link['Snapshot'] | ConvertTo-Json -Depth 8
-        $text | Should -Not -Match '8900100000'
-        $script:worker.EsimInfo.Eid | Should -Not -BeNullOrEmpty
+        $snapshot = $script:link['Snapshot']
+        $snapshot.Esim.Eid | Should -Be $script:device.Modem.Euicc.Eid
+        $text = ($snapshot | ConvertTo-Json -Depth 8).Replace($snapshot.Esim.Eid, '<eid>')
+        foreach ($iccid in @($script:device.Modem.Euicc.Profiles | ForEach-Object Iccid)) {
+            $text | Should -Not -Match $iccid
+        }
+        $snapshot.Esim.Profiles[0].PSObject.Properties.Name | Should -Not -Contain 'Iccid'
+    }
+
+    It 'publishes an eUICC with no profile as read, with none' {
+        $script:worker = Get-EsimWorker -Scenario EsimEmpty
+        (Invoke-EsimCommand -Worker $script:worker -Kind DeleteProfile -Parameter @{ Aid = 'A0000005591010FFFFFFFF8900002000' }).Result | Should -Be 'Done'
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $profiles = $script:link['Snapshot'].Esim.Profiles
+        $null -eq $profiles | Should -BeFalse -Because 'an empty list is not a list never read'
+        @($profiles).Count | Should -Be 0
+    }
+
+    It 'says whether ZXing.Net is there to read a QR code' {
+        $script:worker = Get-EsimWorker -Scenario Esim
+        $script:link['Snapshot'].Esim.QrAvailable | Should -Be (Test-Path -LiteralPath (Get-ZxingPath) -PathType Leaf)
+    }
+
+    It 'refuses to download from an image it can''t read a code from: <Name>' -ForEach @(
+        @{ Name = 'no file'; Make = { Join-Path $TestDrive 'missing.png' }; Detail = 'NotImage' }
+        @{ Name = 'not an image'; Make = { $path = Join-Path $TestDrive 'code.png'; Set-Content -LiteralPath $path -Value 'LPA:1$smdp.example.com$ABC'; $path }; Detail = 'NotImage' }
+    ) {
+        $script:worker = Get-EsimWorker -Scenario Esim
+        $before = $script:device.Modem.Received.Count
+        $outcome = Invoke-EsimCommand -Worker $script:worker -Kind DownloadProfile -Parameter @{ QrImage = (& $Make) }
+        $outcome.Result | Should -Be 'NoQrCode'
+        $outcome.Detail | Should -Be $Detail
+        @($script:device.Modem.Received | Select-Object -Skip $before | Where-Object { $_ -like 'AT+CGLA=*' }) | Should -BeNullOrEmpty
     }
 
     It 'reads no eUICC while slot 0 is in use' {

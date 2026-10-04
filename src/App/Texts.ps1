@@ -47,10 +47,12 @@ function Read-AppTextTable {
     param([string] $Language)
 
     $folder = Join-Path -Path $PSScriptRoot -ChildPath 'Strings'
-    $texts = Import-PowerShellDataFile -LiteralPath (Join-Path -Path $folder -ChildPath 'en.psd1')
+    # More than the 500 keys a data file may hold by default: the app's own tables, installed where
+    # only administrators write.
+    $texts = Import-PowerShellDataFile -LiteralPath (Join-Path -Path $folder -ChildPath 'en.psd1') -SkipLimitCheck
     if ($Language -and $Language -ne 'en') {
         try {
-            $own = Import-PowerShellDataFile -LiteralPath (Join-Path -Path $folder -ChildPath "$Language.psd1") -ErrorAction Stop
+            $own = Import-PowerShellDataFile -LiteralPath (Join-Path -Path $folder -ChildPath "$Language.psd1") -SkipLimitCheck -ErrorAction Stop
             foreach ($key in $own.Keys) {
                 $texts[$key] = $own[$key]
             }

@@ -4,7 +4,7 @@
 
 # The controls the code reaches by name; New-MainWindow fails at once if the XAML lacks one.
 $script:WindowControlNames = @(
-    'ToneDot', 'TitleText', 'TechnologyText', 'OperatorText', 'DetailText', 'NoteText'
+    'ToneDot', 'TitleText', 'TechnologyText', 'OperatorText', 'DetailText', 'SimInUseText', 'NoteText'
     'BlockerPanel', 'BlockerText', 'BlockerInput', 'BlockerSecret', 'BlockerButton'
     'ResultText', 'FooterText', 'CheckNowButton'
     'SignalText', 'CellsGrid', 'CarriersGrid'
@@ -17,6 +17,9 @@ $script:WindowControlNames = @(
     'MessagesTab', 'MessagesStateText', 'MessagesGrid', 'MessageHeaderText', 'DeleteMessageButton', 'MessageBodyText', 'MessageNoteText'
     'MessageToBox', 'MessageTextBox', 'MessageCountText', 'SendMessageButton'
     'DataTab', 'UsageTodayText', 'UsageCycleText', 'UsageQuotaText', 'UsageQuotaBar', 'CycleDayBox', 'QuotaBox', 'SaveUsageButton', 'ReloadUsageButton', 'UsageProblemText'
+    'EsimTab', 'EsimSlotText', 'EsimStateText', 'SelectSlotButton', 'EidPanel', 'EidBox', 'CopyEidButton', 'EsimChipText', 'EsimNotificationText', 'ReadEsimButton'
+    'ProfilesGrid', 'EnableProfileButton', 'DisableProfileButton', 'DeleteProfileButton', 'NicknameBox', 'RenameProfileButton'
+    'ActivationCodeBox', 'ReadQrButton', 'QrImageText', 'ConfirmationCodeBox', 'DownloadProfileButton', 'EsimHintText'
 )
 
 # The quota bar's colours: below the first threshold, and from it on.
@@ -34,7 +37,10 @@ function New-MainWindow {
         parameters (Send-ModemCommand's), and must not wait. -Ask asks the user a question
         and returns $true when they agree; a modal Yes/No dialog by default, No preselected.
         -Choose asks for a driver package and returns its path, or nothing; a file dialog by
-        default (a zip, or an INF in its folder). -Open shows a web page; by default Explorer
+        default (a zip, or an INF in its folder). -ChooseImage asks for the image of a QR code
+        likewise. -AskName asks the user to type a name to confirm: param($title, $message,
+        $name), $true once typed; a dialog of its own by default. -Copy puts a text on the clipboard,
+        and throws when it can't. -Open shows a web page; by default Explorer
         hands it to the user's browser - the app runs elevated, and should never start a browser
         itself. Closing the window hides it: the app stays in the tray. -AppUserModelId is the
         window's identity on the taskbar (AppIdentity.ps1); the app's by default.
@@ -55,6 +61,12 @@ function New-MainWindow {
         [scriptblock] $Ask,
 
         [scriptblock] $Choose,
+
+        [scriptblock] $ChooseImage,
+
+        [scriptblock] $AskName,
+
+        [scriptblock] $Copy = { param($text) [System.Windows.Clipboard]::SetText($text) },
 
         [scriptblock] $Open,
 
@@ -96,6 +108,19 @@ function New-MainWindow {
             }
         }
     }
+    if (-not $ChooseImage) {
+        $ChooseImage = {
+            $dialog = [Microsoft.Win32.OpenFileDialog]::new()
+            $dialog.Title = Get-AppText 'Esim.QrTitle'
+            $dialog.Filter = "$(Get-AppText 'Esim.QrKind') (*.png, *.jpg, *.jpeg, *.bmp, *.gif, *.tif, *.tiff)|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff"
+            if ($dialog.ShowDialog($script:MainWindow.Window)) {
+                $dialog.FileName
+            }
+        }
+    }
+    if (-not $AskName) {
+        $AskName = { param($title, $message, $name) Confirm-WindowTypedName -Title $title -Message $message -Name $name }
+    }
     if (-not $Open) {
         $Open = {
             param($url)
@@ -110,6 +135,9 @@ function New-MainWindow {
         Send         = $Send
         Ask          = $Ask
         Choose       = $Choose
+        ChooseImage  = $ChooseImage
+        AskName      = $AskName
+        Copy         = $Copy
         Open         = $Open
         View         = $null
         # The settings the form was last filled with, and the newest command outcome seen.
@@ -135,6 +163,13 @@ function New-MainWindow {
         SentText      = $null
         # A message sent and not answered yet: its command's Id and the worker that has it.
         SendPending   = $null
+        # The eSIM tab: the profiles as last shown, the one the user selected, the image of a QR
+        # code chosen, a hint until the next action, and a command waiting for its outcome.
+        ProfilesShown = $null
+        SelectedAid   = $null
+        QrImage       = $null
+        EsimHint      = $null
+        EsimPending   = $null
         Updating      = $false
         Exiting      = $false
     }
@@ -228,6 +263,23 @@ function New-MainWindow {
                 Update-MainWindow -View $script:MainWindow.View
             }
         })
+    $controls.SelectSlotButton.Add_Click({ Invoke-WindowSlotSwitch })
+    $controls.CopyEidButton.Add_Click({ Copy-WindowEid })
+    $controls.ReadEsimButton.Add_Click({ Send-WindowEsimCommand -Kind 'ReadEsim' })
+    $controls.ProfilesGrid.Add_SelectionChanged({ Select-WindowProfile })
+    $controls.EnableProfileButton.Add_Click({ Invoke-WindowProfileSwitch -Kind 'EnableProfile' })
+    $controls.DisableProfileButton.Add_Click({ Invoke-WindowProfileSwitch -Kind 'DisableProfile' })
+    $controls.DeleteProfileButton.Add_Click({ Invoke-WindowProfileDelete })
+    $controls.RenameProfileButton.Add_Click({ Invoke-WindowProfileRename })
+    $controls.ReadQrButton.Add_Click({ Select-WindowQrImage })
+    $controls.ActivationCodeBox.Add_PasswordChanged({
+            # A code typed takes the place of an image chosen.
+            if ($script:MainWindow.Controls.ActivationCodeBox.SecurePassword.Length -gt 0 -and $script:MainWindow.QrImage) {
+                $script:MainWindow.QrImage = $null
+                Show-WindowEsimForm
+            }
+        })
+    $controls.DownloadProfileButton.Add_Click({ Send-WindowProfileDownload })
     $script:MainWindow
 }
 
@@ -446,6 +498,9 @@ function Invoke-BlockerAction {
         'Driver' {
             $controls.Tabs.SelectedItem = $controls.DriverTab
         }
+        'Esim' {
+            $controls.Tabs.SelectedItem = $controls.EsimTab
+        }
         'Settings' {
             $controls.Tabs.SelectedItem = $controls.ConnectionTab
         }
@@ -465,6 +520,278 @@ function Invoke-WindowDriverInstall {
     elseif (& $script:MainWindow.Ask (Get-AppText 'Confirm.UnknownDriverTitle') (Get-AppText 'Confirm.UnknownDriver')) {
         & $script:MainWindow.Send 'InstallDriver' @{ AcceptUnknown = $true }
     }
+}
+
+function New-WindowTypedNameDialog {
+    # The dialog that asks for -Name to be typed before its action: its button works once the
+    # text matches, blanks and case aside. Returns Window, Box and Button.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Creates an in-memory window; changes no system state.')]
+    param([string] $Title, [string] $Message, [string] $Name)
+
+    $dialog = [System.Windows.Window]::new()
+    $dialog.Title = $Title
+    $dialog.SizeToContent = 'Height'
+    $dialog.Width = 440
+    $dialog.ResizeMode = 'NoResize'
+    $dialog.ShowInTaskbar = $false
+    $dialog.WindowStartupLocation = 'CenterOwner'
+    if ($script:MainWindow -and $script:MainWindow.Window.IsVisible) {
+        $dialog.Owner = $script:MainWindow.Window
+    }
+    $panel = [System.Windows.Controls.StackPanel]::new()
+    $panel.Margin = [System.Windows.Thickness]::new(14)
+    $text = [System.Windows.Controls.TextBlock]::new()
+    $text.Text = $Message
+    $text.TextWrapping = 'Wrap'
+    $box = [System.Windows.Controls.TextBox]::new()
+    $box.Margin = [System.Windows.Thickness]::new(0, 10, 0, 0)
+    $buttons = [System.Windows.Controls.StackPanel]::new()
+    $buttons.Orientation = 'Horizontal'
+    $buttons.HorizontalAlignment = 'Right'
+    $buttons.Margin = [System.Windows.Thickness]::new(0, 12, 0, 0)
+    $yes = [System.Windows.Controls.Button]::new()
+    $yes.Content = Get-AppText 'Confirm.Delete'
+    $yes.Padding = [System.Windows.Thickness]::new(12, 2, 12, 2)
+    $yes.IsEnabled = $false
+    $no = [System.Windows.Controls.Button]::new()
+    $no.Content = Get-AppText 'Confirm.Cancel'
+    $no.Padding = [System.Windows.Thickness]::new(12, 2, 12, 2)
+    $no.Margin = [System.Windows.Thickness]::new(8, 0, 0, 0)
+    $no.IsCancel = $true
+    [void]$buttons.Children.Add($yes)
+    [void]$buttons.Children.Add($no)
+    foreach ($child in @($text, $box, $buttons)) {
+        [void]$panel.Children.Add($child)
+    }
+    $dialog.Content = $panel
+    $expected = $Name.Trim()
+    $box.Add_TextChanged({ $yes.IsEnabled = [string]::Equals($box.Text.Trim(), $expected, [System.StringComparison]::OrdinalIgnoreCase) }.GetNewClosure())
+    $yes.Add_Click({ $dialog.DialogResult = $true }.GetNewClosure())
+    [pscustomobject]@{ Window = $dialog; Box = $box; Button = $yes }
+}
+
+function Confirm-WindowTypedName {
+    # Shows the dialog that asks for -Name to be typed; $true when the user confirmed.
+    param([string] $Title, [string] $Message, [string] $Name)
+
+    $dialog = New-WindowTypedNameDialog -Title $Title -Message $Message -Name $Name
+    [void]$dialog.Box.Focus()
+    [bool]$dialog.Window.ShowDialog()
+}
+
+function Get-WindowProfile {
+    # The profile selected in the eSIM tab's list, or $null.
+    $script:MainWindow.Controls.ProfilesGrid.SelectedItem
+}
+
+function Send-WindowEsimCommand {
+    # Sends one of the eSIM tab's commands; the tab's buttons wait for its outcome.
+    param([string] $Kind, [hashtable] $Parameter = @{})
+
+    $script:MainWindow.EsimHint = $null
+    $id = & $script:MainWindow.Send $Kind $Parameter
+    if ($id) {
+        $view = $script:MainWindow.View
+        $script:MainWindow.EsimPending = @{ Id = [string]$id; Generation = $(if ($view -and $view.Esim) { $view.Esim.Generation }) }
+    }
+    if ($script:MainWindow.View) {
+        Update-MainWindow -View $script:MainWindow.View
+    }
+}
+
+function Invoke-WindowSlotSwitch {
+    # Use slot N: once the user confirmed it, No preselected - the modem keeps the slot, the
+    # connection drops, and an eSIM with no profile enabled has no network (decided 2026-10-04).
+    $view = $script:MainWindow.View
+    if (-not $view -or -not $view.Esim -or -not $view.Esim.CanSwitch) {
+        return
+    }
+    $slot = [int]$view.Esim.OtherSlot
+    if (& $script:MainWindow.Ask (Get-AppText 'Confirm.SelectSlotTitle') (Get-AppText 'Confirm.SelectSlot' ($slot + 1))) {
+        Send-WindowEsimCommand -Kind 'SelectSimSlot' -Parameter @{ Slot = $slot }
+    }
+}
+
+function Copy-WindowEid {
+    # The EID, to the clipboard: providers ask for it to sell a plan. Another program may hold the
+    # clipboard: a handler that throws would end the app.
+    $eid = $script:MainWindow.Controls.EidBox.Text
+    if (-not $eid) {
+        return
+    }
+    try {
+        & $script:MainWindow.Copy $eid
+        $script:MainWindow.EsimHint = $null
+    }
+    catch {
+        $script:MainWindow.EsimHint = Get-AppText 'Esim.CopyFailed'
+    }
+    Show-WindowEsimForm
+}
+
+function Select-WindowProfile {
+    # A profile the user selected: remembered across refreshes, its nickname in the box.
+    $item = Get-WindowProfile
+    if (-not $script:MainWindow.Updating) {
+        $script:MainWindow.SelectedAid = if ($item) { $item.Aid } else { $null }
+        $script:MainWindow.Controls.NicknameBox.Text = if ($item) { $item.Nickname } else { '' }
+    }
+    Sync-WindowProfileButton
+}
+
+function Invoke-WindowProfileSwitch {
+    # Enable or Disable: the selected profile, once the user confirmed it - the SIM restarts.
+    param([string] $Kind)
+
+    $item = Get-WindowProfile
+    if (-not $item) {
+        return
+    }
+    $key = if ($Kind -eq 'EnableProfile') { 'EnableProfile' } else { 'DisableProfile' }
+    if (& $script:MainWindow.Ask (Get-AppText "Confirm.${key}Title") (Get-AppText "Confirm.$key" $item.Name)) {
+        Send-WindowEsimCommand -Kind $Kind -Parameter @{ Aid = [string]$item.Aid }
+    }
+}
+
+function Invoke-WindowProfileDelete {
+    # Delete: the selected profile, once the user typed its name - it can't be undone, and the
+    # provider must give a new code to have it back (decided 2026-10-04).
+    $item = Get-WindowProfile
+    if ($item -and (& $script:MainWindow.AskName (Get-AppText 'Confirm.DeleteProfileTitle') (Get-AppText 'Confirm.DeleteProfile' $item.Name) $item.Name)) {
+        Send-WindowEsimCommand -Kind 'DeleteProfile' -Parameter @{ Aid = [string]$item.Aid }
+    }
+}
+
+function Invoke-WindowProfileRename {
+    # Rename: the nickname as typed, blanks around it taken off; none clears it. Checked here as
+    # the worker checks it (SGP.22: 64 bytes of UTF-8 at most).
+    $item = Get-WindowProfile
+    if (-not $item) {
+        return
+    }
+    $nickname = $script:MainWindow.Controls.NicknameBox.Text.Trim()
+    if ([System.Text.Encoding]::UTF8.GetByteCount($nickname) -gt 64 -or $nickname -match '\p{Cc}') {
+        $script:MainWindow.EsimHint = Get-AppText 'Esim.NicknameInvalid'
+        Show-WindowEsimForm
+        return
+    }
+    Send-WindowEsimCommand -Kind 'SetProfileNickname' -Parameter @{ Aid = [string]$item.Aid; Nickname = $nickname }
+}
+
+function Select-WindowQrImage {
+    # Read a QR code: the image chosen, read by the worker when the download starts - the code
+    # never passes through the window. It takes the place of a code typed.
+    $path = & $script:MainWindow.ChooseImage
+    if ($path) {
+        $script:MainWindow.QrImage = [string]$path
+        $script:MainWindow.EsimHint = $null
+        $script:MainWindow.Controls.ActivationCodeBox.Clear()
+        Show-WindowEsimForm
+    }
+}
+
+function Send-WindowProfileDownload {
+    # Download: from the image chosen, or the code typed, with the confirmation code if one is
+    # typed. No dialog: the tab says the EID reaches the provider (decided 2026-10-04).
+    $controls = $script:MainWindow.Controls
+    $parameter = @{}
+    if ($script:MainWindow.QrImage) {
+        $parameter['QrImage'] = $script:MainWindow.QrImage
+    }
+    elseif ($controls.ActivationCodeBox.SecurePassword.Length -gt 0) {
+        $parameter['ActivationCode'] = $controls.ActivationCodeBox.SecurePassword
+    }
+    else {
+        $script:MainWindow.EsimHint = Get-AppText 'Esim.CodeFirst'
+        Show-WindowEsimForm
+        return
+    }
+    if ($controls.ConfirmationCodeBox.SecurePassword.Length -gt 0) {
+        $parameter['ConfirmationCode'] = $controls.ConfirmationCodeBox.SecurePassword
+    }
+    Send-WindowEsimCommand -Kind 'DownloadProfile' -Parameter $parameter
+}
+
+function Clear-WindowEsimForm {
+    # The download's form emptied: after a download done.
+    $controls = $script:MainWindow.Controls
+    $controls.ActivationCodeBox.Clear()
+    $controls.ConfirmationCodeBox.Clear()
+    $script:MainWindow.QrImage = $null
+}
+
+function Show-WindowEsimForm {
+    # The image of a QR code chosen, and the hint of the last action.
+    $controls = $script:MainWindow.Controls
+    $image = $script:MainWindow.QrImage
+    $controls.QrImageText.Text = if ($image) { Get-AppText 'Esim.QrChosen' ([System.IO.Path]::GetFileName($image)) } else { '' }
+    $controls.QrImageText.Visibility = if ($image) { 'Visible' } else { 'Collapsed' }
+    $controls.EsimHintText.Text = [string]$script:MainWindow.EsimHint
+    $controls.EsimHintText.Visibility = if ($script:MainWindow.EsimHint) { 'Visible' } else { 'Collapsed' }
+}
+
+function Sync-WindowProfileButton {
+    # The profile buttons follow the selection: Enable for one not enabled, Disable for the one
+    # enabled, Delete for one not enabled; none while a command waits for its outcome.
+    $controls = $script:MainWindow.Controls
+    $view = $script:MainWindow.View
+    $can = [bool]($view -and $view.Esim -and $view.Esim.CanManage -and -not $script:MainWindow.EsimPending)
+    $item = Get-WindowProfile
+    $controls.EnableProfileButton.IsEnabled = $can -and $item -and -not $item.Enabled
+    $controls.DisableProfileButton.IsEnabled = $can -and $item -and $item.Enabled
+    $controls.DeleteProfileButton.IsEnabled = $can -and $item -and -not $item.Enabled
+    $controls.RenameProfileButton.IsEnabled = $can -and [bool]$item
+    $controls.NicknameBox.IsEnabled = $can -and [bool]$item
+}
+
+function Show-WindowEsim {
+    # The eSIM tab, from the view. The list is filled again only when it changed, and the user's
+    # selection kept.
+    param([object] $View)
+
+    $controls = $script:MainWindow.Controls
+    $esim = $View.Esim
+    # A command waiting for its outcome: until the worker has answered it, or another worker took
+    # over - the command went with the one that ended.
+    $pending = $script:MainWindow.EsimPending
+    if ($pending -and ($pending.Id -in @($esim.ResultIds) -or $esim.Generation -ne $pending.Generation)) {
+        $script:MainWindow.EsimPending = $null
+    }
+    $waiting = [bool]$script:MainWindow.EsimPending
+    $controls.EsimSlotText.Text = [string]$esim.SimInUse
+    $controls.EsimStateText.Text = [string]$esim.StateText
+    $controls.EsimStateText.Visibility = if ($esim.StateText) { 'Visible' } else { 'Collapsed' }
+    $controls.SelectSlotButton.Content = $esim.SlotText
+    $controls.SelectSlotButton.IsEnabled = $esim.CanSwitch -and -not $waiting
+    $controls.EidPanel.Visibility = if ($esim.Eid) { 'Visible' } else { 'Collapsed' }
+    $controls.EidBox.Text = [string]$esim.Eid
+    $controls.EsimChipText.Text = [string]$esim.ChipText
+    $controls.EsimChipText.Visibility = if ($esim.ChipText) { 'Visible' } else { 'Collapsed' }
+    $controls.EsimNotificationText.Text = [string]$esim.NotificationText
+    $controls.EsimNotificationText.Visibility = if ($esim.NotificationText) { 'Visible' } else { 'Collapsed' }
+    $controls.ReadEsimButton.IsEnabled = $esim.CanRead -and -not $waiting
+    $signature = @($esim.Profiles | ForEach-Object { "$($_.Aid)|$($_.Name)|$($_.State)|$($_.Kind)|$($_.Nickname)" }) -join ';'
+    if ($signature -ne $script:MainWindow.ProfilesShown) {
+        $script:MainWindow.Updating = $true
+        try {
+            $controls.ProfilesGrid.ItemsSource = $esim.Profiles
+            $controls.ProfilesGrid.SelectedItem = @($esim.Profiles | Where-Object { $_.Aid -eq $script:MainWindow.SelectedAid }) | Select-Object -First 1
+            $selected = Get-WindowProfile
+            $controls.NicknameBox.Text = if ($selected) { $selected.Nickname } else { '' }
+        }
+        finally {
+            $script:MainWindow.Updating = $false
+        }
+        $script:MainWindow.ProfilesShown = $signature
+    }
+    Sync-WindowProfileButton
+    $controls.ActivationCodeBox.IsEnabled = $esim.CanDownload
+    $controls.ConfirmationCodeBox.IsEnabled = $esim.CanDownload
+    $controls.ReadQrButton.IsEnabled = $esim.CanReadQr
+    $controls.ReadQrButton.ToolTip = $esim.QrNote
+    $controls.DownloadProfileButton.IsEnabled = $esim.CanDownload -and -not $waiting
+    Show-WindowEsimForm
 }
 
 function Get-WindowBandChoice {
@@ -689,6 +1016,9 @@ function Update-MainWindow {
     $controls.TechnologyText.Text = [string]$View.Technology
     $controls.OperatorText.Text = [string]$View.Operator
     $controls.DetailText.Text = $View.Detail
+    $simInUse = if ($View.PSObject.Properties['SimInUse']) { $View.SimInUse } else { $null }
+    $controls.SimInUseText.Text = [string]$simInUse
+    $controls.SimInUseText.Visibility = & $show $simInUse
     $controls.NoteText.Text = [string]$View.Note
     $controls.NoteText.Visibility = & $show $View.Note
 
@@ -755,6 +1085,12 @@ function Update-MainWindow {
         if ($newest.Kind -eq 'SetNetworkMode') {
             $script:MainWindow.FormMode = $null
         }
+        if ($newest.Kind -eq 'DownloadProfile' -and $newest.Result -eq 'Done') {
+            Clear-WindowEsimForm
+        }
+    }
+    if ($View.PSObject.Properties['Esim'] -and $View.Esim) {
+        Show-WindowEsim -View $View
     }
     if ($View.NetworkMode) {
         Show-WindowNetworkMode -View $View

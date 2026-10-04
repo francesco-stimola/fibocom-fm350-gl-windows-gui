@@ -973,3 +973,189 @@ Describe 'Message command outcomes' {
         (ConvertTo-WindowView -Snapshot (Copy-Snapshot $script:online @{ Results = @($opened) })).Result | Should -BeNullOrEmpty
     }
 }
+
+Describe 'The eSIM tab' {
+    BeforeAll {
+        # The snapshot after the cycles that read the eUICC.
+        function Get-EsimSnapshot {
+            param([string] $Scenario, [hashtable] $Extra = @{})
+            $link = New-ModemWorkerLink
+            $device = New-SimulatedDevice -Scenario $Scenario
+            $device.Modem.Euicc.ResetMs = 0
+            $worker = New-ModemWorker -Link $link -Simulation $device -DataFolder (Join-Path $TestDrive ([guid]::NewGuid())) @Extra
+            try {
+                for ($i = 0; $i -lt 3; $i++) { Invoke-ModemWorkerCycle -Worker $worker }
+                $link['Snapshot']
+            }
+            finally {
+                Close-ModemWorker -Worker $worker
+                Close-ModemWorkerLink -Link $link
+            }
+        }
+
+        # A copy of a snapshot whose eSIM has some properties changed.
+        function Copy-Esim {
+            param([object] $Snapshot, [hashtable] $Change = @{}, [hashtable] $Outer = @{})
+            $esim = $Snapshot.Esim | Select-Object -Property *
+            foreach ($key in $Change.Keys) {
+                $esim.$key = $Change[$key]
+            }
+            Copy-Snapshot $Snapshot (@{ Esim = $esim } + $Outer)
+        }
+
+        $script:empty = Get-EsimSnapshot -Scenario EsimEmpty
+        $script:esim = Get-EsimSnapshot -Scenario Esim
+    }
+
+    It 'shows the eSIM in use with no profile enabled, its profile, and the way out of the block' {
+        $view = ConvertTo-WindowView -Snapshot $script:empty
+        $view.SimInUse | Should -Be 'SIM in use: slot 2, the eSIM, no profile enabled.' -Because 'slots are counted from 1, as the modem names them'
+        $view.Esim.SimInUse | Should -Be $view.SimInUse
+        $view.Blocker.Kind | Should -Be 'Esim'
+        $view.Blocker.ActionText | Should -Be 'Open eSIM'
+        $view.Blocker.Message | Should -Be 'The eSIM has no profile enabled.'
+        @($view.Esim.Profiles).Count | Should -Be 1
+        $row = $view.Esim.Profiles[0]
+        $row.Name | Should -Be 'Lab test profile'
+        $row.Provider | Should -Be 'Example Lab'
+        $row.Kind | Should -Be 'Test'
+        $row.State | Should -Be 'Disabled'
+        $row.Enabled | Should -BeFalse
+        $view.Esim.StateText | Should -BeNullOrEmpty
+        $view.Esim.SlotText | Should -Be 'Use slot 1...'
+        $view.Esim.OtherSlot | Should -Be 0
+        foreach ($can in 'CanSwitch', 'CanRead', 'CanManage', 'CanDownload') {
+            $view.Esim.$can | Should -BeTrue -Because $can
+        }
+    }
+
+    It 'shows the EID, the chip and the notifications waiting' {
+        $view = Get-EsimView -Snapshot (Copy-Esim $script:esim @{ Notifications = 2 })
+        $view.Eid | Should -Be $script:esim.Esim.Eid
+        $view.Eid | Should -Match '^\d{32}$'
+        $view.ChipText | Should -Match '^eUICC: SGP\.22 2\.2\.2, firmware .+, .+ free\.$'
+        $view.NotificationText | Should -Be 'Notifications waiting for the providers'' servers: 2. They are sent at the next read.'
+    }
+
+    It 'names the profile enabled in the SIM in use: its nickname first' {
+        (ConvertTo-WindowView -Snapshot $script:esim).SimInUse | Should -Be 'SIM in use: slot 2, the eSIM - Travel.'
+        $enabled = (Get-EsimView -Snapshot $script:esim).Profiles | Where-Object Enabled
+        $enabled.Name | Should -Be 'Travel'
+        $enabled.Kind | Should -Be 'Operator'
+        $enabled.State | Should -Be 'Enabled'
+    }
+
+    It 'names a profile by <Expected>' -ForEach @(
+        @{ Nickname = 'Mine'; Name = 'Plan'; Provider = 'Op'; Expected = 'Mine' }
+        @{ Nickname = $null; Name = 'Plan'; Provider = 'Op'; Expected = 'Plan' }
+        @{ Nickname = $null; Name = $null; Provider = 'Op'; Expected = 'Op' }
+        @{ Nickname = $null; Name = $null; Provider = $null; Expected = '(no name)' }
+    ) {
+        $entry = [pscustomobject]@{ Aid = 'A0000005591010FFFFFFFF8900003000'; State = 'Disabled'; Nickname = $Nickname; Provider = $Provider; Name = $Name; Class = 'Operational' }
+        (Get-EsimView -Snapshot (Copy-Esim $script:empty @{ Profiles = [object[]]@($entry) })).Profiles[0].Name | Should -Be $Expected
+    }
+
+    It 'shows a physical SIM in use, the eSIM''s slot offered, nothing of the eSIM managed' {
+        $view = ConvertTo-WindowView -Snapshot $script:online
+        $view.SimInUse | Should -Be 'SIM in use: slot 1, a physical SIM.'
+        $view.Esim.StateText | Should -Be 'The eSIM''s profiles can be managed only while its slot is in use.'
+        $view.Esim.SlotText | Should -Be 'Use slot 2...'
+        $view.Esim.OtherSlot | Should -Be 1
+        $view.Esim.CanSwitch | Should -BeTrue
+        foreach ($can in 'CanRead', 'CanManage', 'CanDownload', 'CanReadQr') {
+            $view.Esim.$can | Should -BeFalse -Because $can
+        }
+        $view.Esim.Eid | Should -BeNullOrEmpty
+        $view.Esim.Profiles | Should -BeNullOrEmpty
+    }
+
+    It 'says <Name>, and what can''t be done' -ForEach @(
+        @{ Name = 'a command under way'; Change = @{ Operation = 'DownloadProfile' }; Outer = @{}; Text = 'Downloading the profile: this can take a minute...'; Switch = $false; Read = $false; Manage = $false; Download = $false }
+        @{ Name = 'lpac missing'; Change = @{ LpacAvailable = $false }; Outer = @{}; Text = 'lpac is not installed with the app: the eSIM''s profiles can''t be managed.'; Switch = $true; Read = $false; Manage = $false; Download = $false }
+        @{ Name = 'a read that failed'; Change = @{ Failure = 'chip info: Timeout' }; Outer = @{}; Text = 'The eSIM could not be read: chip info: Timeout'; Switch = $true; Read = $true; Manage = $true; Download = $true }
+        @{ Name = 'an eUICC not read yet'; Change = @{ Profiles = $null }; Outer = @{}; Text = 'The eSIM has not been read yet.'; Switch = $true; Read = $true; Manage = $false; Download = $true }
+        @{ Name = 'an eUICC with no profile'; Change = @{ Profiles = [object[]]@() }; Outer = @{}; Text = 'The eSIM holds no profile.'; Switch = $true; Read = $true; Manage = $true; Download = $true }
+        @{ Name = 'a slot not read yet'; Change = @{ Slot = $null; SimType = $null }; Outer = @{}; Text = 'The SIM slot in use has not been read yet.'; Switch = $false; Read = $false; Manage = $false; Download = $false }
+        @{ Name = 'no modem'; Change = @{}; Outer = @{ PortName = $null }; Text = 'The modem is not connected.'; Switch = $false; Read = $false; Manage = $false; Download = $false }
+        @{ Name = 'observe-only'; Change = @{}; Outer = @{ ObserveOnly = $true }; Text = 'The app only observes: it changes nothing.'; Switch = $false; Read = $true; Manage = $false; Download = $false }
+    ) {
+        $view = Get-EsimView -Snapshot (Copy-Esim -Snapshot $script:empty -Change $Change -Outer $Outer)
+        $view.StateText | Should -Be $Text
+        $view.CanSwitch | Should -Be $Switch
+        $view.CanRead | Should -Be $Read
+        $view.CanManage | Should -Be $Manage
+        $view.CanDownload | Should -Be $Download
+    }
+
+    It 'reads a QR code only where ZXing.Net is installed, and says so' {
+        $without = Get-EsimView -Snapshot (Copy-Esim $script:empty @{ QrAvailable = $false })
+        $without.CanReadQr | Should -BeFalse
+        $without.QrNote | Should -Be 'Reading QR codes is not installed with the app: type or paste the code.'
+        $with = Get-EsimView -Snapshot (Copy-Esim $script:empty @{ QrAvailable = $true })
+        $with.CanReadQr | Should -BeTrue
+        $with.QrNote | Should -BeNullOrEmpty
+    }
+
+    It 'shows the SIM in use only while the worker runs, and nothing without a snapshot or from before M9' {
+        (ConvertTo-WindowView -Snapshot $script:empty -Worker NotResponding).SimInUse | Should -BeNullOrEmpty
+        $none = Get-EsimView -Snapshot $null
+        $none.SimInUse | Should -BeNullOrEmpty
+        $none.StateText | Should -BeNullOrEmpty
+        $none.CanSwitch | Should -BeFalse
+        $before = $script:online | Select-Object -Property * -ExcludeProperty Esim
+        (ConvertTo-WindowView -Snapshot $before).SimInUse | Should -BeNullOrEmpty
+    }
+
+    It 'lists the outcomes of the eSIM commands only, and the worker''s generation' {
+        $time = [DateTimeOffset]::new(2026, 10, 4, 12, 0, 0, [timespan]::Zero)
+        $results = @(
+            [pscustomobject]@{ Id = '1'; Kind = 'SaveSettings'; Result = 'Done'; Detail = $null; AttemptsLeft = $null; Time = $time }
+            [pscustomobject]@{ Id = '2'; Kind = 'EnableProfile'; Result = 'Done'; Detail = $null; AttemptsLeft = $null; Time = $time }
+            [pscustomobject]@{ Id = '3'; Kind = 'DownloadProfile'; Result = 'BadCode'; Detail = 'Format'; AttemptsLeft = $null; Time = $time }
+        )
+        $view = Get-EsimView -Snapshot (Copy-Snapshot $script:empty @{ Results = $results })
+        $view.ResultIds | Should -Be @('2', '3')
+        $view.Generation | Should -Be $script:empty.Generation
+    }
+}
+
+Describe 'eSIM command outcomes' {
+    BeforeAll {
+        $script:time = [DateTimeOffset]::new(2026, 10, 4, 12, 0, 0, [timespan]::Zero)
+    }
+
+    It 'says <Kind> / <Result> <Detail> in words' -ForEach @(
+        @{ Kind = 'ReadEsim'; Result = 'Done'; Detail = $null; Text = 'eSIM read.' }
+        @{ Kind = 'ReadEsim'; Result = 'Failed'; Detail = 'chip info: Timeout'; Text = 'The eSIM could not be read. chip info: Timeout' }
+        @{ Kind = 'SelectSimSlot'; Result = 'Done'; Detail = $null; Text = 'SIM slot changed: the modem keeps it.' }
+        @{ Kind = 'SelectSimSlot'; Result = 'Unchanged'; Detail = $null; Text = 'That slot is already in use.' }
+        @{ Kind = 'SelectSimSlot'; Result = 'TrialOn'; Detail = $null; Text = 'Not now: a network mode is on trial.' }
+        @{ Kind = 'EnableProfile'; Result = 'Done'; Detail = $null; Text = 'Profile enabled: the SIM restarts with it.' }
+        @{ Kind = 'EnableProfile'; Result = 'Unchanged'; Detail = $null; Text = 'That profile is already enabled.' }
+        @{ Kind = 'EnableProfile'; Result = 'NotEuicc'; Detail = $null; Text = 'The eSIM is not the SIM in use.' }
+        @{ Kind = 'EnableProfile'; Result = 'Timeout'; Detail = 'Timeout'; Text = 'It took too long, and was stopped.' }
+        @{ Kind = 'DisableProfile'; Result = 'Done'; Detail = $null; Text = 'Profile disabled: the SIM restarts without it.' }
+        @{ Kind = 'DisableProfile'; Result = 'Unchanged'; Detail = $null; Text = 'That profile is not enabled.' }
+        @{ Kind = 'DeleteProfile'; Result = 'Done'; Detail = $null; Text = 'Profile deleted.' }
+        @{ Kind = 'DeleteProfile'; Result = 'ProfileEnabled'; Detail = $null; Text = 'An enabled profile can''t be deleted: disable it first.' }
+        @{ Kind = 'DeleteProfile'; Result = 'UnknownProfile'; Detail = $null; Text = 'That profile is no longer on the eSIM.' }
+        @{ Kind = 'SetProfileNickname'; Result = 'Done'; Detail = $null; Text = 'Nickname saved.' }
+        @{ Kind = 'DownloadProfile'; Result = 'Done'; Detail = $null; Text = 'Profile downloaded: enable it to use it.' }
+        @{ Kind = 'DownloadProfile'; Result = 'Failed'; Detail = 'es9p_initiate_authentication: Profile not available'; Text = 'The profile could not be downloaded. es9p_initiate_authentication: Profile not available' }
+        @{ Kind = 'DownloadProfile'; Result = 'ConfirmationNeeded'; Detail = $null; Text = 'This activation code asks for a confirmation code: the provider gives it with the code.' }
+        @{ Kind = 'DownloadProfile'; Result = 'BadCode'; Detail = 'Empty'; Text = 'Type or paste the activation code first.' }
+        @{ Kind = 'DownloadProfile'; Result = 'BadCode'; Detail = 'Format'; Text = 'This is not an eSIM activation code: one starts with LPA:1$.' }
+        @{ Kind = 'DownloadProfile'; Result = 'BadCode'; Detail = 'Address'; Text = 'The activation code names no valid server.' }
+        @{ Kind = 'DownloadProfile'; Result = 'BadCode'; Detail = 'MatchingId'; Text = 'The activation code''s matching ID holds characters it can''t have.' }
+        @{ Kind = 'DownloadProfile'; Result = 'BadCode'; Detail = 'Unheard'; Text = 'This is not an eSIM activation code.' }
+        @{ Kind = 'DownloadProfile'; Result = 'NoQrCode'; Detail = 'NotImage'; Text = 'The file chosen is not an image the app can read.' }
+        @{ Kind = 'DownloadProfile'; Result = 'NoQrCode'; Detail = 'TooLarge'; Text = 'The image is too large: 20 MB and 50 megapixels at most.' }
+        @{ Kind = 'DownloadProfile'; Result = 'NoQrCode'; Detail = 'NoLibrary'; Text = 'Reading QR codes is not installed with the app: type or paste the code.' }
+        @{ Kind = 'DownloadProfile'; Result = 'NoQrCode'; Detail = 'NoCode'; Text = 'No QR code found in the image.' }
+        @{ Kind = 'DownloadProfile'; Result = 'NoLpac'; Detail = $null; Text = 'lpac is not installed with the app.' }
+        @{ Kind = 'DownloadProfile'; Result = 'Refused'; Detail = $null; Text = 'Not available while the app only observes.' }
+    ) {
+        $result = [pscustomobject]@{ Id = '1'; Kind = $Kind; Result = $Result; Detail = $Detail; AttemptsLeft = $null; Time = $script:time }
+        (ConvertTo-WindowView -Snapshot (Copy-Snapshot $script:online @{ Results = @($result) })).Result | Should -Be "12:00:00 $Text"
+    }
+}

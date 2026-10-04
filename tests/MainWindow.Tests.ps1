@@ -1,4 +1,4 @@
-# The main window, never shown: it loads, takes the view of every simulated scenario, and turns
+﻿# The main window, never shown: it loads, takes the view of every simulated scenario, and turns
 # its buttons into commands for the worker - the two that change something outside the app only
 # after a confirmation.
 
@@ -84,7 +84,7 @@ Describe 'The main window' {
         $script:left | Should -BeNullOrEmpty -Because 'a window''s properties are taken off before it closes'
     }
 
-    It 'scrolls the <_> tab when the window is too small for it' -ForEach @('ConnectionTab', 'DriverTab', 'SimTab', 'DataTab') {
+    It 'scrolls the <_> tab when the window is too small for it' -ForEach @('ConnectionTab', 'DriverTab', 'SimTab', 'DataTab', 'EsimTab') {
         $tab = $script:window.Window.FindName($_)
         $tab.Content | Should -BeOfType ([System.Windows.Controls.ScrollViewer])
         $tab.Content.VerticalScrollBarVisibility | Should -Be 'Auto'
@@ -666,5 +666,294 @@ Describe 'The main window' {
 
         $script:sent[0].Parameter.Settings.UsageCycleDay | Should -Be 10
         $script:sent[0].Parameter.Settings.UsageQuotaGB | Should -Be 5.5
+    }
+}
+
+Describe 'The eSIM tab' {
+    BeforeAll {
+        # The view after the cycles that read the eUICC.
+        function Get-EsimScenarioView {
+            param([string] $Scenario)
+            $link = New-ModemWorkerLink
+            $device = New-SimulatedDevice -Scenario $Scenario
+            $device.Modem.Euicc.ResetMs = 0
+            $worker = New-ModemWorker -Link $link -Simulation $device -DataFolder (Join-Path $TestDrive ([guid]::NewGuid()))
+            try {
+                for ($i = 0; $i -lt 3; $i++) { Invoke-ModemWorkerCycle -Worker $worker }
+                ConvertTo-WindowView -Snapshot $link['Snapshot']
+            }
+            finally {
+                Close-ModemWorker -Worker $worker
+                Close-ModemWorkerLink -Link $link
+            }
+        }
+
+        # A copy of a view whose eSIM has some properties changed.
+        function Copy-EsimView {
+            param([object] $View, [hashtable] $Change)
+            $copy = $View | Select-Object -Property *
+            $copy.Esim = $View.Esim | Select-Object -Property *
+            foreach ($key in $Change.Keys) {
+                $copy.Esim.$key = $Change[$key]
+            }
+            $copy
+        }
+
+        # A view whose last command outcome is this one.
+        function Add-ViewResult {
+            param([object] $View, [string] $Id, [string] $Kind, [string] $Result)
+            $copy = Copy-EsimView -View $View -Change @{ ResultIds = [string[]]@($Id) }
+            $copy.LastResult = [pscustomobject]@{ Id = $Id; Kind = $Kind; Result = $Result }
+            $copy
+        }
+
+        $script:emptyView = Get-EsimScenarioView -Scenario EsimEmpty
+        $script:esimView = Get-EsimScenarioView -Scenario Esim
+        $script:physicalView = Get-EsimScenarioView -Scenario Online
+    }
+
+    BeforeEach {
+        $script:sent = [System.Collections.Generic.List[object]]::new()
+        $script:answer = $false
+        $script:asked = [System.Collections.Generic.List[string]]::new()
+        $script:typed = $false
+        $script:confirmed = [System.Collections.Generic.List[string]]::new()
+        $script:image = $null
+        $script:copied = $null
+        $script:clipboardBusy = $false
+        $script:window = New-MainWindow -Send { param($kind, $parameter) $script:sent.Add([pscustomobject]@{ Kind = $kind; Parameter = $parameter }); "id-$($script:sent.Count)" } `
+            -Ask { $script:asked.Add($args[1]); $script:answer } `
+            -AskName { $script:confirmed.Add($args[2]); $script:typed } `
+            -ChooseImage { $script:image } `
+            -Copy { if ($script:clipboardBusy) { throw [System.Runtime.InteropServices.COMException]::new('OpenClipboard failed') }; $script:copied = $args[0] }
+        $script:controls = $script:window.Controls
+    }
+
+    AfterEach {
+        $script:window.Exiting = $true
+        $script:window.Window.Close()
+    }
+
+    It 'shows the SIM in use in the top panel, the profiles, the EID and the other slot' {
+        Update-MainWindow -View $script:emptyView
+        $script:controls.SimInUseText.Text | Should -Be 'SIM in use: slot 2, the eSIM, no profile enabled.'
+        $script:controls.SimInUseText.Visibility | Should -Be 'Visible'
+        $script:controls.EsimSlotText.Text | Should -Be $script:controls.SimInUseText.Text
+        @($script:controls.ProfilesGrid.ItemsSource).Count | Should -Be 1
+        $script:controls.EidPanel.Visibility | Should -Be 'Visible'
+        $script:controls.EidBox.Text | Should -Be $script:emptyView.Esim.Eid
+        $script:controls.EidBox.IsReadOnly | Should -BeTrue
+        $script:controls.SelectSlotButton.Content | Should -Be 'Use slot 1...'
+        $script:controls.EnableProfileButton.IsEnabled | Should -BeFalse -Because 'nothing is selected'
+        $script:controls.DownloadProfileButton.IsEnabled | Should -BeTrue
+    }
+
+    It 'opens the eSIM tab from the blocker of an eSIM with no profile enabled' {
+        Update-MainWindow -View $script:emptyView
+        $script:controls.BlockerButton.Content | Should -Be 'Open eSIM'
+        Invoke-Click $script:controls.BlockerButton
+        $script:controls.Tabs.SelectedItem | Should -Be $script:controls.EsimTab
+        $script:sent | Should -BeNullOrEmpty
+    }
+
+    It 'hides the eSIM''s EID and keeps its profiles out of reach while a physical SIM is in use' {
+        Update-MainWindow -View $script:physicalView
+        $script:controls.SimInUseText.Text | Should -Be 'SIM in use: slot 1, a physical SIM.'
+        $script:controls.EidPanel.Visibility | Should -Be 'Collapsed'
+        $script:controls.DownloadProfileButton.IsEnabled | Should -BeFalse
+        $script:controls.ReadEsimButton.IsEnabled | Should -BeFalse
+        $script:controls.SelectSlotButton.Content | Should -Be 'Use slot 2...'
+        $script:controls.SelectSlotButton.IsEnabled | Should -BeTrue
+    }
+
+    It 'switches the slot only once the user said yes, No preselected' {
+        Update-MainWindow -View $script:emptyView
+        Invoke-Click $script:controls.SelectSlotButton
+        $script:sent | Should -BeNullOrEmpty
+        $script:asked[0] | Should -Match '^Use SIM slot 1\?'
+        $script:asked[0] | Should -Match 'keeps this choice'
+        $script:answer = $true
+        Invoke-Click $script:controls.SelectSlotButton
+        $script:sent.Kind | Should -Be @('SelectSimSlot')
+        $script:sent[0].Parameter.Slot | Should -Be 0 -Because 'the worker counts slots from 0'
+    }
+
+    It 'enables the profile selected once the user said yes, and offers what fits its state' {
+        Update-MainWindow -View $script:esimView
+        $rows = @($script:controls.ProfilesGrid.ItemsSource)
+        $script:controls.ProfilesGrid.SelectedItem = $rows | Where-Object Enabled
+        $script:controls.EnableProfileButton.IsEnabled | Should -BeFalse
+        $script:controls.DisableProfileButton.IsEnabled | Should -BeTrue
+        $script:controls.DeleteProfileButton.IsEnabled | Should -BeFalse -Because 'an enabled profile is never deleted'
+        $script:controls.NicknameBox.Text | Should -Be 'Travel'
+        $test = $rows | Where-Object { -not $_.Enabled }
+        $script:controls.ProfilesGrid.SelectedItem = $test
+        $script:controls.EnableProfileButton.IsEnabled | Should -BeTrue
+        $script:controls.DisableProfileButton.IsEnabled | Should -BeFalse
+        $script:controls.DeleteProfileButton.IsEnabled | Should -BeTrue
+        $script:controls.NicknameBox.Text | Should -Be ''
+        Invoke-Click $script:controls.EnableProfileButton
+        $script:sent | Should -BeNullOrEmpty
+        $script:answer = $true
+        Invoke-Click $script:controls.EnableProfileButton
+        $script:asked[1] | Should -Match '^Enable the profile "Lab test profile"\?'
+        $script:sent.Kind | Should -Be @('EnableProfile')
+        $script:sent[0].Parameter.Aid | Should -Be $test.Aid
+    }
+
+    It 'disables the profile selected once the user said yes' {
+        Update-MainWindow -View $script:esimView
+        $enabled = @($script:controls.ProfilesGrid.ItemsSource) | Where-Object Enabled
+        $script:controls.ProfilesGrid.SelectedItem = $enabled
+        $script:answer = $true
+        Invoke-Click $script:controls.DisableProfileButton
+        $script:asked[0] | Should -Match '^Disable the profile "Travel"\?'
+        $script:sent.Kind | Should -Be @('DisableProfile')
+        $script:sent[0].Parameter.Aid | Should -Be $enabled.Aid
+    }
+
+    It 'deletes a profile only once its name was typed' {
+        Update-MainWindow -View $script:esimView
+        $test = @($script:controls.ProfilesGrid.ItemsSource) | Where-Object { -not $_.Enabled }
+        $script:controls.ProfilesGrid.SelectedItem = $test
+        Invoke-Click $script:controls.DeleteProfileButton
+        $script:sent | Should -BeNullOrEmpty
+        $script:typed = $true
+        Invoke-Click $script:controls.DeleteProfileButton
+        $script:confirmed | Should -Be @('Lab test profile', 'Lab test profile')
+        $script:sent.Kind | Should -Be @('DeleteProfile')
+        $script:sent[0].Parameter.Aid | Should -Be $test.Aid
+        $script:asked | Should -BeNullOrEmpty -Because 'a Yes is not enough to delete'
+    }
+
+    It 'renames the profile selected - blanks around taken off, none to clear it' {
+        Update-MainWindow -View $script:esimView
+        $test = @($script:controls.ProfilesGrid.ItemsSource) | Where-Object { -not $_.Enabled }
+        $script:controls.ProfilesGrid.SelectedItem = $test
+        $script:controls.NicknameBox.Text = '  Lab  '
+        Invoke-Click $script:controls.RenameProfileButton
+        $script:sent.Kind | Should -Be @('SetProfileNickname')
+        $script:sent[0].Parameter.Aid | Should -Be $test.Aid
+        $script:sent[0].Parameter.Nickname | Should -Be 'Lab'
+    }
+
+    It 'refuses a nickname longer than 64 bytes, and says why' {
+        Update-MainWindow -View $script:esimView
+        $script:controls.ProfilesGrid.SelectedItem = @($script:controls.ProfilesGrid.ItemsSource)[0]
+        $script:controls.NicknameBox.Text = 'è' * 33
+        Invoke-Click $script:controls.RenameProfileButton
+        $script:sent | Should -BeNullOrEmpty
+        $script:controls.EsimHintText.Text | Should -Match '64 bytes'
+        $script:controls.EsimHintText.Visibility | Should -Be 'Visible'
+    }
+
+    It 'keeps the selection when the list is filled again' {
+        Update-MainWindow -View $script:esimView
+        $test = @($script:controls.ProfilesGrid.ItemsSource) | Where-Object { -not $_.Enabled }
+        $script:controls.ProfilesGrid.SelectedItem = $test
+        $renamed = Copy-EsimView -View $script:esimView -Change @{ Profiles = [object[]]@($script:esimView.Esim.Profiles | ForEach-Object { $row = $_ | Select-Object -Property *; if (-not $row.Enabled) { $row.Nickname = 'Lab'; $row.Name = 'Lab' }; $row }) }
+        Update-MainWindow -View $renamed
+        $script:controls.ProfilesGrid.SelectedItem.Aid | Should -Be $test.Aid
+        $script:controls.NicknameBox.Text | Should -Be 'Lab'
+    }
+
+    It 'asks for a code first, and sends nothing without one' {
+        Update-MainWindow -View $script:emptyView
+        Invoke-Click $script:controls.DownloadProfileButton
+        $script:sent | Should -BeNullOrEmpty
+        $script:controls.EsimHintText.Text | Should -Be 'Type or paste the activation code, or choose the image of its QR code, first.'
+    }
+
+    It 'downloads from the code typed, with its confirmation code, and empties the form once done' {
+        Update-MainWindow -View $script:emptyView
+        $script:controls.ActivationCodeBox.Password = 'LPA:1$smdp.example.com$SECRET-MATCH-3'
+        $script:controls.ConfirmationCodeBox.Password = '1234'
+        Invoke-Click $script:controls.DownloadProfileButton
+        $script:sent.Kind | Should -Be @('DownloadProfile')
+        $script:sent[0].Parameter.ActivationCode | Should -BeOfType ([securestring])
+        Get-Plain $script:sent[0].Parameter.ActivationCode | Should -Be 'LPA:1$smdp.example.com$SECRET-MATCH-3'
+        Get-Plain $script:sent[0].Parameter.ConfirmationCode | Should -Be '1234'
+        $script:sent[0].Parameter.ContainsKey('QrImage') | Should -BeFalse
+        $script:controls.ActivationCodeBox.Password | Should -Not -BeNullOrEmpty -Because 'the download has not answered yet'
+
+        Update-MainWindow -View (Add-ViewResult -View $script:emptyView -Id 'id-1' -Kind 'DownloadProfile' -Result 'Done')
+        $script:controls.ActivationCodeBox.Password | Should -Be ''
+        $script:controls.ConfirmationCodeBox.Password | Should -Be ''
+    }
+
+    It 'downloads from the image of a QR code chosen, which a code typed replaces' {
+        Update-MainWindow -View (Copy-EsimView -View $script:emptyView -Change @{ CanReadQr = $true })
+        $script:controls.ReadQrButton.IsEnabled | Should -BeTrue
+        $script:controls.ActivationCodeBox.Password = 'typed'
+        $script:image = Join-Path $TestDrive 'code.png'
+        Invoke-Click $script:controls.ReadQrButton
+        $script:controls.ActivationCodeBox.Password | Should -Be '' -Because 'the image takes the place of the code typed'
+        $script:controls.QrImageText.Text | Should -Be 'QR code image: code.png. Its code is read when the download starts.'
+        Invoke-Click $script:controls.DownloadProfileButton
+        $script:sent.Kind | Should -Be @('DownloadProfile')
+        $script:sent[0].Parameter.QrImage | Should -Be $script:image
+        $script:sent[0].Parameter.ContainsKey('ActivationCode') | Should -BeFalse
+
+        Update-MainWindow -View (Add-ViewResult -View $script:emptyView -Id 'id-1' -Kind 'DownloadProfile' -Result 'NoQrCode')
+        $script:controls.ActivationCodeBox.Password = 'LPA:1$smdp.example.com$ABC'
+        $script:controls.QrImageText.Visibility | Should -Be 'Collapsed' -Because 'a code typed replaces the image'
+        Invoke-Click $script:controls.DownloadProfileButton
+        $script:sent[1].Parameter.ContainsKey('QrImage') | Should -BeFalse
+    }
+
+    It 'can''t read a QR code where ZXing.Net is missing, and says why' {
+        Update-MainWindow -View (Copy-EsimView -View $script:emptyView -Change @{ CanReadQr = $false; QrNote = 'not here' })
+        $script:controls.ReadQrButton.IsEnabled | Should -BeFalse
+        $script:controls.ReadQrButton.ToolTip | Should -Be 'not here'
+    }
+
+    It 'sends one eSIM command at a time: the tab waits for its outcome' {
+        Update-MainWindow -View $script:emptyView
+        $script:controls.ProfilesGrid.SelectedItem = @($script:controls.ProfilesGrid.ItemsSource)[0]
+        Invoke-Click $script:controls.ReadEsimButton
+        $script:sent.Kind | Should -Be @('ReadEsim')
+        foreach ($button in 'ReadEsimButton', 'SelectSlotButton', 'EnableProfileButton', 'DeleteProfileButton', 'RenameProfileButton', 'DownloadProfileButton') {
+            $script:controls.$button.IsEnabled | Should -BeFalse -Because "$button waits"
+        }
+        Update-MainWindow -View $script:emptyView
+        $script:controls.ReadEsimButton.IsEnabled | Should -BeFalse -Because 'the worker has not answered yet'
+        Update-MainWindow -View (Add-ViewResult -View $script:emptyView -Id 'id-1' -Kind 'ReadEsim' -Result 'Done')
+        $script:controls.ReadEsimButton.IsEnabled | Should -BeTrue
+        $script:controls.EnableProfileButton.IsEnabled | Should -BeTrue
+    }
+
+    It 'can act again once another worker took over: the command went with the one that ended' {
+        Update-MainWindow -View $script:emptyView
+        Invoke-Click $script:controls.ReadEsimButton
+        Update-MainWindow -View (Copy-EsimView -View $script:emptyView -Change @{ Generation = [int]$script:emptyView.Esim.Generation + 1 })
+        $script:controls.ReadEsimButton.IsEnabled | Should -BeTrue
+    }
+
+    It 'asks for the name typed in its own dialog: its button works once it matches, blanks and case aside' {
+        $dialog = & (Get-Module FibocomFm350.App) { New-WindowTypedNameDialog -Title 'Delete' -Message 'Type it.' -Name 'Lab test profile' }
+        try {
+            $dialog.Button.IsEnabled | Should -BeFalse
+            $dialog.Box.Text = 'Lab test'
+            $dialog.Button.IsEnabled | Should -BeFalse
+            $dialog.Box.Text = ' lab TEST profile '
+            $dialog.Button.IsEnabled | Should -BeTrue
+            $dialog.Box.Text = 'Lab test profile 2'
+            $dialog.Button.IsEnabled | Should -BeFalse
+            $dialog.Window.Title | Should -Be 'Delete'
+        }
+        finally {
+            $dialog.Window.Close()
+        }
+    }
+
+    It 'copies the EID, or says it could not: another program may hold the clipboard' {
+        Update-MainWindow -View $script:emptyView
+        $script:clipboardBusy = $true
+        { Invoke-Click $script:controls.CopyEidButton } | Should -Not -Throw
+        $script:controls.EsimHintText.Text | Should -Be 'The EID could not be copied: select it and copy it with Ctrl+C.'
+        $script:clipboardBusy = $false
+        Invoke-Click $script:controls.CopyEidButton
+        $script:copied | Should -Be $script:emptyView.Esim.Eid
+        $script:controls.EsimHintText.Visibility | Should -Be 'Collapsed'
     }
 }

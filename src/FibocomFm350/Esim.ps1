@@ -893,7 +893,7 @@ function ConvertFrom-LpacChipInfo {
     .SYNOPSIS
         Reads the eUICC's facts from the data of 'chip info'.
     .DESCRIPTION
-        Returns Eid - an identifier: the worker keeps it, no snapshot carries it -, DefaultAddress
+        Returns Eid - an identifier: the window shows it, the log never has it -, DefaultAddress
         (the default SM-DP+), Specification (the SGP.22 version, EUICCInfo2's svn), Firmware,
         FreeMemory (free non-volatile memory, in bytes) and CiKeys (the CIs it trusts to verify,
         upper case); $null for what the data doesn't hold.

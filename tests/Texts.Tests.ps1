@@ -27,7 +27,7 @@ BeforeAll {
     }
     function Get-Table {
         param([string] $Component, [string] $Language)
-        Import-PowerShellDataFile -LiteralPath (Get-TablePath -Component $Component -Language $Language)
+        Import-PowerShellDataFile -LiteralPath (Get-TablePath -Component $Component -Language $Language) -SkipLimitCheck
     }
     # The placeholders of a text, as a sorted list.
     function Get-Placeholder {
@@ -160,11 +160,12 @@ Describe 'The keys the code uses' {
     }
 
     It 'uses every English key: by name, or by a family the code completes with a code' {
-        # "Reason.$reason", "Step.$($recovery.Step)"...: families keyed by the snapshot's codes.
-        $families = @([regex]::Matches($script:code, '"([A-Z][A-Za-z]+)\.\$') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+        # "Reason.$reason", "Esim.State.$state"...: families keyed by the snapshot's codes.
+        $families = @([regex]::Matches($script:code, '"([A-Z][A-Za-z]+(?:\.[A-Z][A-Za-z]+)*)\.\$') | ForEach-Object { "$($_.Groups[1].Value)." } | Sort-Object -Unique)
         $named = @([regex]::Matches($script:code + $script:xaml, "(?:'|\[\[)([A-Z][A-Za-z]+\.[A-Za-z0-9.]+)(?:'|\]\])") | ForEach-Object { $_.Groups[1].Value })
         $unused = @($script:english.Keys | Where-Object {
-                $_ -notin $named -and $_.Split('.')[0] -notin $families -and $_ -notin 'Dns.LookedUpNext', 'Dns.LookedUpOperatorNext'
+                $key = $_
+                $key -notin $named -and -not @($families | Where-Object { $key.StartsWith($_) }) -and $key -notin 'Dns.LookedUpNext', 'Dns.LookedUpOperatorNext'
             })
         $unused | Should -BeNullOrEmpty
     }
