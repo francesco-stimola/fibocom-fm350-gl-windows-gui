@@ -38,6 +38,11 @@ BeforeAll {
                 "phone number '$($match.Groups[1].Value)'"
             }
         }
+        foreach ($match in [regex]::Matches($Line, '(?i)LPA:[^\s"]*')) {
+            if ($match.Value -notin $script:fakes.ActivationCodes) {
+                "activation code '$($match.Value)'"
+            }
+        }
         if ($Line -match '^\s*\+CFSN\s*:\s*"([^"]*)"' -and $Matches[1] -notin $script:fakes.SerialNumbers) {
             "serial number '$($Matches[1])'"
         }
@@ -141,6 +146,8 @@ Describe 'The identifier check itself' {
         @{ Name = 'a real sender in a message PDU'; Line = '00040C9193331332547600006201402143658005E8329BFD06' }
         @{ Name = 'a real service centre in a message PDU'; Line = '07919333133254F6040B910100000000F000006201402143658005E8329BFD06' }
         @{ Name = 'a sender''s real name in a message PDU'; Line = '00040ED0D637396C7EBBCB00006201402143658005E8329BFD06' }
+        @{ Name = 'an activation code'; Line = 'LPA:1$rsp.example.org$QR-REAL-CODE' }
+        @{ Name = 'an EID in an APDU''s answer'; Line = '+CGLA: 44,"BF3E125A1089049032000001000000012345678901"' }
     ) {
         Find-UnredactedValue -Line $Line | Should -Not -BeNullOrEmpty
     }
@@ -159,6 +166,8 @@ Describe 'The identifier check itself' {
         @{ Name = 'padded fakes in +C5GREG'; Line = '+C5GREG: 2,1,"00ABCD","000ABCDEF0",13' }
         @{ Name = 'a message PDU with the fake numbers'; Line = '07910100000000F0040B910100000000F000006201402143658005E8329BFD06' }
         @{ Name = 'a message PDU from a fake name'; Line = '00040ED04F78591EA6BFE500006201402143658005E8329BFD06' }
+        @{ Name = 'the fake activation code'; Line = 'download -a LPA:1$smdp.example.com$TEST-0000' }
+        @{ Name = 'the ISD-R''s AID'; Line = 'AT+CCHO="A0000005591010FFFFFFFF8900000100"' }
     ) {
         Find-UnredactedValue -Line $Line | Should -BeNullOrEmpty
     }

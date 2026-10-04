@@ -1,0 +1,4 @@
+# Source: captured 2026-10-03, FM350-GL firmware 81600.0000.00.29.22.06; slot 0 selected, a physical SIM ready.
+AT+SIMTYPE?
++SIMTYPE: 0
+OK

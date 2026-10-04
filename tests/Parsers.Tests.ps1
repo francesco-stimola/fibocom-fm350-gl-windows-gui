@@ -54,6 +54,13 @@ Describe 'ConvertFrom-AtSimState' {
         $sim.Waiting | Should -Be 'SIM PIN'
     }
 
+    It 'reads an eUICC with no profile enabled, on the device' {
+        $sim = ConvertFrom-AtSimState -Lines (Get-FixtureAnswer -Name 'cpin.empty-euicc.txt' -Folder device)
+        $sim.Ready | Should -BeFalse
+        $sim.State | Should -Be 'NoProfile'
+        $sim.Waiting | Should -Be 'EMPTY_EUICC'
+    }
+
     It 'gives nothing without a +CPIN: line' {
         ConvertFrom-AtSimState -Lines @() | Should -BeNullOrEmpty
     }

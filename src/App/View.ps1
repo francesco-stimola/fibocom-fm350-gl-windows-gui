@@ -321,7 +321,7 @@ function Get-SimView {
     param([object] $Snapshot)
 
     $sim = $Snapshot.Sim
-    $known = 'Ready', 'PinRequired', 'PukRequired', 'Absent', 'Busy', 'Failure', 'Other'
+    $known = 'Ready', 'PinRequired', 'PukRequired', 'NoProfile', 'Absent', 'Busy', 'Failure', 'Other'
     $state = Get-AppText $(if ($sim.State -in $known) { "Sim.$($sim.State)" } else { 'Sim.Unknown' })
     $request = if ($sim.PinRequestOn -eq $true) { 'Sim.RequestOn' } elseif ($sim.PinRequestOn -eq $false) { 'Sim.RequestOff' } else { 'Sim.RequestUnknown' }
     $connected = [bool]$Snapshot.PortName

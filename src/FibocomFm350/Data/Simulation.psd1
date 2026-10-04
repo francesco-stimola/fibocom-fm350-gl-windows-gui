@@ -149,6 +149,16 @@
     # - Presence: how PnP sees the modem - 'Present', 'Absent' or 'NoDriver'.
     # - NetworkMode: what differs from the base network mode (above), or the network around it.
     # - Messages: the messages on its SIM instead of the base ones (above).
+    # The SIM slots (AT-COMMANDS section 8): slot 0 the physical SIM in use, slot 1 an eUICC holding
+    # one profile of class test, disabled - as our module has them. Profiles: Aid, Iccid (the
+    # fixtures' fakes), State, Nickname, Provider, Name, Class.
+    Esim      = @{
+        Slot     = 0
+        Profiles = @(
+            @{ Aid = 'A0000005591010FFFFFFFF8900002000'; Iccid = '8900100000000000000'; State = 'Disabled'; Nickname = ''; Provider = 'Example Lab'; Name = 'Lab test profile'; Class = 'Test' }
+        )
+    }
+
     Scenarios = @{
         # Online: the app attaches and changes nothing.
         Online           = @{
@@ -298,6 +308,26 @@
         Standalone       = @{
             Adapter     = 'Configured'
             NetworkMode = @{ Standalone = $true }
+        }
+
+        # The eUICC's slot in use, no profile enabled (+CPIN: EMPTY_EUICC): the user enables one.
+        EsimEmpty        = @{
+            Adapter = 'Fresh'
+            Answers = @{ 'AT+CGACT?' = @('OK') }
+            Esim    = @{ Slot = 1 }
+        }
+
+        # The eUICC's slot in use, an operational profile enabled and online, the test profile
+        # beside it.
+        Esim             = @{
+            Adapter = 'Configured'
+            Esim    = @{
+                Slot     = 1
+                Profiles = @(
+                    @{ Aid = 'A0000005591010FFFFFFFF8900002000'; Iccid = '8900100000000000000'; State = 'Disabled'; Nickname = ''; Provider = 'Example Lab'; Name = 'Lab test profile'; Class = 'Test' }
+                    @{ Aid = 'A0000005591010FFFFFFFF8900001000'; Iccid = '89001000000000000000'; State = 'Enabled'; Nickname = 'Travel'; Provider = 'Example Mobile'; Name = 'Example plan'; Class = 'Operational' }
+                )
+            }
         }
 
         # The network refuses the registration, whatever is done.

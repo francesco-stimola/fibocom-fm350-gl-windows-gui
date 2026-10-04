@@ -39,7 +39,7 @@ BeforeDiscovery {
     # are not registered.
     $script:reasons = @(
         'NoDevice', 'NoDriver', 'DeviceProblem', 'PortInUse', 'PortFailed', 'SimUnknown'
-        'NoPin', 'PinForOtherSim', 'SimNotIdentified', 'PinUnconfirmed', 'LastAttempt', 'PukRequired', 'NoSim', 'SimFailure', 'SimOther', 'SimBusy'
+        'NoPin', 'PinForOtherSim', 'SimNotIdentified', 'PinUnconfirmed', 'LastAttempt', 'PukRequired', 'NoSim', 'NoProfile', 'SimFailure', 'SimOther', 'SimBusy'
         'FccLocked', 'NotRegistered', 'NotSearching', 'Searching', 'Denied', 'Unknown', 'EmergencyOnly'
         'ContextUnknown', 'ApnPasswordUnreadable', 'ApnNeeded', 'NoAddress', 'AdapterDisabled', 'NoAdapter', 'NotElevated', 'DataPathFailed'
     )

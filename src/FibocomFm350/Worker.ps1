@@ -59,10 +59,19 @@ $script:WorkerPassUrcPattern = '^\s*\+(CREG|CGREG|CEREG|C5GREG|CGEV)\s*:'
 
 # The commands the UI can send (Send-ModemCommand).
 $script:WorkerCommandKinds = @('ConnectNow', 'SaveSettings', 'SetNetworkMode', 'SaveSimPin', 'ForgetSimPin', 'DisableSimPin', 'UnlockFcc', 'EnableAdapter',
-    'CheckDriverPackage', 'InstallDriver', 'UninstallDriver', 'OpenMessage', 'DeleteMessage', 'SendMessage')
+    'CheckDriverPackage', 'InstallDriver', 'UninstallDriver', 'OpenMessage', 'DeleteMessage', 'SendMessage', 'ReadEsim', 'SelectSimSlot', 'EnableProfile',
+    'DisableProfile', 'SetProfileNickname', 'DeleteProfile', 'DownloadProfile')
 
 # The commands about the AT port's driver: they change the system, and may take a while.
 $script:DriverCommandKinds = @('CheckDriverPackage', 'InstallDriver', 'UninstallDriver')
+
+# The commands about the SIM slots and the eUICC (ARCHITECTURE -> eSIM): lpac runs for each, so
+# they may take a while; an activation code is never logged.
+$script:EsimCommandKinds = @('ReadEsim', 'SelectSimSlot', 'EnableProfile', 'DisableProfile', 'SetProfileNickname', 'DeleteProfile', 'DownloadProfile')
+
+# How long one run of lpac may take, in ms: a download talks to the operator's server, the rest
+# to the eUICC alone. Provisional: the maintainer's decision (ROADMAP -> Open decisions).
+$script:EsimTimeoutMs = @{ Download = 300000; Other = 60000 }
 
 # A DoH server named by its template: how long its first lookup is waited for before a pass (most
 # end at once), and how long a lookup may take before it counts as failed.
@@ -206,6 +215,16 @@ function Send-ModemCommand {
           part.
         - SendMessage: Number and Text; sent part by part, never sent again by itself. Neither
           is logged, nor comes back in a snapshot.
+        - ReadEsim: the eUICC read again through lpac - its facts, its profiles, its pending
+          notifications, sent when there are any.
+        - SelectSimSlot: Slot, 0 or 1; AT+GTDUALSIM, a persistent setting of the modem's, in a
+          maintenance window. Only after the user confirmed it.
+        - EnableProfile, DisableProfile: Aid, a profile's ISD-P AID as the snapshot gives it;
+          the SIM resets with it, in a maintenance window. DeleteProfile: Aid, a profile not
+          enabled; only after the user confirmed it. SetProfileNickname: Aid and Nickname (''
+          clears it). The eUICC's slot must be the one in use.
+        - DownloadProfile: ActivationCode and, when the code asks for one, ConfirmationCode -
+          SecureStrings; never logged.
         Secrets travel as SecureStrings, stay in the process, and never come back in a snapshot.
     .EXAMPLE
         Send-ModemCommand -Link $link -Kind SaveSimPin -Parameter @{ Pin = $passwordBox.SecurePassword }
@@ -218,7 +237,8 @@ function Send-ModemCommand {
 
         [Parameter(Mandatory)]
         [ValidateSet('ConnectNow', 'SaveSettings', 'SetNetworkMode', 'SaveSimPin', 'ForgetSimPin', 'DisableSimPin', 'UnlockFcc', 'EnableAdapter',
-            'CheckDriverPackage', 'InstallDriver', 'UninstallDriver', 'SetStartAtLogon', 'OpenMessage', 'DeleteMessage', 'SendMessage')]
+            'CheckDriverPackage', 'InstallDriver', 'UninstallDriver', 'SetStartAtLogon', 'OpenMessage', 'DeleteMessage', 'SendMessage', 'ReadEsim',
+            'SelectSimSlot', 'EnableProfile', 'DisableProfile', 'SetProfileNickname', 'DeleteProfile', 'DownloadProfile')]
         [string] $Kind,
 
         [hashtable] $Parameter = @{}
@@ -438,7 +458,9 @@ function New-ModemSnapshot {
         the modem, newest first, and how full its storage is; $null while not read),
         MessageNotice (the last new messages announced: Sender - the newest one's -, Count, Id -
         one more each time, across worker restarts -, Time) and MessageOperation ('Sending'
-        while a message goes out); AppVersion; Settings, ApnPasswordStored,
+        while a message goes out); Esim (Get-WorkerEsimView: the SIM slot in use and its kind,
+        whether lpac is there, the eUICC's facts and profiles - no EID, no ICCID -, the
+        notifications waiting, the eSIM command under way, the last read's failure); AppVersion; Settings, ApnPasswordStored,
         SettingsProblems and SettingsIssues (ConvertTo-AppSetting's Problems and Issues); Results
         (the last commands' outcomes: Id, Kind, Result, Detail, AttemptsLeft, Parts - of a
         message sent: Sent, Count -, Time).
@@ -543,6 +565,7 @@ function New-ModemSnapshot {
         Messages          = Get-WorkerMessageView -Worker $Worker
         MessageNotice     = $Worker.MessageNotice
         MessageOperation  = $Worker.MessageOperation
+        Esim              = Get-WorkerEsimView -Worker $Worker
         AppVersion        = if ($Worker.AppVersion) { $Worker.AppVersion.ToString() } else { $null }
         StartAtLogon      = $Worker.StartAtLogon
         Settings          = if ($Worker.Settings) { $Worker.Settings | Select-Object -Property * } else { $null }
@@ -738,6 +761,21 @@ function New-ModemWorker {
         MessageNotice     = if ($Previous -and $Previous.PSObject.Properties['MessageNotice']) { $Previous.MessageNotice } else { $null }
         MessageOperation  = $null
         MessagesFailure   = $null
+        # The eSIM (ARCHITECTURE -> eSIM): the SIM slot in use and the kind of SIM in it, read once
+        # per port and after a switch; the eUICC as lpac read it last - its facts, its profiles
+        # and its pending notifications, the EID and the ICCIDs kept here, never in a snapshot -,
+        # whether it is to be read again, the eSIM command under way, the last read that failed,
+        # logged once.
+        SimSlot           = $null
+        SimType           = $null
+        SimSlotRead       = $false
+        EsimInfo          = $null
+        EsimProfiles      = $null
+        EsimNotifications = $null
+        EsimDue           = $true
+        EsimReadAt        = $null
+        EsimOperation     = $null
+        EsimFailure       = $null
         # The computer slept: Invoke-ModemWorker sets it, the next cycle takes it into account.
         Resumed           = $false
     }
@@ -1276,6 +1314,14 @@ function Close-WorkerChannel {
     $Worker.Messages = $null
     $Worker.MessageStorage = $null
     $Worker.MessagesFailure = $null
+    # The slot and the eUICC are read again through the next port; until then, nothing is shown.
+    $Worker.SimSlotRead = $false
+    $Worker.SimSlot = $null
+    $Worker.SimType = $null
+    $Worker.EsimInfo = $null
+    $Worker.EsimProfiles = $null
+    $Worker.EsimNotifications = $null
+    $Worker.EsimDue = $true
     $Worker.LastScan = $null
     $Worker.LastAdapterLook = $null
     Set-WorkerProbeAddress -Worker $Worker -Address $null
@@ -1593,10 +1639,10 @@ function Save-WorkerNetworkMode {
     $Worker.SettingsIssues = [object[]]@($read.Issues)
 }
 
-function Open-WorkerNetworkModeWindow {
-    # A maintenance window for a network mode written, in the worker's recovery history and in
-    # the view a snapshot carries: published before the cycle ends, it reaches a worker that
-    # replaces this one.
+function Open-WorkerMaintenanceWindow {
+    # A maintenance window - a network mode written, a SIM slot or a profile switched -, in the
+    # worker's recovery history and in the view a snapshot carries: published before the cycle
+    # ends, it reaches a worker that replaces this one.
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
         Justification = 'Changes the worker''s in-memory state only.')]
     param([hashtable] $Worker, [long] $Now)
@@ -1656,7 +1702,7 @@ function Set-WorkerNetworkMode {
             }
             $Worker.NetworkModeNotice = [pscustomobject]@{ Kind = 'Reverted'; Mode = $trial.Selection.NetworkMode; Time = [DateTimeOffset]::Now }
             $Worker.NetworkModeTrial = $null
-            Open-WorkerNetworkModeWindow -Worker $Worker -Now (& $Worker.Clock)
+            Open-WorkerMaintenanceWindow -Worker $Worker -Now (& $Worker.Clock)
             $Worker.PassForced = $true
         }
         Save-WorkerNetworkMode -Worker $Worker -Selection $selection
@@ -1715,7 +1761,7 @@ function Set-WorkerNetworkMode {
     }
     $Worker.NetworkModeWrite = [pscustomobject]@{ Command = $decision.Command; Before = $current.Text; Status = $answer.Status }
     # It registers the modem again: an intentional operation, which nothing escalates over.
-    Open-WorkerNetworkModeWindow -Worker $Worker -Now $now
+    Open-WorkerMaintenanceWindow -Worker $Worker -Now $now
     [pscustomobject]@{ Result = 'Applied'; Detail = "$($decision.Command)$(if ($answer.Status -ne 'OK') { " $($answer.Status)" })" }
 }
 
@@ -1784,7 +1830,7 @@ function Invoke-WorkerNetworkModeTrial {
             }
             $undo = Undo-WorkerNetworkMode -Worker $Worker
             # The modem is given its window again, written back or not.
-            Open-WorkerNetworkModeWindow -Worker $Worker -Now $now
+            Open-WorkerMaintenanceWindow -Worker $Worker -Now $now
             $minutes = [Math]::Round($script:RecoveryTimings.Maintenance / 60000)
             if ($undo.Status -ne 'OK') {
                 # Not undone until the modem says so: the trial stays, and is undone again.
@@ -1955,6 +2001,297 @@ function Uninstall-WorkerDriver {
     $outcome
 }
 
+function Test-WorkerLpac {
+    # Whether lpac can run: the simulated device's always, the app's when it was installed with it.
+    param([hashtable] $Worker)
+
+    [bool]($Worker.Simulation -or (Test-Path -LiteralPath (Get-LpacPath) -PathType Leaf))
+}
+
+function Test-WorkerEuiccInUse {
+    # Whether the eUICC is the SIM in use: lpac reaches it only then (AT-COMMANDS section 8).
+    param([hashtable] $Worker)
+
+    $Worker.SimType -eq 'Esim' -or ($null -eq $Worker.SimType -and $Worker.SimSlot -eq 1)
+}
+
+function Invoke-WorkerLpac {
+    # Runs lpac for one operation, on the worker's AT channel (Invoke-LpacOperation): the
+    # simulated device's lpac in development mode, the app's own otherwise. Returns the run.
+    param([hashtable] $Worker, [string] $Operation, [hashtable] $Option = @{})
+
+    $arguments = Get-LpacArgument -Operation $Operation @Option
+    $lpac = if ($Worker.Simulation) { $Worker.Simulation.StartLpac($arguments) } else { Start-LpacProcess -Argument $arguments -Confirm:$false }
+    $timeout = if ($Operation -eq 'DownloadProfile') { $script:EsimTimeoutMs.Download } else { $script:EsimTimeoutMs.Other }
+    Invoke-LpacOperation -Channel $Worker.Channel -Lpac $lpac -TimeoutMs $timeout -Beat (Get-WorkerBeat -Worker $Worker)
+}
+
+function Get-WorkerLpacFailure {
+    # What went wrong in a run of lpac, in a few words for the log and the window: its outcome,
+    # or the step that failed and lpac's reason. $null when it succeeded.
+    param([object] $Run)
+
+    if ($Run.Outcome -ne 'Done') {
+        return $Run.Outcome
+    }
+    if ($Run.Code -ne 0) {
+        return "$($Run.Message)$(if ($Run.Data -is [string] -and $Run.Data) { ": $($Run.Data)" })"
+    }
+    $null
+}
+
+function Update-WorkerSimSlot {
+    # Reads the SIM slot in use and the kind of SIM in it: once per port, and after a switch.
+    # A read that fails leaves them unknown, and is tried again with the next port.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Reads the modem; changes the worker''s in-memory state only.')]
+    param([hashtable] $Worker)
+
+    $Worker.SimSlotRead = $true
+    $before = "$($Worker.SimSlot)/$($Worker.SimType)"
+    $slot = ConvertFrom-AtSimSlot -Lines (Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+GTDUALSIM?').Lines
+    $Worker.SimSlot = if ($slot) { $slot.Slot } else { $null }
+    $Worker.SimType = if ($Worker.Channel.State -eq 'Open') { ConvertFrom-AtSimType -Lines (Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+SIMTYPE?').Lines } else { $null }
+    if ("$($Worker.SimSlot)/$($Worker.SimType)" -ne $before) {
+        Write-WorkerLog -Worker $Worker -Level 'Info' -Message "SIM slot $(if ($null -ne $Worker.SimSlot) { $Worker.SimSlot } else { 'unknown' })$(if ($Worker.SimType) { ", $($Worker.SimType)" })"
+    }
+}
+
+function Update-WorkerEsim {
+    # Reads the eUICC through lpac - its facts, its profiles, its pending notifications - and
+    # sends those notifications, once per read (never in observe-only mode: sending them changes
+    # the eUICC). Runs when a read is due and the eUICC is the SIM in use, its SIM ready or with
+    # no profile enabled. A read that fails is logged once, and waits for the next reason to read.
+    # Returns $true when something changed.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Reads the eUICC; sends its notifications, as SGP.22 asks of an LPA, outside observe-only mode.')]
+    param([hashtable] $Worker)
+
+    $Worker.EsimDue = $false
+    $failures = [System.Collections.Generic.List[string]]::new()
+    $info = Invoke-WorkerLpac -Worker $Worker -Operation ChipInfo
+    $why = Get-WorkerLpacFailure -Run $info
+    if (-not $why) {
+        $Worker.EsimInfo = ConvertFrom-LpacChipInfo -Data $info.Data
+    }
+    else {
+        $failures.Add("chip info: $why")
+    }
+    if ($Worker.Channel -and $Worker.Channel.State -eq 'Open') {
+        $list = Invoke-WorkerLpac -Worker $Worker -Operation ProfileList
+        $why = Get-WorkerLpacFailure -Run $list
+        if (-not $why) {
+            $Worker.EsimProfiles = [object[]]@(ConvertFrom-LpacProfileList -Data $list.Data)
+        }
+        else {
+            $failures.Add("profile list: $why")
+        }
+    }
+    if ($Worker.Channel -and $Worker.Channel.State -eq 'Open') {
+        Update-WorkerEsimNotification -Worker $Worker -Failures $failures
+    }
+    $Worker.EsimReadAt = [DateTimeOffset]::Now
+    $failure = if ($failures.Count -gt 0) { $failures -join '; ' } else { $null }
+    if ($failure -and $failure -ne $Worker.EsimFailure) {
+        Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "eSIM: $failure"
+    }
+    elseif (-not $failure -and $Worker.EsimFailure) {
+        Write-WorkerLog -Worker $Worker -Level 'Info' -Message 'eSIM: read again'
+    }
+    $Worker.EsimFailure = $failure
+    $true
+}
+
+function Update-WorkerEsimNotification {
+    # Lists the eUICC's pending notifications and sends them - each to its server, then removed
+    # from the eUICC (AT-COMMANDS section 8) -, never in observe-only mode. What can't be sent
+    # stays, and goes at the next read.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Sends the eUICC''s notifications, as SGP.22 asks of an LPA, outside observe-only mode.')]
+    param([hashtable] $Worker, [System.Collections.Generic.List[string]] $Failures)
+
+    $list = Invoke-WorkerLpac -Worker $Worker -Operation ListNotifications
+    $why = Get-WorkerLpacFailure -Run $list
+    if ($why) {
+        $Failures.Add("notification list: $why")
+        return
+    }
+    $Worker.EsimNotifications = [object[]]@(ConvertFrom-LpacNotificationList -Data $list.Data)
+    if ($Worker.EsimNotifications.Count -eq 0 -or $Worker.ObserveOnly -or -not $Worker.Channel -or $Worker.Channel.State -ne 'Open') {
+        return
+    }
+    $sent = Invoke-WorkerLpac -Worker $Worker -Operation ProcessNotifications
+    $why = Get-WorkerLpacFailure -Run $sent
+    if ($why) {
+        $Failures.Add("notifications not sent: $why")
+    }
+    else {
+        Write-WorkerLog -Worker $Worker -Level 'Info' -Message "eSIM: $($Worker.EsimNotifications.Count) notification(s) sent"
+    }
+    if ($Worker.Channel -and $Worker.Channel.State -eq 'Open') {
+        $again = Invoke-WorkerLpac -Worker $Worker -Operation ListNotifications
+        if (-not (Get-WorkerLpacFailure -Run $again)) {
+            $Worker.EsimNotifications = [object[]]@(ConvertFrom-LpacNotificationList -Data $again.Data)
+        }
+    }
+}
+
+function Get-WorkerEsimView {
+    # The eSIM as a snapshot shows it: the slot in use and the kind of SIM, whether lpac is there,
+    # the eUICC's facts and profiles as read last - no EID, no ICCID -, how many notifications
+    # wait, when it was read, the command under way and the last read's failure.
+    param([hashtable] $Worker)
+
+    $info = $Worker.EsimInfo
+    [pscustomobject]@{
+        Slot           = $Worker.SimSlot
+        SimType        = $Worker.SimType
+        LpacAvailable  = Test-WorkerLpac -Worker $Worker
+        Specification  = if ($info) { $info.Specification } else { $null }
+        Firmware       = if ($info) { $info.Firmware } else { $null }
+        FreeMemory     = if ($info) { $info.FreeMemory } else { $null }
+        DefaultAddress = if ($info) { $info.DefaultAddress } else { $null }
+        Profiles       = if ($null -ne $Worker.EsimProfiles) {
+            [object[]]@($Worker.EsimProfiles | ForEach-Object { [pscustomobject]@{ Aid = $_.Aid; State = $_.State; Nickname = $_.Nickname; Provider = $_.Provider; Name = $_.Name; Class = $_.Class } })
+        }
+        else {
+            $null
+        }
+        Notifications  = if ($null -ne $Worker.EsimNotifications) { @($Worker.EsimNotifications).Count } else { $null }
+        ReadAt         = $Worker.EsimReadAt
+        Operation      = $Worker.EsimOperation
+        Failure        = $Worker.EsimFailure
+    }
+}
+
+function ConvertFrom-WorkerSecret {
+    # A command's secret as text, for the one call that needs it: a SecureString's, a string's,
+    # or '' for none.
+    param([object] $Value)
+
+    if ($Value -is [securestring]) {
+        return [System.Net.NetworkCredential]::new('', $Value).Password
+    }
+    if ($Value -is [string]) {
+        return $Value
+    }
+    ''
+}
+
+function Invoke-WorkerEsimCommand {
+    # The eSIM commands (Send-ModemCommand). Returns Result and Detail; never the activation code.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'The user''s command, carried out by the worker.')]
+    param([hashtable] $Worker, [string] $Kind, [hashtable] $Parameter)
+
+    $outcome = { param($result, $detail) [pscustomobject]@{ Result = $result; Detail = $detail } }
+    if ($Kind -eq 'SelectSimSlot') {
+        $slot = [int]$Parameter['Slot']
+        if ($slot -notin 0, 1) {
+            return & $outcome 'Failed' "no slot $slot"
+        }
+        if ($Worker.NetworkModeTrial) {
+            return & $outcome 'TrialOn' $null
+        }
+        if (-not $Worker.SimSlotRead) {
+            Update-WorkerSimSlot -Worker $Worker
+        }
+        if ($Worker.SimSlot -eq $slot) {
+            return & $outcome 'Unchanged' $null
+        }
+        $answer = Invoke-AtCommand -Channel $Worker.Channel -Command "AT+GTDUALSIM=$slot"
+        if ($answer.Status -ne 'OK') {
+            return & $outcome 'Failed' "AT+GTDUALSIM=$slot $($answer.Status)$(if ($null -ne $answer.ErrorCode) { " $($answer.ErrorCode)" })"
+        }
+        # The SIM changes: service drops, the SIM is read again - an intentional operation, which
+        # nothing escalates over. The eUICC is read again once the slot says it is in use.
+        Open-WorkerMaintenanceWindow -Worker $Worker -Now (& $Worker.Clock)
+        $Worker.SimSlotRead = $false
+        $Worker.EsimInfo = $null
+        $Worker.EsimProfiles = $null
+        $Worker.EsimNotifications = $null
+        $Worker.EsimDue = $true
+        return & $outcome 'Done' $null
+    }
+
+    if (-not (Test-WorkerLpac -Worker $Worker)) {
+        return & $outcome 'NoLpac' $null
+    }
+    if (-not $Worker.SimSlotRead) {
+        Update-WorkerSimSlot -Worker $Worker
+    }
+    if (-not (Test-WorkerEuiccInUse -Worker $Worker)) {
+        return & $outcome 'NotEuicc' $null
+    }
+    if ($Kind -eq 'ReadEsim') {
+        [void](Update-WorkerEsim -Worker $Worker)
+        return & $outcome $(if ($Worker.EsimFailure) { 'Failed' } else { 'Done' }) $Worker.EsimFailure
+    }
+    if ($Kind -in 'EnableProfile', 'DisableProfile' -and $Worker.NetworkModeTrial) {
+        return & $outcome 'TrialOn' $null
+    }
+
+    $run = $null
+    switch ($Kind) {
+        'DownloadProfile' {
+            $code = ConvertFrom-EsimActivationCode -Text (ConvertFrom-WorkerSecret -Value $Parameter['ActivationCode'])
+            if ($code.Problem) {
+                return & $outcome 'BadCode' $code.Problem
+            }
+            $confirmation = ConvertFrom-WorkerSecret -Value $Parameter['ConfirmationCode']
+            if ($code.ConfirmationRequired -and -not $confirmation) {
+                return & $outcome 'ConfirmationNeeded' $null
+            }
+            $run = Invoke-WorkerLpac -Worker $Worker -Operation DownloadProfile -Option @{ ActivationCode = $code.Code; ConfirmationCode = $confirmation }
+        }
+        default {
+            $aid = [string]$Parameter['Aid']
+            $chosen = @($Worker.EsimProfiles | Where-Object { $_ -and $_.Aid -eq $aid }) | Select-Object -First 1
+            if (-not $chosen) {
+                return & $outcome 'UnknownProfile' $null
+            }
+            switch ($Kind) {
+                'EnableProfile' {
+                    if ($chosen.State -eq 'Enabled') {
+                        return & $outcome 'Unchanged' $null
+                    }
+                    $run = Invoke-WorkerLpac -Worker $Worker -Operation EnableProfile -Option @{ ProfileId = $aid }
+                }
+                'DisableProfile' {
+                    if ($chosen.State -ne 'Enabled') {
+                        return & $outcome 'Unchanged' $null
+                    }
+                    $run = Invoke-WorkerLpac -Worker $Worker -Operation DisableProfile -Option @{ ProfileId = $aid }
+                }
+                'DeleteProfile' {
+                    if ($chosen.State -eq 'Enabled') {
+                        return & $outcome 'ProfileEnabled' $null
+                    }
+                    $run = Invoke-WorkerLpac -Worker $Worker -Operation DeleteProfile -Option @{ ProfileId = $aid }
+                }
+                'SetProfileNickname' {
+                    if (-not $chosen.Iccid) {
+                        return & $outcome 'UnknownProfile' $null
+                    }
+                    $run = Invoke-WorkerLpac -Worker $Worker -Operation SetNickname -Option @{ ProfileId = $chosen.Iccid; Nickname = [string]$Parameter['Nickname'] }
+                }
+            }
+        }
+    }
+    $Worker.EsimDue = $true
+    $why = Get-WorkerLpacFailure -Run $run
+    if ($Kind -in 'EnableProfile', 'DisableProfile' -and ($run.Outcome -ne 'Done' -or $run.Code -eq 0)) {
+        # The SIM resets with the switch: service drops, the SIM is read again - an intentional
+        # operation, which nothing escalates over. A run that broke off may have switched too.
+        Open-WorkerMaintenanceWindow -Worker $Worker -Now (& $Worker.Clock)
+        $Worker.PassForced = $true
+    }
+    if ($why) {
+        return & $outcome $(if ($run.Outcome -eq 'Timeout') { 'Timeout' } else { 'Failed' }) $why
+    }
+    & $outcome 'Done' $null
+}
+
 function Update-WorkerStartAtLogon {
     # Reads whether the app starts at sign-in: the simulated device's task in development mode,
     # the installer's otherwise. A read that fails says nothing is known.
@@ -2020,7 +2357,8 @@ function Invoke-WorkerCommand {
     $attemptsLeft = $null
     $parts = $null
     $channelOpen = $Worker.Channel -and $Worker.Channel.State -eq 'Open'
-    $writes = $Command.Kind -in @('DisableSimPin', 'UnlockFcc', 'EnableAdapter', 'SetStartAtLogon', 'DeleteMessage', 'SendMessage') + $script:DriverCommandKinds
+    $writes = $Command.Kind -in @('DisableSimPin', 'UnlockFcc', 'EnableAdapter', 'SetStartAtLogon', 'DeleteMessage', 'SendMessage', 'SelectSimSlot', 'EnableProfile', 'DisableProfile',
+        'SetProfileNickname', 'DeleteProfile', 'DownloadProfile') + $script:DriverCommandKinds
     try {
         if ($writes -and $Worker.ObserveOnly) {
             $result = 'Refused'
@@ -2028,7 +2366,7 @@ function Invoke-WorkerCommand {
         elseif ($Command.Kind -in @('SetStartAtLogon') + $script:DriverCommandKinds -and -not $Worker.Elevated) {
             $result = 'NotElevated'
         }
-        elseif ($Command.Kind -in 'SaveSimPin', 'DisableSimPin', 'UnlockFcc', 'DeleteMessage', 'SendMessage' -and -not $channelOpen) {
+        elseif ($Command.Kind -in @('SaveSimPin', 'DisableSimPin', 'UnlockFcc', 'DeleteMessage', 'SendMessage') + $script:EsimCommandKinds -and -not $channelOpen) {
             $result = 'NoModem'
         }
         elseif ($Command.Kind -in 'DeleteMessage', 'SendMessage' -and -not (Test-WorkerSimReady -Worker $Worker)) {
@@ -2138,6 +2476,11 @@ function Invoke-WorkerCommand {
                     $detail = $outcome.Detail
                     $Worker.MessagesDue = $true
                 }
+                { $_ -in $script:EsimCommandKinds } {
+                    $outcome = Invoke-WorkerEsimCommand -Worker $Worker -Kind $Command.Kind -Parameter $parameter
+                    $result = $outcome.Result
+                    $detail = $outcome.Detail
+                }
                 'SendMessage' {
                     $outcome = Send-WorkerMessage -Worker $Worker -Number ([string]$parameter['Number']) -Text ([string]$parameter['Text'])
                     $result = $outcome.Result
@@ -2152,8 +2495,9 @@ function Invoke-WorkerCommand {
     }
     catch {
         $result = 'Failed'
-        # A message's number or text may be in the error's text: its type only, then.
-        $detail = if ($Command.Kind -in $script:MessageCommandKinds) { $_.Exception.GetType().Name } else { $_.Exception.Message }
+        # A message's number or text, an activation code, may be in the error's text: its type
+        # only, then.
+        $detail = if ($Command.Kind -in @($script:MessageCommandKinds) + 'DownloadProfile') { $_.Exception.GetType().Name } else { $_.Exception.Message }
     }
     $outcome = [pscustomobject]@{
         Id           = $Command.Id
@@ -2164,7 +2508,7 @@ function Invoke-WorkerCommand {
         Parts        = $parts
         Time         = [DateTimeOffset]::Now
     }
-    $level = if ($result -in 'Done', 'Disabled', 'Enabled', 'AlreadyOff', 'Restarted', 'NotLocked', 'Verified', 'Signed', 'RestartNeeded', 'NoDevice', 'Sent') { 'Info' } else { 'Warning' }
+    $level = if ($result -in 'Done', 'Disabled', 'Enabled', 'AlreadyOff', 'Restarted', 'NotLocked', 'Verified', 'Signed', 'RestartNeeded', 'NoDevice', 'Sent', 'Unchanged') { 'Info' } else { 'Warning' }
     Write-WorkerLog -Worker $Worker -Level $level -Message "Command $($Command.Kind): $result$(if ($detail) { " - $detail" })"
     $outcome
 }
@@ -2253,11 +2597,17 @@ function Invoke-ModemWorkerCycle {
             $Worker.MessageOperation = 'Sending'
             & $publish
         }
+        if ($command.Kind -in $script:EsimCommandKinds) {
+            # lpac talks to the eUICC, and a download to the operator's server: the window says so.
+            $Worker.EsimOperation = $command.Kind
+            & $publish
+        }
         $Worker.Results.Add((Invoke-WorkerCommand -Worker $Worker -Command $command))
         $Worker.DriverOperation = $null
         $Worker.MessageOperation = $null
-        if ($command.Kind -eq 'SetNetworkMode') {
-            # A mode on trial is published at once, with its maintenance window: should the rest
+        $Worker.EsimOperation = $null
+        if ($command.Kind -in 'SetNetworkMode', 'SelectSimSlot', 'EnableProfile', 'DisableProfile') {
+            # A mode on trial, a switch's maintenance window, are published at once, with its maintenance window: should the rest
             # of the cycle fail, the worker that replaces this one carries them on.
             & $publish
         }
@@ -2329,7 +2679,13 @@ function Invoke-ModemWorkerCycle {
             -WhatIf:$Worker.ObserveOnly -Confirm:$false @options
         $Worker.LastPass = $started
         $Worker.PassForced = $false
+        $wasOnline = $Worker.State -eq 'Online'
         Register-WorkerDecision -Worker $Worker -Decision $pass -Logged
+        if (-not $wasOnline -and $Worker.State -eq 'Online' -and @($Worker.EsimNotifications).Count -gt 0) {
+            # Online again - maybe through the profile just switched to: the notifications that
+            # couldn't be sent go now.
+            $Worker.EsimDue = $true
+        }
         $Worker.Facts = $pass.Observation
         if ($pass.Observation.NetworkModeSupport) {
             $Worker.NetworkModeSupport = $pass.Observation.NetworkModeSupport
@@ -2340,7 +2696,7 @@ function Invoke-ModemWorkerCycle {
             if ($pass.Written.Status -in 'OK', 'Timeout', 'PortLost') {
                 # The mode the settings ask, written over the modem's: it registers again - an
                 # intentional operation, which nothing escalates over.
-                Open-WorkerNetworkModeWindow -Worker $Worker -Now (& $Worker.Clock)
+                Open-WorkerMaintenanceWindow -Worker $Worker -Now (& $Worker.Clock)
             }
         }
         $modeDecision = $pass.Observation.NetworkMode
@@ -2436,6 +2792,28 @@ function Invoke-ModemWorkerCycle {
                     $Worker.MessagesDue = $true
                 }
             }
+        }
+        $published = $true
+        & $lost
+    }
+
+    # The SIM slot in use, once per port; the eUICC through lpac, when it is the SIM in use and a
+    # read is due - the first port, a command, a switch -, its SIM ready or with no profile
+    # enabled: never while it resets.
+    if ($Worker.Channel -and $Worker.Channel.State -eq 'Open' -and -not $Worker.SimSlotRead -and $Worker.Facts -and $Worker.Facts.Responsive) {
+        Update-WorkerSimSlot -Worker $Worker
+        $published = $true
+        & $lost
+    }
+    if ($Worker.Channel -and $Worker.Channel.State -eq 'Open' -and $Worker.EsimDue -and $Worker.SimSlotRead -and (Test-WorkerEuiccInUse -Worker $Worker) -and
+        $Worker.Facts -and $Worker.Facts.SimState -in 'Ready', 'NoProfile' -and (Test-WorkerLpac -Worker $Worker)) {
+        $Worker.EsimOperation = 'ReadEsim'
+        & $publish
+        try {
+            [void](Update-WorkerEsim -Worker $Worker)
+        }
+        finally {
+            $Worker.EsimOperation = $null
         }
         $published = $true
         & $lost

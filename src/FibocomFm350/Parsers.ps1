@@ -136,7 +136,8 @@ function ConvertFrom-AtSimState {
     .DESCRIPTION
         Returns Ready ($true for '+CPIN: READY'), Waiting - what the SIM is waiting for ('SIM PIN',
         'SIM PUK', ...), or $null when it is ready - and State: 'Ready', 'PinRequired',
-        'PukRequired', 'Absent', 'Busy', 'Failure' or 'Other'.
+        'PukRequired', 'NoProfile' (an eUICC with no profile enabled, '+CPIN: EMPTY_EUICC':
+        AT-COMMANDS section 8), 'Absent', 'Busy', 'Failure' or 'Other'.
         A missing or busy SIM answers '+CME ERROR' instead: pass its number as -ErrorCode (10 no
         SIM, 11 PIN required, 12 PUK required, 13 SIM failure, 14 busy; 15 wrong SIM, 17 PIN2
         and 18 PUK2 required are 'Other'). Returns $null for an answer with no '+CPIN:' line and
@@ -164,6 +165,7 @@ function ConvertFrom-AtSimState {
             'READY' { 'Ready' }
             'SIM PIN' { 'PinRequired' }
             'SIM PUK' { 'PukRequired' }
+            'EMPTY_EUICC' { 'NoProfile' }
             default { 'Other' }
         }
         [pscustomobject]@{

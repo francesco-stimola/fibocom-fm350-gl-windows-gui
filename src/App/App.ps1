@@ -345,7 +345,8 @@ function Start-Fm350App {
         [switch] $Simulated,
 
         [ValidateSet('Online', 'Connect', 'ApnNeeded', 'PinRequired', 'FccLocked', 'AdapterDisabled', 'NoDevice', 'NoDriver',
-            'Settling', 'DataPathDown', 'IcmpDropped', 'RegistrationLost', 'ModemHung', 'Unrecoverable', 'LteOnlyMode', 'NrOnlyMode', 'Standalone')]
+            'Settling', 'DataPathDown', 'IcmpDropped', 'RegistrationLost', 'ModemHung', 'Unrecoverable', 'LteOnlyMode', 'NrOnlyMode', 'Standalone',
+            'EsimEmpty', 'Esim')]
         [string] $Scenario = 'Online',
 
         [switch] $ObserveOnly,

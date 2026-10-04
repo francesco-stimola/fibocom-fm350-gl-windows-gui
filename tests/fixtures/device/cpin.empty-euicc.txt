@@ -1,0 +1,4 @@
+# Source: captured 2026-10-03, FM350-GL firmware 81600.0000.00.29.22.06; slot 1 selected (AT+GTDUALSIM=1), its eUICC holding one profile, disabled: no profile enabled. The modem's own codes among the answer left out.
+AT+CPIN?
++CPIN: EMPTY_EUICC
+OK

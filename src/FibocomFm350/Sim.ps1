@@ -157,7 +157,8 @@ function Resolve-SimPinAction {
           'PinForOtherSim', 'SimNotIdentified', 'PinUnconfirmed' (the earlier attempt's outcome
           is unknown: never a second one) or 'LastAttempt'.
         - Report: nothing the app can do. Reason: 'PukRequired' (the user enters the PUK with a
-          phone; the app never does), 'NoSim', 'SimFailure', 'SimOther'.
+          phone; the app never does), 'NoSim', 'NoProfile' (an eUICC with no profile enabled:
+          the user enables one), 'SimFailure', 'SimOther'.
         - Wait: the SIM is busy; read it again later. Reason 'SimBusy'.
     .EXAMPLE
         Resolve-SimPinAction -SimState PinRequired -PinStored -PinForThisSim $true -AttemptsLeft 3
@@ -166,7 +167,7 @@ function Resolve-SimPinAction {
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory)]
-        [ValidateSet('Ready', 'PinRequired', 'PukRequired', 'Absent', 'Busy', 'Failure', 'Other')]
+        [ValidateSet('Ready', 'PinRequired', 'PukRequired', 'NoProfile', 'Absent', 'Busy', 'Failure', 'Other')]
         [string] $SimState,
 
         [switch] $PinStored,
@@ -182,6 +183,7 @@ function Resolve-SimPinAction {
         'Ready' { 'Continue', $(if ($PinStored -and $PinAttempted -and $PinForThisSim -eq $true) { 'PinAccepted' } else { $null }) }
         'Busy' { 'Wait', 'SimBusy' }
         'Absent' { 'Report', 'NoSim' }
+        'NoProfile' { 'Report', 'NoProfile' }
         'PukRequired' { 'Report', 'PukRequired' }
         'Failure' { 'Report', 'SimFailure' }
         'Other' { 'Report', 'SimOther' }

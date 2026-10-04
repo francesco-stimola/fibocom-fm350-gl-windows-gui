@@ -56,6 +56,7 @@ Describe 'Resolve-ConnectionState' {
         @{ Name = 'PIN needed from the user'; Change = @{ Sim = [pscustomobject]@{ Action = 'AskUser'; Reason = 'NoPin' } }; State = 'Identified'; Action = 'None'; Reason = 'NoPin'; Blocked = $true }
         @{ Name = 'PUK needed'; Change = @{ Sim = [pscustomobject]@{ Action = 'Report'; Reason = 'PukRequired' } }; State = 'Identified'; Action = 'None'; Reason = 'PukRequired'; Blocked = $true }
         @{ Name = 'no SIM'; Change = @{ Sim = [pscustomobject]@{ Action = 'Report'; Reason = 'NoSim' } }; State = 'Identified'; Action = 'None'; Reason = 'NoSim'; Blocked = $true }
+        @{ Name = 'an eSIM with no profile enabled'; Change = @{ Sim = [pscustomobject]@{ Action = 'Report'; Reason = 'NoProfile' } }; State = 'Identified'; Action = 'None'; Reason = 'NoProfile'; Blocked = $true }
         @{ Name = 'SIM not read'; Change = @{ Sim = $null }; State = 'Identified'; Action = 'None'; Reason = 'SimUnknown'; Blocked = $false }
         # Registration, the radio, the FCC lock.
         @{ Name = 'FCC-locked, not registered'; Change = @{ Registered = $false; RadioOn = $false; Fcc = [pscustomobject]@{ Diagnosis = 'Locked' } }; State = 'SimReady'; Action = 'None'; Reason = 'FccLocked'; Blocked = $true }

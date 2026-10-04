@@ -25,6 +25,7 @@ Describe 'ConvertFrom-AtSimState: the SIM state' {
         @{ Line = '+CPIN: "SIM PIN"'; State = 'PinRequired' }
         @{ Line = '+CPIN: PH-SIM PIN'; State = 'Other' }
         @{ Line = '+CPIN: SIM PIN2'; State = 'Other' }
+        @{ Line = '+CPIN: EMPTY_EUICC'; State = 'NoProfile' }
     ) {
         (ConvertFrom-AtSimState -Lines $Line).State | Should -Be $State
     }
@@ -181,6 +182,7 @@ Describe 'Resolve-SimPinAction' {
         @{ SimState = 'Absent'; Stored = $true; ForThisSim = $null; Attempted = $false; Left = $null; Action = 'Report'; Reason = 'NoSim' }
         @{ SimState = 'Failure'; Stored = $false; ForThisSim = $null; Attempted = $false; Left = $null; Action = 'Report'; Reason = 'SimFailure' }
         @{ SimState = 'Other'; Stored = $true; ForThisSim = $true; Attempted = $false; Left = 3; Action = 'Report'; Reason = 'SimOther' }
+        @{ SimState = 'NoProfile'; Stored = $true; ForThisSim = $null; Attempted = $false; Left = $null; Action = 'Report'; Reason = 'NoProfile' }
         @{ SimState = 'Busy'; Stored = $true; ForThisSim = $true; Attempted = $false; Left = 3; Action = 'Wait'; Reason = 'SimBusy' }
     ) {
         $decision = Resolve-SimPinAction -SimState $SimState -PinStored:$Stored -PinForThisSim $ForThisSim -PinAttempted:$Attempted -AttemptsLeft $Left
@@ -189,7 +191,7 @@ Describe 'Resolve-SimPinAction' {
     }
 
     It 'never sends a PIN for a SIM that is not waiting for one' {
-        foreach ($state in 'Ready', 'PukRequired', 'Absent', 'Busy', 'Failure', 'Other') {
+        foreach ($state in 'Ready', 'PukRequired', 'NoProfile', 'Absent', 'Busy', 'Failure', 'Other') {
             (Resolve-SimPinAction -SimState $state -PinStored -PinForThisSim $true -AttemptsLeft 3).Action | Should -Not -Be 'SendPin'
         }
     }

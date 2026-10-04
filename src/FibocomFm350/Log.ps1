@@ -39,7 +39,9 @@ function ConvertTo-RedactedText {
           the TAC and cell identity of +GTCCINFO cell lines - unless they hold the modem's "not
           known" pattern;
         - message content: the text of a +CUSD: reply, and lines that are only hexadecimal (a
-          message PDU).
+          message PDU);
+        - the eSIM: the APDUs of AT+CGLA= and of a +CGLA: answer, which can carry the EID and
+          ICCIDs; an activation code ('LPA:...'), a secret.
     .EXAMPLE
         ConvertTo-RedactedText -Text 'AT+CPIN="1234"'
 
@@ -60,6 +62,10 @@ function ConvertTo-RedactedText {
         $line = $line -replace '(?i)(\+(?:CPIN|CPWD)\s*=)\s*(?:"[^"]*"|[^\s;",]*)(?:\s*,\s*(?:"[^"]*"|[^\s;",]*))*', '$1***'
         $line = $line -replace '(?i)(\+CLCK\s*=\s*"[^"]*"\s*,\s*\d+)\s*,\s*(?:"[^"]*"|[^\s;",]*)', '$1,***'
         $line = $line -replace '(?i)(\+CGAUTH\s*[=:]\s*\d+\s*,\s*\d+)(?:\s*,\s*(?:"[^"]*"|[^\s;",]*))+', '$1,***'
+        $line = $line -replace '(?i)\bLPA:\S*', 'LPA:***'
+        # The eSIM's APDUs, in a command and in its answer.
+        $line = $line -replace '(?i)(\+CGLA\s*=\s*\d+\s*,\s*\d+\s*,\s*)"?[0-9A-F]*"?', '$1<apdu>'
+        $line = $line -replace '(?i)(\+CGLA\s*:\s*\d+\s*,\s*)"?[0-9A-F]*"?', '$1<apdu>'
         # Identifiers.
         $line = $line -replace '(?<![0-9A-Za-z])\d{14,}[Ff]?(?![0-9A-Za-z])', '<id>'
         $line = $line -replace '"\+?\d{7,}"', '"<number>"'

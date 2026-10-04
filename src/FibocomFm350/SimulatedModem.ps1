@@ -359,6 +359,169 @@ class SimulatedMessaging {
     }
 }
 
+# The simulated modem's two SIM slots, as our module has them (AT-COMMANDS section 8): slot 0 the
+# physical SIM, whose answers are the modem's standing ones; slot 1 an eUICC with its profiles.
+# AT+GTDUALSIM switches between them, the eUICC is reached through logical channels (AT+CCHO,
+# AT+CGLA, AT+CCHC), and the STORE DATA requests that change it - EnableProfile, DisableProfile,
+# DeleteProfile, SetNickname - are told by their tag; enabling or disabling one resets the SIM,
+# which closes the channels and keeps it busy for ResetMs. Its other requests are answered with a
+# bare 9000: the simulated lpac knows the eUICC's content itself.
+[NoRunspaceAffinity()]
+class SimulatedEuicc {
+    static [string] $IsdR = 'A0000005591010FFFFFFFF8900000100'
+    [int] $Slot = 0
+    [string] $Eid = '89001000000000000000000000000000'
+    # Its profiles: Aid, Iccid, State ('Enabled', 'Disabled'), Nickname, Provider, Name, Class.
+    [System.Collections.Generic.List[object]] $Profiles = [System.Collections.Generic.List[object]]::new()
+    # Its pending notifications: Sequence, Operation, Address, Iccid.
+    [System.Collections.Generic.List[object]] $Notifications = [System.Collections.Generic.List[object]]::new()
+    [int] $ResetMs = 1500
+    hidden [System.Collections.Generic.Dictionary[int, string]] $Sessions = [System.Collections.Generic.Dictionary[int, string]]::new()
+    hidden [int] $NextSession = 1
+    hidden [long] $ResetUntil = 0
+    hidden [long] $NextSequence = 1
+
+    # Its answer to $command, or $null for one it leaves to the modem.
+    [string[]] Answer([string] $command, [object] $modem) {
+        $resetting = [Environment]::TickCount64 -lt $this.ResetUntil
+        $enabled = @($this.Profiles | Where-Object State -EQ 'Enabled') | Select-Object -First 1
+        if ($command -eq 'AT+GTDUALSIM?') {
+            $service = if ($this.Slot -eq 1 -and -not $enabled) { 'NO SERVICE' } else { 'LTE' }
+            return @("+GTDUALSIM : $($this.Slot), `"SUB$($this.Slot + 1)`", `"$service`"", 'OK')
+        }
+        if ($command -match '^AT\+GTDUALSIM=([01])$') {
+            if ([int]$Matches[1] -ne $this.Slot) {
+                $this.Slot = [int]$Matches[1]
+                $this.Reset($modem)
+            }
+            return @('OK')
+        }
+        if ($command -eq 'AT+SIMTYPE?') {
+            return @("+SIMTYPE: $($this.Slot)", 'OK')
+        }
+        if ($command -eq 'AT+EID?') {
+            return $(if ($this.Slot -eq 1) { @("+EID: `"$($this.Eid)`"", 'OK') } else { @('+EID:', 'OK') })
+        }
+        if ($command -eq 'AT+CPIN?') {
+            if ($resetting) {
+                return @('+CME ERROR: 14')
+            }
+            if ($this.Slot -eq 1) {
+                return $(if ($enabled) { @('+CPIN: READY', 'OK') } else { @('+CPIN: EMPTY_EUICC', 'OK') })
+            }
+            return $null
+        }
+        if ($command -eq 'AT+ICCID' -and $this.Slot -eq 1) {
+            return $(if ($enabled) { @("+ICCID: $($enabled.Iccid)", 'OK') } else { @('+CME ERROR: 10') })
+        }
+        if ($command -match '^AT\+CCHO="([0-9A-F]+)"$') {
+            if ($resetting -or $this.Slot -ne 1 -or $Matches[1] -ne [SimulatedEuicc]::IsdR) {
+                return @('+CME ERROR: 100')
+            }
+            $session = $this.NextSession++
+            $this.Sessions[$session] = $Matches[1]
+            return @("$session", 'OK')
+        }
+        if ($command -match '^AT\+CCHC=(\d+)$') {
+            return $(if ($this.Sessions.Remove([int]$Matches[1])) { @('OK') } else { @('+CME ERROR: 100') })
+        }
+        if ($command -match '^AT\+CGLA=(\d+),(\d+),"([0-9A-F]*)"$') {
+            if (-not $this.Sessions.ContainsKey([int]$Matches[1]) -or [int]$Matches[2] -ne $Matches[3].Length) {
+                return @('+CME ERROR: 100')
+            }
+            $response = $this.Transmit($Matches[3], $modem)
+            return @("+CGLA: $($response.Length),`"$response`"", 'OK')
+        }
+        return $null
+    }
+
+    # The response APDU to a command APDU, status word included.
+    hidden [string] Transmit([string] $apdu, [object] $modem) {
+        if ($apdu.Length -lt 10 -or $apdu.Substring(2, 2) -ne 'E2') {
+            return '9000'
+        }
+        $data = $apdu.Substring(10)
+        $tag = $data.Substring(0, [Math]::Min(4, $data.Length))
+        $result = 0
+        $switched = $false
+        switch ($tag) {
+            { $_ -in 'BF31', 'BF32', 'BF33' } {
+                $aid = if ($data -match '4F10([0-9A-F]{32})') { $Matches[1] } else { '' }
+                $target = @($this.Profiles | Where-Object Aid -EQ $aid) | Select-Object -First 1
+                if (-not $target) {
+                    $result = 1
+                }
+                elseif ($tag -eq 'BF31') {
+                    if ($target.State -eq 'Enabled') {
+                        $result = 2
+                    }
+                    else {
+                        foreach ($each in $this.Profiles) { $each.State = 'Disabled' }
+                        $target.State = 'Enabled'
+                        $this.Notify('enable', $target.Iccid)
+                        $switched = $true
+                    }
+                }
+                elseif ($tag -eq 'BF32') {
+                    if ($target.State -ne 'Enabled') {
+                        $result = 2
+                    }
+                    else {
+                        $target.State = 'Disabled'
+                        $this.Notify('disable', $target.Iccid)
+                        $switched = $true
+                    }
+                }
+                elseif ($target.State -eq 'Enabled') {
+                    $result = 2
+                }
+                else {
+                    [void]$this.Profiles.Remove($target)
+                    $this.Notify('delete', $target.Iccid)
+                }
+            }
+            'BF29' {
+                if ($data -match '5A0A([0-9A-F]{20})90([0-9A-F]{2})([0-9A-F]*)') {
+                    $iccid = -join @(for ($i = 0; $i -lt 20; $i += 2) { $Matches[1][$i + 1]; $Matches[1][$i] }) -replace 'F', ''
+                    $length = [Convert]::ToInt32($Matches[2], 16)
+                    $nickname = [System.Text.Encoding]::UTF8.GetString([Convert]::FromHexString($Matches[3].Substring(0, 2 * $length)))
+                    $target = @($this.Profiles | Where-Object Iccid -EQ $iccid) | Select-Object -First 1
+                    if ($target) { $target.Nickname = if ($nickname) { $nickname } else { $null } } else { $result = 1 }
+                }
+                else {
+                    $result = 1
+                }
+            }
+            default {
+                return '9000'
+            }
+        }
+        if ($switched) {
+            # The eUICC asks for a REFRESH (910B) and the modem resets the SIM by itself.
+            $this.Reset($modem)
+            return "$($tag)03800100910B"
+        }
+        return '{0}038001{1:X2}9000' -f $tag, $result
+    }
+
+    # A notification for the profile's server, as the eUICC keeps one after an operation.
+    [void] Notify([string] $operation, [string] $iccid) {
+        $this.Notifications.Add([pscustomobject]@{ Sequence = $this.NextSequence++; Operation = $operation; Address = 'smdp.example.com'; Iccid = $iccid })
+    }
+
+    # The SIM resets: its channels close, it is busy a while, and the data context is gone.
+    [void] Reset([object] $modem) {
+        $this.Sessions.Clear()
+        $this.ResetUntil = [Environment]::TickCount64 + $this.ResetMs
+        $modem.SetAnswer('AT+CGACT?', @('OK'))
+    }
+
+    # The modem restarted: the channels are gone; the slot and the profiles stay.
+    [void] Restarted() {
+        $this.Sessions.Clear()
+    }
+}
+
 [NoRunspaceAffinity()]
 class SimulatedModem {
     [string] $PortName
@@ -378,6 +541,8 @@ class SimulatedModem {
     [object] $NetworkMode
     # Its messages (SimulatedMessaging), or $null: the messages commands answered from fixtures.
     [object] $Messaging
+    # Its SIM slots and eUICC (SimulatedEuicc), or $null: those commands answered from fixtures.
+    [object] $Euicc
 
     hidden [System.Collections.Generic.Dictionary[string, string[]]] $Answers
     hidden [System.Collections.Generic.Dictionary[string, System.Collections.Generic.Queue[hashtable]]] $Behaviors
@@ -460,6 +625,9 @@ class SimulatedModem {
         }
         if ($this.Messaging) {
             $this.Messaging.Restarted()
+        }
+        if ($this.Euicc) {
+            $this.Euicc.Restarted()
         }
         $this.PortName = $portName
         $this.Lost = $false
@@ -580,7 +748,10 @@ class SimulatedModem {
         }
         $lines = [System.Collections.Generic.List[string]]::new()
         # A scripted answer stands in for the network mode's own: the command then changes nothing.
-        $own = if ($this.NetworkMode -and -not $behavior.ContainsKey('Lines')) { $this.NetworkMode.Answer($command) } else { $null }
+        $own = if ($this.Euicc -and -not $behavior.ContainsKey('Lines')) { $this.Euicc.Answer($command, $this) } else { $null }
+        if ($null -eq $own -and $this.NetworkMode -and -not $behavior.ContainsKey('Lines')) {
+            $own = $this.NetworkMode.Answer($command)
+        }
         if ($null -eq $own -and $this.Messaging -and -not $behavior.ContainsKey('Lines')) {
             $own = $this.Messaging.Answer($command, $this)
         }
@@ -769,6 +940,10 @@ function New-SimulatedModem {
         messages commands answered from it, AT+CMGS's prompt and the PDU after it, and
         Messaging.Deliver($pdu, $modem) for a message that comes in - announced with +CMTI once
         +CNMI asks for it.
+
+        -Euicc gives it two SIM slots, an eUICC on slot 1 (SimulatedEuicc): AT+GTDUALSIM,
+        AT+SIMTYPE, AT+EID, AT+CPIN and AT+ICCID on slot 1, and the logical channels answered
+        from it.
     .EXAMPLE
         $modem = New-SimulatedModem -Fixture (Get-ChildItem tests/fixtures/documented)
         $modem.Script('AT+COPS=0', @{ DelayMs = 500 })
@@ -783,13 +958,18 @@ function New-SimulatedModem {
         [Parameter(ValueFromPipeline)]
         [object[]] $Fixture = @(),
 
-        [switch] $Messaging
+        [switch] $Messaging,
+
+        [switch] $Euicc
     )
 
     begin {
         $modem = [SimulatedModem]::new($PortName)
         if ($Messaging) {
             $modem.Messaging = [SimulatedMessaging]::new()
+        }
+        if ($Euicc) {
+            $modem.Euicc = [SimulatedEuicc]::new()
         }
         $seen = @{}
     }

@@ -10,6 +10,9 @@
         '89001000000000000000000000000000'  # EID, 32 digits
     )
 
+    # eSIM activation codes ('LPA:...'): secrets, even the public ones.
+    ActivationCodes = @('LPA:1$smdp.example.com$TEST-0000')
+
     # The module serial number, quoted in +CFSN answers.
     SerialNumbers = @('0000000000')
 

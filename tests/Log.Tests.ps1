@@ -32,6 +32,11 @@ Describe 'ConvertTo-RedactedText' {
         @{ Name = 'a PIN, keeping the rest of the line'; Text = 'EnterPin: Done - AT+CPIN="1234" OK; next'; Expected = 'EnterPin: Done - AT+CPIN=*** OK; next' }
         @{ Name = 'a redacted PIN again, unchanged'; Text = 'AT+CPIN=*** OK'; Expected = 'AT+CPIN=*** OK' }
         @{ Name = 'credentials, keeping the rest of the line'; Text = 'AT+CGAUTH=1,2,"me","a b" OK'; Expected = 'AT+CGAUTH=1,2,*** OK' }
+        @{ Name = 'the APDU of AT+CGLA='; Text = 'AT+CGLA=1,22,"81E2910006BF3E035C015A"'; Expected = 'AT+CGLA=1,22,<apdu>' }
+        @{ Name = 'the APDU of a +CGLA: answer'; Text = '+CGLA: 10,"5A0A98001000"'; Expected = '+CGLA: 10,<apdu>' }
+        @{ Name = 'an unquoted +CGLA: answer, keeping the rest of the line'; Text = '+CGLA: 4,9000 OK'; Expected = '+CGLA: 4,<apdu> OK' }
+        @{ Name = 'an activation code'; Text = 'download -a LPA:1$smdp.example.com$ABC-123 failed'; Expected = 'download -a LPA:*** failed' }
+        @{ Name = 'an activation code in lower case'; Text = 'lpa:1$smdp.example.com$ABC'; Expected = 'LPA:***' }
     ) {
         ConvertTo-RedactedText -Text $Text | Should -Be $Expected
     }
@@ -49,6 +54,10 @@ Describe 'ConvertTo-RedactedText' {
         @{ Name = 'a band list'; Text = '+GTACT: 20,6,3,101,103,107,5078' }
         @{ Name = 'an error'; Text = '+CME ERROR: 16' }
         @{ Name = 'a timestamp-like number of 13 digits'; Text = 'took 1234567890123 ticks' }
+        @{ Name = 'a logical channel opened on an AID'; Text = 'AT+CCHO="A0000005591010FFFFFFFF8900000100"' }
+        @{ Name = 'a channel closed'; Text = 'AT+CCHC=1' }
+        @{ Name = 'the SIM slot'; Text = '+GTDUALSIM : 1, "SUB2", "NO SERVICE"' }
+        @{ Name = 'an eUICC with no profile enabled'; Text = '+CPIN: EMPTY_EUICC' }
     ) {
         ConvertTo-RedactedText -Text $Text | Should -Be $Text
     }
