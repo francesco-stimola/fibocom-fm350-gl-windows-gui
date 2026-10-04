@@ -52,7 +52,7 @@ adapter's IP address by hand. And when the link drops — it does — nothing br
 - **Languages** — English, Italian, German, French, Spanish, Portuguese, Dutch and Polish, as
   Windows' display language asks. Translations other than Italian have had no native speaker's
   review yet: corrections are welcome (`src/App/Strings`, `src/Installer/Strings`).
-- **SMS and data usage** (after 1.0) — read and send text messages, and see how much data this
+- **SMS and data usage** (since 1.1) — read and send text messages, and see how much data this
   billing cycle has used, with an optional quota warning. Balance codes like `*123#` (USSD) get no
   reply from the FM350-GL on LTE, so they are not offered.
 - **eSIM** (after 1.0) — on modules with an embedded SIM: list, switch, rename, download and delete

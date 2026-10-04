@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-04
+
 ### Added
 - Text messages: the messages on the SIM in a *Messages* tab — new ones marked, long messages
   joined from their parts, any alphabet, emoji included —, opened by selecting them, deleted after
