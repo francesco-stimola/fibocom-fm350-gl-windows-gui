@@ -7,6 +7,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- eSIM, on modules with an embedded SIM: an *eSIM* tab with the SIM slot in use — in the window's
+  top panel too — and the switch to the other slot; the EID, with *Copy*; the profiles, enabled,
+  disabled, renamed and deleted — a deletion confirmed by typing the profile's name —; a profile
+  downloaded from its activation code, typed or read from the image of its QR code. The providers'
+  notifications are sent by themselves. An eSIM with no profile enabled says so in the tray and the
+  window, with *Open eSIM*. Verified on our module's eUICC, a commercial profile downloaded,
+  enabled, deleted and downloaded again.
+- The release zip carries lpac 2.2.1 (AGPL-3.0), which manages the eSIM, and ZXing.Net 0.16.11
+  (Apache-2.0), which reads QR codes, each with its license; lpac's source is attached to the
+  release. The app makes lpac's HTTPS requests itself, each server's certificate checked against
+  the GSMA's root.
+
 ### Changed
 - A silent message — one the network asks never to show — is listed in the *Messages* tab, marked
   and without its text, so it can be deleted: it takes a place on the SIM. It is never announced.

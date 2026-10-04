@@ -34,7 +34,8 @@ When the link drops, nothing brings it back. This app does both, from the system
 - **FM350-GL over USB.** Laptops with an OEM-integrated FM350 (PCIe) that already work through
   Windows' mobile broadband stack are out of scope.
 - **No redistribution of the modem driver**, nor of any binary whose license doesn't allow it.
-  Open-source tools ship only under their own license (lpac, from `v1.2.0` — see *eSIM*).
+  Open-source tools ship only under their own license (lpac and ZXing.Net, from `v1.2.0` — see
+  *eSIM*).
 - Not a firmware tool: no flashing, no IMEI changes, no NV editing — with one exception the user
   asks for explicitly, the FCC unlock (see *FCC lock*).
 
@@ -763,19 +764,21 @@ from the logo's geometry at every size an icon file needs, no image file in the 
 A WPF window (`MainWindow.xaml`), filled from a pure view of the snapshot (`ConvertTo-WindowView`);
 closing it hides it — the app stays in the tray. Its buttons only queue commands: the outcome
 comes back in a later snapshot, so the window never waits on the modem or the system.
-- **The connection**, always in view: the state in words, the technology and the operator, and
-  what is unusual — development mode, observe-only, settings that apply at the next connection.
+- **The connection**, always in view: the state in words, the technology and the operator, the SIM
+  in use (M9: its slot, and the eSIM's profile enabled), and what is unusual — development mode,
+  observe-only, settings that apply at the next connection.
 - **What blocks it, with the action that unblocks it**: an APN to give (`ApnNeeded`), the APN
   password to give again (`ApnPasswordUnreadable`), the PIN (`NoPin` and the like), *Enable
   adapter* for an adapter the user disabled (administrator rights; never done by the app on its
   own), *Unlock…* for an FCC-locked modem, *Install the driver…* for an AT port without its
-  driver (the *Driver* tab), *Open the settings* for encrypted DNS that can't be set (M7). What
+  driver (the *Driver* tab), *Open the settings* for encrypted DNS that can't be set (M7), *Open
+  eSIM* for an eSIM with no profile enabled (M9). What
   the app can't act on — a PUK, no SIM, the last PIN attempt — is said, with nothing to click.
 - **What changes something outside the app asks first**: the FCC unlock (it writes the modem's
   non-volatile memory and lifts the laptop maker's restriction), removing the PIN from the SIM (it
   changes the SIM, in any phone too), uninstalling the AT port's driver (the app then can't watch
   the connection), and installing a driver version the app doesn't know. A version it knows is
-  installed at *Install*.
+  installed at *Install*. The eSIM's own (M9) are in *eSIM*.
 - **Tabs**: *Signal* — LTE and NR quality, serving and neighbour cells, carrier aggregation
   (uplink values only for a carrier that carries uplink); *SIM* — its state and attempts left, the
   stored PIN (store, forget), removing the PIN from the SIM; *Network* (M5) — the modem's mode and
@@ -786,9 +789,10 @@ comes back in a later snapshot, so the window never waits on the modem or the sy
   can do — the servers it knows a template for, whether it has the per-interface API —; whether
   the adapter's DNS is encrypted now, and for which servers; saving them never changes the network
   mode; *Driver* (M6) — the AT port's driver, where a known copy is published, the package chosen
-  and what its check found, *Install*, *Uninstall the driver…* (*Drivers*). The footer says the
-  app's version. Tabs whose content may outgrow the window — *SIM*, *Connection*, *Driver* —
-  scroll; the outcome and the footer wrap beside *Check now*, never under it.
+  and what its check found, *Install*, *Uninstall the driver…* (*Drivers*); *eSIM* (M9, *eSIM*).
+  The footer says the app's version. Tabs whose content may outgrow the window — *SIM*,
+  *Connection*, *Driver*, *eSIM* — scroll; the outcome and the footer wrap beside *Check now*, never
+  under it.
 - **Its own on the taskbar** (decided 2026-10-03): the window and the Start-menu shortcut carry
   one AppUserModelID, `FibocomFm350Gl.WindowsGui` (`AppIdentity.ps1`; development mode its own).
   Without it the window takes the identity of the PowerShell that hosts it — an MSIX package's,
@@ -811,7 +815,9 @@ the installer and the launcher. The **log stays in English**: it serves reports 
   read is English, never a failure. Texts are templates with placeholders `{0}`, `{1}`… filled in
   the invariant culture, like every number the app writes. A sentence that follows a colon has a
   form of its own (`ActionInline.*`, `StepInline.*`): lower-casing a first letter is right in
-  English, wrong for a German noun.
+  English, wrong for a German noun. The app's tables hold more than the 500 keys PowerShell
+  takes from a data file by default: they are read with `-SkipLimitCheck` — the app's own files,
+  where only administrators write.
 - **Codes travel, texts don't.** The worker publishes codes — reasons, results, checks, steps, a
   setting's broken rule with its values (`ConvertTo-AppSetting`'s `Issues`) —, and the window
   turns them into words; the English sentences the log writes are made apart, in the core module.
@@ -981,16 +987,20 @@ runs as an external process, one invocation per operation (facts: `AT-COMMANDS.m
   choice stays in the modem across restarts, and always shows the active slot.
 - **An eUICC with no profile enabled** (`+CPIN: EMPTY_EUICC`) is a SIM state of its own,
   `NoProfile`: blocked, never escalated — no reset enables a profile; the user does.
-- **Identifiers:** the EID and the ICCIDs stay in the worker; a snapshot carries the profiles' ISD-P
-  AIDs, providers, names, nicknames, classes and states. The log redacts `AT+CGLA`'s APDUs, in a
-  command and in its answer, and activation codes; an eSIM command's failure is logged by the step
-  that failed and lpac's reason.
+- **Identifiers:** the ICCIDs stay in the worker; a snapshot carries the profiles' ISD-P AIDs,
+  providers, names, nicknames, classes and states, and the EID, which the window shows with
+  *Copy* (decided 2026-10-04: providers ask for it to sell a plan) — never the log nor the tooltip.
+  The log redacts `AT+CGLA`'s APDUs, in a command and in its answer, and activation codes; an eSIM
+  command's failure is logged by the step that failed and lpac's reason.
 - **Development mode** (`-Scenario EsimEmpty`, `Esim`): the simulated modem has two slots, as our
   module has them — the physical SIM, and an eUICC holding a test profile (`SimulatedEuicc`): its
   logical channels, the STORE DATA requests that change it told by their tag, the SIM reset after
   a switch. A simulated lpac (`SimulatedLpac`) speaks lpac's `stdio` protocol for one operation
   and gives lpac's result from what the eUICC holds. Nothing of the eSIM ships proven on it alone
-  (decided 2026-10-03).
+  (decided 2026-10-03). **The programs the zip bundles run in the tests**: CI builds the zip before
+  them, and `Bundled.Tests.ps1` runs its lpac through the bridge against the simulated eUICC —
+  enable, disable, nickname, delete; the test that would have caught `2.3.0` — and reads QR codes
+  with its ZXing.Net.
 - **lpac ships with the app.** lpac is AGPL-3.0, so unlike the modem driver it may be
   redistributed. **Version `2.2.1`** (decided 2026-10-04): `2.3.0`'s `stdio` backend doesn't work
   (`AT-COMMANDS.md` §8). The release workflow downloads the pinned version from lpac's official
@@ -1000,6 +1010,27 @@ runs as an external process, one invocation per operation (facts: `AT-COMMANDS.m
   doesn't use — with `SOURCE.txt`, which says where the source is; lpac's source archive for the
   same tag is attached to the GitHub Release as the corresponding source. The binaries are never
   committed to git; a `lpac` folder in `src/` is never packaged.
+- **The window's *eSIM* tab** (decided 2026-10-04): the SIM in use — also in the top panel — and
+  *Use slot N…*; the EID with *Copy*; the chip's facts and the notifications waiting; the profiles,
+  the enabled one in bold, with *Enable…*, *Disable…*, *Delete…* and a nickname to *Rename*; *Read
+  again*; *Download a profile* from an activation code typed or read from the image of its QR code,
+  with a confirmation code. Slots are counted from 1, as the modem names them (`SUB1`, `SUB2`).
+  What changes the modem asks first: a slot switch — *No* preselected — says that the modem keeps
+  it, that the connection drops, and that an eSIM with no profile enabled has no network; enabling
+  or disabling a profile says that the SIM restarts; deleting one names it, says it can't be undone
+  and that the provider must give a new code, and **takes its name typed** (case and blanks aside).
+  A download asks nothing: the tab says the EID reaches the provider's server. The codes are typed
+  in password boxes and travel as `SecureString`s. **One command at a time**: the tab's buttons
+  wait for the outcome of the one sent, or for another worker. No Windows notification: the outcomes
+  are in the window, where the user started them.
+- **A QR code read from an image** (decided 2026-10-04): the window passes the image's path, and the
+  worker reads it when the download starts (`Read-QrCode`) — the code never passes through the
+  window nor a snapshot, and no decoding runs on the UI thread. A file of at most 20 MB and 50
+  megapixels, drawn at most 2000 pixels on its longer side, QR codes only, trying hard. The reader
+  is **ZXing.Net** (Apache-2.0), bundled like lpac: `tools/ZXing.psd1` pins its nuget.org package
+  by SHA-256 — its library for .NET 9 goes in the zip's `zxing` folder, with the license at the
+  release's tag, which the package doesn't carry (`AT-COMMANDS.md` §8). Its path is named in one
+  place (`Get-ZxingPath`), under Program Files; it is loaded the first time a code is read.
 
 ## SMS, USSD and data usage (M8)
 
@@ -1169,7 +1200,8 @@ src/
                          answers, what is new (M8, pure); the file of what is new
     Sim.ps1              SIM PIN: states, the decision, the encrypted store, removing it (M2)
     Esim.ps1             eSIM: lpac's lines and command lines, the bridge to AT+CCHO/+CGLA/+CCHC
-                         (pure), the SIM slot's reads; lpac run to its end (M9)
+                         (pure), the SIM slot's reads; lpac run to its end; the SM-DP+'s HTTPS (M9)
+    QrCode.ps1           a QR code read from an image, with ZXing.Net (M9)
     Fcc.ps1              FCC lock: reads, diagnosis, unlock (M2)
     Modes.ps1            network mode and bands: reads, what to write (pure), a choice on trial (M5)
     Connection.ps1       state machine (pure), observation and connect pass (M2)
@@ -1193,7 +1225,7 @@ src/
     Data/                3GPP band tables, transcribed (EutraBands.psd1, NrBands.psd1); the
                          simulated modem's answers (Simulation.psd1); the driver packages the
                          app knows (Drivers.psd1); the GSM 7 bit default alphabet
-                         (GsmAlphabet.psd1)
+                         (GsmAlphabet.psd1); the GSMA's root CI (GsmaRsp2RootCi1.pem)
   install.cmd            installs or updates the app (M7): runs Start-Fm350.ps1 -Mode Install
   uninstall.cmd          removes it (M7)
   Start-Fm350.ps1        the launcher, in Windows PowerShell 5.1: finds PowerShell 7, starts the
@@ -1222,8 +1254,10 @@ tools/
   Invoke-Lint.ps1        the linter, as CI runs it (docs/SETUP.md)
   LintRetry.ps1          when the linter starts another analyzer process, and gives a file up (pure)
   New-ReleasePackage.ps1 the release zip and its notes (M7): CI builds them at every push, the
-                         release workflow publishes them; lpac in the zip, its source beside (M9)
+                         release workflow publishes them; lpac and ZXing.Net in the zip, lpac's
+                         source beside (M9)
   Lpac.psd1              lpac's pinned release: addresses and SHA-256 (M9)
+  ZXing.psd1             ZXing.Net's pinned package and license: addresses and SHA-256 (M9)
 assets/                  logo (source: logo.html)
 ```
 
@@ -1233,8 +1267,9 @@ None beyond **PowerShell 7.6+ on Windows**. Everything the app uses ships with i
 (serial), WPF and WinForms (UI), `System.Drawing` (icon), `System.Net.Http` (the update notice),
 and the Windows modules `PnpDevice`, `NetAdapter`, `NetTCPIP`, `DnsClient`, `ScheduledTasks`.
 Windows PowerShell 5.1 and its `Appx` module, part of Windows, run the launcher. From `v1.2.0`
-the release zip also carries lpac for eSIM — `lpac.exe`, in the `lpac` folder (see *eSIM*);
-nothing has to be installed separately.
+the release zip also carries lpac for eSIM — `lpac.exe`, in the `lpac` folder — and ZXing.Net to
+read a QR code from an image — `zxing.dll`, in the `zxing` folder (see *eSIM*); nothing has to be
+installed separately.
 
 ## Invariants
 

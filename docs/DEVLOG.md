@@ -4,6 +4,40 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-04 — M9: the eSIM tab, a QR code read from an image, the bundled programs tested
+
+The window's *eSIM* tab as decided (ARCHITECTURE → *eSIM*), and what its building settled:
+- **The QR code is read by the worker, when the download starts**: the window passes the image's
+  path, and the code never passes through the window nor a snapshot. Rejected: decoding in the
+  window — CPU work on the UI thread for a phone's photo, the code then held by the window —; a
+  command of its own that reads the code and keeps it until the download — a secret held longer,
+  and state to clear. The cost: an image without a code is said only at *Download*. An image is
+  read up to 20 MB and 50 megapixels, drawn at most 2000 pixels on its longer side: a code that
+  fills a fraction of a photo keeps several pixels per module, and the reading stays short.
+- **ZXing.Net pinned by its nuget.org package's SHA-256** (nuget.org's SHA-512 matched at the
+  first download); the package carries no license, so the pin takes `COPYING` at the release's tag.
+  Only the library for .NET 9 goes in the zip.
+- **CI builds the zip before the tests**, and `Bundled.Tests.ps1` runs the lpac and ZXing.Net it
+  bundles: lpac through the bridge against the simulated eUICC — `v2.3.0`'s binary in its place
+  fails all six of its tests —, ZXing.Net on codes it writes. A download that fails now stops the
+  tests as well: accepted, the packaging is part of what a push proves. lpac's reads aren't among
+  them: the simulated eUICC doesn't encode SGP.22's answers; the device sessions verified them.
+- **The snapshot carries the EID**, for the window (decided earlier); the ICCIDs stay in the worker.
+- **An eUICC with no profile was published as one never read**: an `if` expression unrolls an
+  empty array to `$null`, in the worker's snapshot and again in the window's view. Both now assign
+  outside one, each with a test that fails without the fix.
+- **The text tables passed 500 keys**, the most `Import-PowerShellDataFile` takes by default: they
+  are read with `-SkipLimitCheck` — the app's own files, where only administrators write.
+  Rejected: splitting each language into tables per feature (one reader, one test per table more,
+  for a limit meant for data the user doesn't own).
+- **One eSIM command at a time**: the tab's buttons wait for the outcome of the one sent, or for
+  another worker — a second *Download* would spend a code already used. The delete dialog's button
+  works once the name typed matches, blanks and case aside. Slots are counted from 1, as the modem
+  names them.
+- **Copying the EID can fail** — another program may hold the clipboard — and a WPF handler that
+  throws ends the app: the copy is caught, and the tab says to copy it by hand.
+- `New-MainWindow`'s confirmation by typed name is `-AskName`: a `-Confirm` parameter would take
+  the place of PowerShell's own.
 ## 2026-10-04 — M9: a commercial profile downloaded through the app; the timeouts decided
 
 The second device session, the free BetterRoaming profile, every step through the worker's own

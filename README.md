@@ -55,8 +55,10 @@ adapter's IP address by hand. And when the link drops — it does — nothing br
 - **SMS and data usage** (since 1.1) — read and send text messages, and see how much data this
   billing cycle has used, with an optional quota warning. Balance codes like `*123#` (USSD) get no
   reply from the FM350-GL on LTE, so they are not offered.
-- **eSIM** (after 1.0) — on modules with an embedded SIM: list, switch, rename, download and delete
-  eSIM profiles, through [lpac](https://github.com/estkme-group/lpac).
+- **eSIM** (since 1.2) — on modules with an embedded SIM: switch between the physical SIM and the
+  eSIM; list, enable, disable, rename and delete eSIM profiles; download one from its activation
+  code, typed or read from the image of its QR code; the EID at hand, to copy. Through
+  [lpac](https://github.com/estkme-group/lpac).
 
 ## Install
 
@@ -121,7 +123,7 @@ once you turn that on — with one UAC prompt at install time, none afterwards. 
   download once it has checked it.
 
 Nothing else to install: the app runs on PowerShell alone, and from `v1.2.0` its release carries
-the one tool eSIM needs.
+the two programs eSIM needs: lpac, and ZXing.Net to read a QR code.
 
 ## Development
 
@@ -139,6 +141,8 @@ process: [`docs/SETUP.md`](docs/SETUP.md). Protocol facts and their sources:
   eSIM management on the FM350 over AT commands.
 - [estkme-group/lpac](https://github.com/estkme-group/lpac) (AGPL-3.0) — the eSIM engine, shipped
   with releases from `v1.2.0` under its own license.
+- [micjahn/ZXing.Net](https://github.com/micjahn/ZXing.Net) (Apache-2.0) — reads an eSIM's QR code
+  from an image, shipped with releases from `v1.2.0` under its own license.
 - [obsy/sms_tool](https://github.com/obsy/sms_tool) (Apache-2.0) and
   [wargio/fm350-util](https://github.com/wargio/fm350-util) (MIT) — how modems deliver SMS and
   USSD replies, and SMS on the FM350-GL.
