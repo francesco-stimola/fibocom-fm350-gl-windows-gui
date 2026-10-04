@@ -245,7 +245,7 @@ Describe 'Invoke-ModemWorkerCycle' {
             $first = $script:link['Snapshot']
             $before = $first | ConvertTo-Json -Depth 8
             $settings = (ConvertTo-AppSetting -InputObject @{ Apn = 'internet' }).Settings
-            [void](Invoke-TestCommand -Worker $worker -Kind SaveSettings -Parameter @{ Settings = $settings })
+            [void](Invoke-TestCommand -Worker $worker -Kind SaveSettings -Parameter @{ Settings = $settings; SimToken = $first.SimToken })
             $second = $script:link['Snapshot']
             $second.State | Should -Be 'Online'
             [object]::ReferenceEquals($first, $second) | Should -BeFalse
@@ -258,7 +258,8 @@ Describe 'Invoke-ModemWorkerCycle' {
             Invoke-ModemWorkerCycle -Worker $worker
             [void](Invoke-TestCommand -Worker $worker -Kind SaveSimPin -Parameter @{ Pin = ConvertTo-TestSecret '1234' })
             $settings = (ConvertTo-AppSetting -InputObject @{ ApnAuthentication = 'PAP'; ApnUser = 'user' }).Settings
-            [void](Invoke-TestCommand -Worker $worker -Kind SaveSettings -Parameter @{ Settings = $settings; ApnPassword = ConvertTo-TestSecret 'apn-secret' })
+            $result = Invoke-TestCommand -Worker $worker -Kind SaveSettings -Parameter @{ Settings = $settings; ApnPassword = ConvertTo-TestSecret 'apn-secret'; SimToken = $script:link['Snapshot'].SimToken }
+            $result.Result | Should -Be 'Done'
             $snapshot = $script:link['Snapshot']
             $snapshot.Sim.PinStored | Should -BeTrue
             $snapshot.ApnPasswordStored | Should -BeTrue
@@ -266,6 +267,8 @@ Describe 'Invoke-ModemWorkerCycle' {
             $json | Should -Not -Match '1234'
             $json | Should -Not -Match 'apn-secret'
             $json | Should -Not -Match '8900100000000000000' -Because 'the ICCID stays in the worker'
+            $fingerprint = InModuleScope FibocomFm350 { Get-SimSettingFingerprint -Iccid '8900100000000000000' }
+            $json | Should -Not -Match $fingerprint -Because 'its fingerprint too'
             $json | Should -Not -Match 'ABCD' -Because 'cells carry no location'
             $json | Should -Not -Match 'System.Security.SecureString'
         }
@@ -287,9 +290,10 @@ Describe 'Invoke-ModemWorkerCycle' {
             $worker = Get-TestWorker -Device $device
             Invoke-ModemWorkerCycle -Worker $worker
             $settings = (ConvertTo-AppSetting -InputObject @{ Apn = 'internet' }).Settings
-            $result = Invoke-TestCommand -Worker $worker -Kind SaveSettings -Parameter @{ Settings = $settings }
+            $result = Invoke-TestCommand -Worker $worker -Kind SaveSettings -Parameter @{ Settings = $settings; SimToken = $script:link['Snapshot'].SimToken }
             $result.Result | Should -Be 'Done'
-            (Get-Content (Join-Path $script:folder 'settings.json') -Raw | ConvertFrom-Json).Apn | Should -Be 'internet'
+            (Import-SimSetting -Path (Join-Path $script:folder 'sim-settings.json')).Sims.Apn | Should -Be 'internet' -Because 'it is the SIM in use''s'
+            (Get-Content (Join-Path $script:folder 'settings.json') -Raw | ConvertFrom-Json).Apn | Should -Be ''
             $script:link['Snapshot'].Settings.Apn | Should -Be 'internet'
             $script:link['Snapshot'].State | Should -Be 'Online'
             Get-WriteCommand -Modem $device.Modem | Should -Be @('AT+CGACT=0,1', 'AT+CGDCONT=1,"IPV4V6","internet"', 'AT+CGACT=1,1')
@@ -308,10 +312,58 @@ Describe 'Invoke-ModemWorkerCycle' {
             $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario Online)
             Invoke-ModemWorkerCycle -Worker $worker
             $settings = $script:link['Snapshot'].Settings
-            [void](Invoke-TestCommand -Worker $worker -Kind SaveSettings -Parameter @{ Settings = $settings; ApnPassword = ConvertTo-TestSecret 'pass' })
+            $token = $script:link['Snapshot'].SimToken
+            [void](Invoke-TestCommand -Worker $worker -Kind SaveSettings -Parameter @{ Settings = $settings; ApnPassword = ConvertTo-TestSecret 'pass'; SimToken = $token })
             $script:link['Snapshot'].ApnPasswordStored | Should -BeTrue
-            [void](Invoke-TestCommand -Worker $worker -Kind SaveSettings -Parameter @{ Settings = $settings; ApnPassword = [securestring]::new() })
+            [void](Invoke-TestCommand -Worker $worker -Kind SaveSettings -Parameter @{ Settings = $settings; ApnPassword = [securestring]::new(); SimToken = $token })
             $script:link['Snapshot'].ApnPasswordStored | Should -BeFalse
+        }
+
+        It 'checks the APN password before writing anything' {
+            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario Online)
+            Invoke-ModemWorkerCycle -Worker $worker
+            $simsPath = Join-Path $script:folder 'sim-settings.json'
+            $before = Get-Content -LiteralPath $simsPath -Raw
+            $settings = $script:link['Snapshot'].Settings | Select-Object -Property *
+            $settings.Apn = 'internet'
+            $result = Invoke-TestCommand -Worker $worker -Kind SaveSettings -Parameter @{ Settings = $settings; ApnPassword = ConvertTo-TestSecret 'a"b'; SimToken = $script:link['Snapshot'].SimToken }
+            $result.Result | Should -Be 'Failed'
+            $result.Detail | Should -Match 'printable ASCII'
+            Get-Content -LiteralPath $simsPath -Raw | Should -Be $before
+            $script:link['Snapshot'].Settings.Apn | Should -Be ''
+        }
+
+        It 'keeps a SIM''s APN settings when a save fails halfway, the old ones given to it then' {
+            Export-AppSetting -Settings @{ Apn = 'old' } -Path (Join-Path $script:folder 'settings.json')
+            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario Online)
+            Invoke-ModemWorkerCycle -Worker $worker
+            # As if the first SIM's move had failed: the SIM still on the settings file's.
+            Remove-Item -LiteralPath (Join-Path $script:folder 'sim-settings.json')
+            Export-AppSetting -Settings @{ Apn = 'old' } -Path (Join-Path $script:folder 'settings.json')
+            $worker.SimSettings = [pscustomobject]@{ Exists = $false; Sims = @() }
+            Mock -ModuleName FibocomFm350 Save-ApnPassword { throw [System.IO.IOException]::new('The disk is full.') }
+            $settings = $script:link['Snapshot'].Settings | Select-Object -Property *
+            $settings.Apn = 'internet'
+            $result = Invoke-TestCommand -Worker $worker -Kind SaveSettings -Parameter @{ Settings = $settings; ApnPassword = ConvertTo-TestSecret 'pass'; SimToken = $script:link['Snapshot'].SimToken }
+            $result.Result | Should -Be 'Failed'
+            $worker.PassForced = $true
+            Invoke-ModemWorkerCycle -Worker $worker
+            @((Import-SimSetting -Path (Join-Path $script:folder 'sim-settings.json')).Sims | ForEach-Object Apn) | Should -Be @('internet') -Because 'what was written is read again, and never moved over'
+            $script:link['Snapshot'].Settings.Apn | Should -Be 'internet'
+        }
+
+        It 'says once in the log that a ready SIM can''t be identified, and leaves the context as it is' {
+            $device = New-SimulatedDevice -Scenario Online
+            $device.Modem.SetAnswer('AT+ICCID', @('+CME ERROR: 13'))
+            $worker = Get-TestWorker -Device $device
+            for ($i = 0; $i -lt 3; $i++) {
+                $worker.PassForced = $true
+                Invoke-ModemWorkerCycle -Worker $worker
+            }
+            @(Get-TestLog | Where-Object { $_ -match 'ICCID can''t be read' }).Count | Should -Be 1
+            $script:link['Snapshot'].SimToken | Should -BeNullOrEmpty
+            $script:link['Snapshot'].Reason | Should -Be 'ContextUnknown'
+            Get-WriteCommand -Modem $device.Modem | Should -BeNullOrEmpty
         }
 
         It 'stores the PIN with its SIM, which the next pass enters once' {
@@ -1178,9 +1230,10 @@ Describe 'The network mode on the simulated modem' {
             $device = New-SimulatedDevice -Scenario LteOnlyMode
             $worker = Get-TestWorker -Device $device
             Invoke-ModemWorkerCycle -Worker $worker
-            (Invoke-TestCommand -Worker $worker -Kind SaveSettings -Parameter @{ Settings = @{ Apn = 'internet'; NetworkMode = '' } }).Result | Should -Be 'Done'
+            $token = $worker.Link['Snapshot'].SimToken
+            (Invoke-TestCommand -Worker $worker -Kind SaveSettings -Parameter @{ Settings = @{ Apn = 'internet'; NetworkMode = '' }; SimToken = $token }).Result | Should -Be 'Done'
+            $worker.Link['Snapshot'].Settings.Apn | Should -Be 'internet'
             $saved = Get-SavedSetting
-            $saved.Apn | Should -Be 'internet'
             $saved.NetworkMode | Should -Be 'LteOnly'
             $saved.LteBands | Should -Be @(3)
         }

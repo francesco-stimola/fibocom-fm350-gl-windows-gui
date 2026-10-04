@@ -531,6 +531,97 @@ Describe 'Invoke-ModemConnect' {
         }
     }
 
+    Context 'each SIM''s own APN settings' {
+        BeforeEach {
+            $script:fingerprint = InModuleScope FibocomFm350 { Get-SimSettingFingerprint -Iccid '8900100000000000001' }
+            $script:id = '1' * 32
+            $script:sims = [pscustomobject]@{
+                Exists = $true
+                Sims   = @([pscustomobject]@{ Fingerprint = $script:fingerprint; Id = $script:id; Apn = 'truphone.com'; PdpType = 'IP'; ApnAuthentication = 'None'; ApnUser = '' })
+            }
+            $script:settings = (ConvertTo-AppSetting -InputObject @{ Apn = 'other.example' }).Settings
+            # The SIM in use, its context not defined yet.
+            $script:fresh = @{ 'AT+ICCID' = @('+ICCID: 8900100000000000001', 'OK'); 'AT+CGDCONT?' = Get-FixtureLine 'device/cgdcont.attached.txt'; 'AT+CGACT?' = @('OK') }
+        }
+
+        It 'defines the context with the SIM in use''s own APN, told by its ICCID' {
+            $modem = Get-OnlineModem -Answers $script:fresh
+            $modem.Script('AT+CGDCONT=1,"IP","truphone.com"', @{ Lines = @('OK'); Then = @{ 'AT+CGDCONT?' = @('+CGDCONT: 1,"IP","truphone.com","",0,0', 'OK') } })
+            $modem.Script('AT+CGACT=1,1', @{ Lines = @('OK'); Then = @{ 'AT+CGACT?' = @('+CGACT: 1,1', 'OK') } })
+            $pass = & $script:connect $modem @{ SimSettings = $script:sims }
+            Get-WriteCommand -Modem $modem | Should -Be @('AT+CGDCONT=1,"IP","truphone.com"', 'AT+CGACT=1,1')
+            $pass.Sim.Fingerprint | Should -Be $script:fingerprint
+            $pass.Sim.Source | Should -Be 'Sim'
+            $pass.Sim.Id | Should -Be $script:id
+            ($pass.Observation | ConvertTo-Json -Depth 6) | Should -Not -Match $script:fingerprint -Because 'the facts go into snapshots'
+        }
+
+        It 'tells the SIM by its ICCID at every pass, the filler F of the modem''s answer aside' {
+            $modem = Get-OnlineModem -Answers @{ 'AT+ICCID' = @('+ICCID: 8900100000000000001f', 'OK') }
+            $channel = New-AtChannel -Transport $modem
+            try {
+                $first = & $script:pass $channel @{ SimSettings = $script:sims }
+                $second = & $script:pass $channel @{ SimSettings = $script:sims }
+            }
+            finally {
+                Close-AtChannel -Channel $channel
+            }
+            @($modem.Received | Where-Object { $_ -eq 'AT+ICCID' }).Count | Should -Be 2
+            $first.Sim.Fingerprint | Should -Be $script:fingerprint
+            $second.Sim.Source | Should -Be 'Sim'
+        }
+
+        It 'gives a SIM without settings of its own the subscription''s APN' {
+            $answers = $script:fresh.Clone()
+            $answers['AT+ICCID'] = @('+ICCID: 8900100000000000000f', 'OK')
+            $modem = Get-OnlineModem -Answers $answers
+            $modem.SetAnswer('AT+CGDCONT=1,"IPV4V6",""', @('OK'))
+            $pass = & $script:connect $modem @{ SimSettings = $script:sims }
+            $pass.Sim.Source | Should -Be 'New'
+            $modem.Received | Should -Contain 'AT+CGDCONT=1,"IPV4V6",""'
+        }
+
+        It 'connects as the settings file says until a SIM has settings of its own' {
+            $modem = Get-OnlineModem -Answers $script:fresh
+            $modem.SetAnswer('AT+CGDCONT=1,"IPV4V6","other.example"', @('OK'))
+            $pass = & $script:connect $modem @{ SimSettings = [pscustomobject]@{ Exists = $false; Sims = @() } }
+            $pass.Sim.Source | Should -Be 'Legacy'
+            $modem.Received | Should -Contain 'AT+CGDCONT=1,"IPV4V6","other.example"'
+        }
+
+        It 'sends the SIM''s own APN password, from its own file' {
+            $script:sims.Sims[0].ApnAuthentication = 'PAP'
+            $script:sims.Sims[0].ApnUser = 'me'
+            Save-ApnPassword -Password (ConvertTo-TestSecret 'pa55word') -Path (Get-SimApnSecretPath -ApnSecretPath $script:passwordPath -Id $script:id)
+            Save-ApnPassword -Password (ConvertTo-TestSecret 'someone-else') -Path $script:passwordPath
+            $modem = Get-OnlineModem -Answers @{ 'AT+ICCID' = @('+ICCID: 8900100000000000001', 'OK'); 'AT+CGACT?' = @('OK'); 'AT+CGDCONT?' = @('+CGDCONT: 1,"IP","truphone.com","",0,0', 'OK') }
+            $modem.SetAnswer('AT+CGAUTH=1,1,"me","pa55word"', @('OK'))
+            $modem.Script('AT+CGACT=1,1', @{ Lines = @('OK'); Then = @{ 'AT+CGACT?' = @('+CGACT: 1,1', 'OK') } })
+            [void](& $script:connect $modem @{ SimSettings = $script:sims })
+            $modem.Received | Should -Contain 'AT+CGAUTH=1,1,"me","pa55word"'
+        }
+
+        It 'takes no context step for a SIM whose ICCID cannot be read: its settings are unknown' {
+            $answers = $script:fresh.Clone()
+            $answers['AT+ICCID'] = @('+CME ERROR: 13')
+            $modem = Get-OnlineModem -Answers $answers
+            $pass = & $script:connect $modem @{ SimSettings = $script:sims }
+            $pass.Sim | Should -BeNullOrEmpty
+            $pass.Reason | Should -Be 'ContextUnknown'
+            $pass.Blocked | Should -BeFalse
+            Get-WriteCommand -Modem $modem | Should -BeNullOrEmpty
+            $modem.Received | Should -Not -Contain 'AT+CGDCONT?'
+        }
+
+        It 'identifies no SIM while none is ready' {
+            $modem = Get-OnlineModem -Answers @{ 'AT+CPIN?' = @('+CPIN: SIM PIN', 'OK') }
+            $pass = & $script:connect $modem @{ SimSettings = $script:sims }
+            $pass.Sim.Fingerprint | Should -BeNullOrEmpty
+            $pass.Sim.Source | Should -Be 'Unknown'
+            $modem.Received | Should -Not -Contain 'AT+ICCID'
+        }
+    }
+
     Context 'steps that fail' {
         It 'tries a failing step once per pass, and says what is missing' {
             $modem = Get-OnlineModem -Answers @{ 'AT+CGACT?' = @('OK') }

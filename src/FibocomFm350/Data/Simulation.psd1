@@ -155,7 +155,7 @@
     Esim      = @{
         Slot     = 0
         Profiles = @(
-            @{ Aid = 'A0000005591010FFFFFFFF8900002000'; Iccid = '8900100000000000000'; State = 'Disabled'; Nickname = ''; Provider = 'Example Lab'; Name = 'Lab test profile'; Class = 'Test' }
+            @{ Aid = 'A0000005591010FFFFFFFF8900002000'; Iccid = '8900100000000000001'; State = 'Disabled'; Nickname = ''; Provider = 'Example Lab'; Name = 'Lab test profile'; Class = 'Test' }
         )
     }
 
@@ -324,7 +324,7 @@
             Esim    = @{
                 Slot     = 1
                 Profiles = @(
-                    @{ Aid = 'A0000005591010FFFFFFFF8900002000'; Iccid = '8900100000000000000'; State = 'Disabled'; Nickname = ''; Provider = 'Example Lab'; Name = 'Lab test profile'; Class = 'Test' }
+                    @{ Aid = 'A0000005591010FFFFFFFF8900002000'; Iccid = '8900100000000000001'; State = 'Disabled'; Nickname = ''; Provider = 'Example Lab'; Name = 'Lab test profile'; Class = 'Test' }
                     @{ Aid = 'A0000005591010FFFFFFFF8900001000'; Iccid = '89001000000000000000'; State = 'Enabled'; Nickname = 'Travel'; Provider = 'Example Mobile'; Name = 'Example plan'; Class = 'Operational' }
                 )
             }

@@ -16,6 +16,11 @@ $script:MessageMaxCharacters = 255 * 153
 # The eSIM tab's commands: one at a time, the tab waiting for each one's outcome.
 $script:EsimCommands = @('ReadEsim', 'SelectSimSlot', 'EnableProfile', 'DisableProfile', 'SetProfileNickname', 'DeleteProfile', 'DownloadProfile')
 
+# The SIM slots as the worker counts them, from 0: the physical SIM's and the eUICC's on the
+# FM350-GL (AT-COMMANDS section 8).
+$script:PhysicalSlot = 0
+$script:EuiccSlot = 1
+
 function Get-SnapshotRecovery {
     # The snapshot's recovery state, or $null.
     param([object] $Snapshot)
@@ -800,12 +805,14 @@ function Get-MessagesView {
     .SYNOPSIS
         The Messages tab, from the snapshot.
     .DESCRIPTION
-        A pure function. Returns StateText (how full the SIM is, or why there are no messages:
-        no modem, the SIM not ready, observe-only), TabText (the tab's header, with the number
-        of new messages), Items - a row per message, newest first: Key, Fingerprints, New,
-        Marker, From, Time, Preview, Header, Text, Note -, SentId (the newest message sent's
-        command), SendIds (the commands of the messages the worker sent or tried), Generation
-        (that worker's), SendingText, CanDelete and CanSend.
+        A pure function. Returns StateText (the SIM in use - the messages listed are its slot's -
+        and how full it is, or why there are no messages: no modem, the SIM not ready,
+        observe-only), TabText (the tab's header, with the number of new messages), Items - a row
+        per message, newest first: Key, Fingerprints, New, Marker, From, Time, Preview, Header,
+        Text, Note -, SentId (the newest message sent's command), SendIds (the commands of the
+        messages the worker sent or tried), Generation (that worker's), SendingText, FromText
+        (which SIM a message goes out from: the one in use - the modem uses one at a time,
+        decided 2026-10-04), CanDelete and CanSend.
     .EXAMPLE
         Get-MessagesView -Snapshot $snapshot
     #>
@@ -818,8 +825,12 @@ function Get-MessagesView {
 
     $messages = Get-SnapshotValue -Snapshot $Snapshot -Name 'Messages'
     $sending = (Get-SnapshotValue -Snapshot $Snapshot -Name 'MessageOperation') -eq 'Sending'
+    $simInUse = Get-SimInUseText -Snapshot $Snapshot
     $state = if ($messages) {
         $sentences = [System.Collections.Generic.List[string]]::new()
+        if ($simInUse) {
+            $sentences.Add($simInUse)
+        }
         if ($null -ne $messages.Used -and $null -ne $messages.Total) {
             $sentences.Add((Get-AppText 'Messages.Storage' $messages.Used $messages.Total))
         }
@@ -881,6 +892,7 @@ function Get-MessagesView {
         SendIds     = [string[]]@($sends | ForEach-Object Id)
         Generation  = Get-SnapshotValue -Snapshot $Snapshot -Name 'Generation'
         SendingText = if ($sending) { Get-AppText 'Messages.Sending' } else { $null }
+        FromText    = if ($messages) { Get-AppText 'Messages.From' } else { $null }
         CanDelete   = [bool]$messages -and -not $sending
         CanSend     = [bool]$messages -and -not $sending
     }
@@ -957,6 +969,38 @@ function Get-EsimProfileName {
     Get-AppText 'Esim.Unnamed'
 }
 
+function Get-SimInUseText {
+    # The SIM slot in use and its SIM - the eSIM's profile enabled -, as a sentence, from the
+    # snapshot; $null while the slot is unknown. Slots are counted from 1, as the modem names
+    # them (SUB1, SUB2).
+    param([AllowNull()] [object] $Snapshot)
+
+    $esim = Get-SnapshotValue -Snapshot $Snapshot -Name 'Esim'
+    $slot = if ($esim) { $esim.Slot } else { $null }
+    if ($null -eq $slot) {
+        return $null
+    }
+    $inUse = $esim.SimType -eq 'Esim' -or ($null -eq $esim.SimType -and $slot -eq 1)
+    # Not an if expression: it would unroll an eUICC's empty list into none read.
+    $profiles = $esim.Profiles
+    $enabled = @($profiles | Where-Object { $_ -and $_.State -eq 'Enabled' }) | Select-Object -First 1
+    if ($esim.SimType -eq 'Usim') {
+        Get-AppText 'SimInUse.Physical' ($slot + 1)
+    }
+    elseif ($inUse -and $enabled) {
+        Get-AppText 'SimInUse.Esim' ($slot + 1) (Get-EsimProfileName -Entry $enabled)
+    }
+    elseif ($inUse -and $null -ne $profiles) {
+        Get-AppText 'SimInUse.EsimEmpty' ($slot + 1)
+    }
+    elseif ($inUse) {
+        Get-AppText 'SimInUse.EsimUnread' ($slot + 1)
+    }
+    else {
+        Get-AppText 'SimInUse.Slot' ($slot + 1)
+    }
+}
+
 function Get-EsimView {
     <#
     .SYNOPSIS
@@ -967,10 +1011,11 @@ function Get-EsimView {
         slot is unknown), StateText (why the profiles can't be managed, the command under way,
         the last read's failure, or that there are none), Eid (shown with Copy, decided
         2026-10-04), ChipText, NotificationText, Profiles - a row each: Aid, Name, Provider, Kind,
-        State, Enabled, Nickname -, OtherSlot (the slot 'Use slot' switches to, as the worker
-        counts it from 0) and SlotText, CanSwitch, CanRead, CanManage (enable, disable, rename,
-        delete), CanDownload, CanReadQr, QrNote, ResultIds (the outcomes of the tab's commands)
-        and Generation (the worker's).
+        State, Enabled, Nickname -, the two SIMs' buttons - on the SIM tab and the eSIM tab,
+        each saying when its SIM is in use: PhysicalText and EsimText, CanUsePhysical and
+        CanUseEsim - with SlotNote, which says the modem uses one at a time, CanRead, CanManage
+        (enable, disable, rename, delete), CanDownload, CanReadQr, QrNote, ResultIds (the
+        outcomes of the tab's commands) and Generation (the worker's).
     .EXAMPLE
         Get-EsimView -Snapshot $snapshot
     #>
@@ -989,25 +1034,7 @@ function Get-EsimView {
     if ($esim) {
         $profiles = $esim.Profiles
     }
-    $enabled = @($profiles | Where-Object { $_ -and $_.State -eq 'Enabled' }) | Select-Object -First 1
-    $simInUse = if ($null -eq $slot) {
-        $null
-    }
-    elseif ($esim.SimType -eq 'Usim') {
-        Get-AppText 'SimInUse.Physical' ($slot + 1)
-    }
-    elseif ($inUse -and $enabled) {
-        Get-AppText 'SimInUse.Esim' ($slot + 1) (Get-EsimProfileName -Entry $enabled)
-    }
-    elseif ($inUse -and $null -ne $profiles) {
-        Get-AppText 'SimInUse.EsimEmpty' ($slot + 1)
-    }
-    elseif ($inUse) {
-        Get-AppText 'SimInUse.EsimUnread' ($slot + 1)
-    }
-    else {
-        Get-AppText 'SimInUse.Slot' ($slot + 1)
-    }
+    $simInUse = Get-SimInUseText -Snapshot $Snapshot
 
     $connected = [bool]($Snapshot -and $Snapshot.PortName)
     $operation = if ($esim) { $esim.Operation } else { $null }
@@ -1062,7 +1089,11 @@ function Get-EsimView {
     $eid = if ($inUse -and $esim.PSObject.Properties['Eid'] -and $esim.Eid) { [string]$esim.Eid } else { $null }
     $qr = [bool]($esim -and $esim.PSObject.Properties['QrAvailable'] -and $esim.QrAvailable)
     $writable = $connected -and -not $Snapshot.ObserveOnly -and -not $operation
-    $other = if ($null -ne $slot) { 1 - $slot } else { $null }
+    # A button for each SIM, which exclude each other: the one in use says so (decided
+    # 2026-10-04). The physical SIM in slot 1, the eUICC in slot 2, as on the FM350-GL
+    # (AT-COMMANDS section 8).
+    $physicalInUse = $null -ne $slot -and $slot -eq $script:PhysicalSlot
+    $euiccInUse = $null -ne $slot -and $slot -eq $script:EuiccSlot
     [pscustomobject]@{
         SimInUse         = $simInUse
         StateText        = if ($sentences.Count) { $sentences -join ' ' } else { $null }
@@ -1070,9 +1101,11 @@ function Get-EsimView {
         ChipText         = $chip
         NotificationText = $waiting
         Profiles         = [object[]]@($rows)
-        OtherSlot        = $other
-        SlotText         = Get-AppText 'Esim.UseSlot' $(if ($null -ne $other) { $other + 1 } else { 2 })
-        CanSwitch        = [bool]($writable -and $null -ne $slot)
+        PhysicalText     = if ($physicalInUse) { Get-AppText 'Sim.PhysicalInUse' ($script:PhysicalSlot + 1) } else { Get-AppText 'Sim.UsePhysical' ($script:PhysicalSlot + 1) }
+        EsimText         = if ($euiccInUse) { Get-AppText 'Esim.EsimInUse' ($script:EuiccSlot + 1) } else { Get-AppText 'Esim.UseEsim' ($script:EuiccSlot + 1) }
+        CanUsePhysical   = [bool]($writable -and $null -ne $slot -and -not $physicalInUse)
+        CanUseEsim       = [bool]($writable -and $null -ne $slot -and -not $euiccInUse)
+        SlotNote         = Get-AppText 'Sim.OneAtATime' ($script:PhysicalSlot + 1) ($script:EuiccSlot + 1)
         CanRead          = [bool]($connected -and -not $operation -and $inUse -and $lpac)
         CanManage        = [bool]($writable -and $inUse -and $lpac -and $null -ne $profiles)
         CanDownload      = [bool]($writable -and $inUse -and $lpac)
@@ -1135,8 +1168,9 @@ function ConvertTo-WindowView {
         SIM tab), Esim (the eSIM tab, Get-EsimView's), NetworkMode (the network tab,
         Get-NetworkModeView's), Driver (the Driver tab, Get-DriverView's), Messages (the Messages
         tab, Get-MessagesView's), Usage (the Data tab, Get-UsageView's), Settings,
-        ApnPasswordStored, Dns and Startup (the connection tab: its
-        encrypted DNS, the start at sign-in), Result (the newest command's
+        ApnPasswordStored, SimToken, ApnSimText and ApnEditable (whose APN settings these are:
+        the SIM in use's, changed only while one is identified), Dns and Startup (the
+        connection tab: its encrypted DNS, the start at sign-in), Result (the newest command's
         outcome, as a sentence) and LastResult (its Id, Kind and Result), and Footer.
     .EXAMPLE
         ConvertTo-WindowView -Snapshot $snapshot -Worker Running
@@ -1229,6 +1263,17 @@ function ConvertTo-WindowView {
     }
 
     $esim = Get-EsimView -Snapshot $Snapshot
+    # Each SIM keeps its own APN settings (decided 2026-10-04): the form shows the SIM in use's.
+    $simToken = if ($Worker -eq 'Running') { Get-SnapshotValue -Snapshot $Snapshot -Name 'SimToken' } else { $null }
+    $apnSim = if (-not $Snapshot) {
+        $null
+    }
+    elseif ($simToken) {
+        @($esim.SimInUse, (Get-AppText 'Window.ApnPerSim') | Where-Object { $_ }) -join ' '
+    }
+    else {
+        Get-AppText 'Window.ApnNoSim'
+    }
     [pscustomobject]@{
         Tone              = $tone
         Title             = Get-AppTitle -Snapshot $Snapshot -Tone $tone
@@ -1250,6 +1295,9 @@ function ConvertTo-WindowView {
         Usage             = Get-UsageView -Snapshot $Snapshot
         Settings          = if ($Snapshot) { $Snapshot.Settings } else { $null }
         ApnPasswordStored = $Snapshot -and $Snapshot.ApnPasswordStored
+        SimToken          = $simToken
+        ApnSimText        = $apnSim
+        ApnEditable       = [bool]$simToken
         Dns               = Get-DnsView -Snapshot $Snapshot
         Startup           = Get-StartupView -Snapshot $Snapshot -Worker $Worker
         Result            = if ($Snapshot) { Get-ResultText -Snapshot $Snapshot } else { $null }

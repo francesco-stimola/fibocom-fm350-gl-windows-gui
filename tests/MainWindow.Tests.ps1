@@ -136,6 +136,54 @@ Describe 'The main window' {
         $script:sent.Kind | Should -Be @('SaveSettings')
         $script:sent[0].Parameter.Settings.Apn | Should -Be 'internet'
         $script:sent[0].Parameter.Settings.InterfaceMetric | Should -Be 500
+        $script:sent[0].Parameter.SimToken | Should -Be $script:views['ApnNeeded'].SimToken -Because 'the APN is the SIM in use''s'
+    }
+
+    It 'says whose APN settings the form shows, and saves them for that SIM' {
+        Update-MainWindow -View $script:views['Online']
+        $script:controls.ApnSimText.Text | Should -Be $script:views['Online'].ApnSimText
+        $script:controls.ApnBox.IsEnabled | Should -BeTrue
+        $script:controls.ApnBox.Text = 'internet'
+        Invoke-Click $script:controls.SaveSettingsButton
+        $script:sent[0].Parameter.SimToken | Should -Be $script:views['Online'].SimToken
+        $script:sent[0].Parameter.SimToken | Should -Not -BeNullOrEmpty
+    }
+
+    It 'fills the APN settings again when another SIM is in use, the rest of the form as typed' {
+        Update-MainWindow -View $script:views['Online']
+        $script:controls.ApnBox.Text = 'typed for the first SIM'
+        $script:controls.MetricBox.Text = '42'
+        $other = $script:views['Online'] | Select-Object -Property *
+        $other.SimToken = 'another-sim'
+        $other.Settings = $other.Settings | Select-Object -Property *
+        $other.Settings.Apn = 'its.own'
+        Update-MainWindow -View $other
+        $script:controls.ApnBox.Text | Should -Be 'its.own'
+        $script:controls.MetricBox.Text | Should -Be '42'
+        Invoke-Click $script:controls.SaveSettingsButton
+        $script:sent[0].Parameter.SimToken | Should -Be 'another-sim'
+        $script:sent[0].Parameter.Settings.Apn | Should -Be 'its.own'
+    }
+
+    It 'keeps the APN settings out of reach while no SIM is identified, the others not' {
+        $none = $script:views['Online'] | Select-Object -Property *
+        $none.SimToken = $null
+        $none.ApnEditable = $false
+        $none.ApnSimText = 'No SIM ready.'
+        Update-MainWindow -View $none
+        foreach ($name in 'ApnBox', 'PdpTypeBox', 'AuthenticationBox', 'ApnUserBox', 'ApnPasswordBox', 'ClearPasswordBox') {
+            $script:controls.$name.IsEnabled | Should -BeFalse -Because $name
+        }
+        $script:controls.DnsBox.IsEnabled | Should -BeTrue
+        $script:controls.ApnSimText.Text | Should -Be 'No SIM ready.'
+        # Saved without them: the worker keeps them as they are, whatever SIM is in use by then.
+        $script:controls.MetricBox.Text = '42'
+        $script:controls.ApnPasswordBox.Password = 'left from before'
+        Invoke-Click $script:controls.SaveSettingsButton
+        $sent = $script:sent[0].Parameter
+        $sent.Settings.InterfaceMetric | Should -Be 42
+        $sent.Settings.PSObject.Properties['Apn'] | Should -BeNullOrEmpty
+        $sent.ContainsKey('ApnPassword') | Should -BeFalse
     }
 
     It 'stores the PIN the blocker asks for, and empties the box' {
@@ -444,7 +492,8 @@ Describe 'The main window' {
     It 'shows the Messages tab: how full the SIM is, the list, the new ones counted in its header' {
         Update-MainWindow -View $script:views['Online']
         $script:controls.MessagesTab.Header | Should -Be 'Messages (2)'
-        $script:controls.MessagesStateText.Text | Should -Be '4 of 70 places used on the SIM.'
+        $script:controls.MessagesStateText.Text | Should -Be 'SIM in use: slot 1, a physical SIM. 4 of 70 places used on the SIM.'
+        $script:controls.MessageFromText.Text | Should -Match '^A message goes out from the SIM in use'
         @($script:controls.MessagesGrid.ItemsSource).Count | Should -Be 3
         $script:controls.MessagesGrid.SelectedItem | Should -BeNullOrEmpty
         $script:controls.DeleteMessageButton.IsEnabled | Should -BeFalse -Because 'nothing is selected'
@@ -643,7 +692,10 @@ Describe 'The main window' {
         $settings = $script:sent[0].Parameter.Settings
         $settings.UsageCycleDay | Should -Be 15
         $settings.UsageQuotaGB | Should -Be 2.5
-        $settings.Apn | Should -Be 'internet'
+        $settings.InterfaceMetric | Should -Be 500
+        foreach ($name in 'Apn', 'PdpType', 'ApnAuthentication', 'ApnUser') {
+            $settings.PSObject.Properties[$name] | Should -BeNullOrEmpty -Because "$name is the SIM in use's, which the worker keeps as it is"
+        }
     }
 
     It 'refuses a cycle day it can''t take, and says so' {
@@ -743,7 +795,12 @@ Describe 'The eSIM tab' {
         $script:controls.EidPanel.Visibility | Should -Be 'Visible'
         $script:controls.EidBox.Text | Should -Be $script:emptyView.Esim.Eid
         $script:controls.EidBox.IsReadOnly | Should -BeTrue
-        $script:controls.SelectSlotButton.Content | Should -Be 'Use slot 1...'
+        $script:controls.UseEsimButton.Content | Should -Be 'In use: the eSIM (slot 2)'
+        $script:controls.UseEsimButton.IsEnabled | Should -BeFalse -Because 'its SIM is in use'
+        $script:controls.UsePhysicalButton.Content | Should -Be 'Use the physical SIM (slot 1)...'
+        $script:controls.UsePhysicalButton.IsEnabled | Should -BeTrue
+        $script:controls.SimSlotNoteText.Text | Should -Match '^The modem uses one SIM at a time'
+        $script:controls.EsimSlotNoteText.Text | Should -Be $script:controls.SimSlotNoteText.Text
         $script:controls.EnableProfileButton.IsEnabled | Should -BeFalse -Because 'nothing is selected'
         $script:controls.DownloadProfileButton.IsEnabled | Should -BeTrue
     }
@@ -762,20 +819,34 @@ Describe 'The eSIM tab' {
         $script:controls.EidPanel.Visibility | Should -Be 'Collapsed'
         $script:controls.DownloadProfileButton.IsEnabled | Should -BeFalse
         $script:controls.ReadEsimButton.IsEnabled | Should -BeFalse
-        $script:controls.SelectSlotButton.Content | Should -Be 'Use slot 2...'
-        $script:controls.SelectSlotButton.IsEnabled | Should -BeTrue
+        $script:controls.UseEsimButton.Content | Should -Be 'Use the eSIM (slot 2)...'
+        $script:controls.UseEsimButton.IsEnabled | Should -BeTrue
+        $script:controls.UsePhysicalButton.Content | Should -Be 'In use: the physical SIM (slot 1)'
+        $script:controls.UsePhysicalButton.IsEnabled | Should -BeFalse -Because 'its SIM is in use'
     }
 
-    It 'switches the slot only once the user said yes, No preselected' {
+    It 'switches to the physical SIM, from the SIM tab, only once the user said yes, No preselected' {
         Update-MainWindow -View $script:emptyView
-        Invoke-Click $script:controls.SelectSlotButton
+        Invoke-Click $script:controls.UsePhysicalButton
         $script:sent | Should -BeNullOrEmpty
         $script:asked[0] | Should -Match '^Use SIM slot 1\?'
         $script:asked[0] | Should -Match 'keeps this choice'
         $script:answer = $true
-        Invoke-Click $script:controls.SelectSlotButton
+        Invoke-Click $script:controls.UsePhysicalButton
         $script:sent.Kind | Should -Be @('SelectSimSlot')
         $script:sent[0].Parameter.Slot | Should -Be 0 -Because 'the worker counts slots from 0'
+    }
+
+    It 'switches to the eSIM from the eSIM tab, and never to the SIM in use' {
+        $script:answer = $true
+        Update-MainWindow -View $script:emptyView
+        Invoke-Click $script:controls.UseEsimButton
+        $script:sent | Should -BeNullOrEmpty -Because 'the eSIM is in use already'
+        Update-MainWindow -View $script:physicalView
+        Invoke-Click $script:controls.UseEsimButton
+        $script:asked[-1] | Should -Match '^Use SIM slot 2\?'
+        $script:sent.Kind | Should -Be @('SelectSimSlot')
+        $script:sent[0].Parameter.Slot | Should -Be 1
     }
 
     It 'enables the profile selected once the user said yes, and offers what fits its state' {
@@ -921,7 +992,7 @@ Describe 'The eSIM tab' {
         $script:controls.ProfilesGrid.SelectedItem = @($script:controls.ProfilesGrid.ItemsSource)[0]
         Invoke-Click $script:controls.ReadEsimButton
         $script:sent.Kind | Should -Be @('ReadEsim')
-        foreach ($button in 'ReadEsimButton', 'SelectSlotButton', 'EnableProfileButton', 'DeleteProfileButton', 'RenameProfileButton', 'DownloadProfileButton') {
+        foreach ($button in 'ReadEsimButton', 'UsePhysicalButton', 'EnableProfileButton', 'DeleteProfileButton', 'RenameProfileButton', 'DownloadProfileButton') {
             $script:controls.$button.IsEnabled | Should -BeFalse -Because "$button waits"
         }
         Update-MainWindow -View $script:emptyView

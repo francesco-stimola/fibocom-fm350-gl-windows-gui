@@ -8,16 +8,16 @@ $script:WindowControlNames = @(
     'BlockerPanel', 'BlockerText', 'BlockerInput', 'BlockerSecret', 'BlockerButton'
     'ResultText', 'FooterText', 'CheckNowButton'
     'SignalText', 'CellsGrid', 'CarriersGrid'
-    'SimStateText', 'SimRequestText', 'SimStoredText', 'SimNoteText', 'SimPinBox', 'StorePinButton', 'ForgetPinButton', 'DisablePinButton'
+    'UsePhysicalButton', 'SimSlotNoteText', 'SimStateText', 'SimRequestText', 'SimStoredText', 'SimNoteText', 'SimPinBox', 'StorePinButton', 'ForgetPinButton', 'DisablePinButton'
     'CurrentModeText', 'NetworkModeBox', 'BandsPanel', 'LteAllBox', 'LteBandsPanel', 'NrAllBox', 'NrBandsPanel', 'ModeNoteText', 'ApplyModeButton', 'ReloadModeButton'
-    'ApnBox', 'PdpTypeBox', 'AuthenticationBox', 'ApnUserBox', 'ApnPasswordBox', 'ClearPasswordBox', 'ApnPasswordStoredText'
+    'ApnSimText', 'ApnBox', 'PdpTypeBox', 'AuthenticationBox', 'ApnUserBox', 'ApnPasswordBox', 'ClearPasswordBox', 'ApnPasswordStoredText'
     'DnsBox', 'DohBox', 'DohTemplateBox', 'DohRefreshBox', 'DohStateText', 'MetricBox', 'UpdateCheckBox', 'StartupBox', 'StartupNoteText', 'SaveSettingsButton', 'ReloadSettingsButton', 'SettingsProblemText'
     'Tabs', 'ConnectionTab', 'DriverTab', 'DriverStateText', 'DriverSourceText', 'OpenDriverPageButton', 'ChooseDriverButton', 'DriverPackageText'
     'InstallDriverButton', 'UninstallDriverButton', 'DriverNoteText'
     'MessagesTab', 'MessagesStateText', 'MessagesGrid', 'MessageHeaderText', 'DeleteMessageButton', 'MessageBodyText', 'MessageNoteText'
-    'MessageToBox', 'MessageTextBox', 'MessageCountText', 'SendMessageButton'
+    'MessageToBox', 'MessageTextBox', 'MessageCountText', 'SendMessageButton', 'MessageFromText'
     'DataTab', 'UsageTodayText', 'UsageCycleText', 'UsageQuotaText', 'UsageQuotaBar', 'CycleDayBox', 'QuotaBox', 'SaveUsageButton', 'ReloadUsageButton', 'UsageProblemText'
-    'EsimTab', 'EsimSlotText', 'EsimStateText', 'SelectSlotButton', 'EidPanel', 'EidBox', 'CopyEidButton', 'EsimChipText', 'EsimNotificationText', 'ReadEsimButton'
+    'EsimTab', 'EsimSlotText', 'EsimSlotNoteText', 'EsimStateText', 'UseEsimButton', 'EidPanel', 'EidBox', 'CopyEidButton', 'EsimChipText', 'EsimNotificationText', 'ReadEsimButton'
     'ProfilesGrid', 'EnableProfileButton', 'DisableProfileButton', 'DeleteProfileButton', 'NicknameBox', 'RenameProfileButton'
     'ActivationCodeBox', 'ReadQrButton', 'QrImageText', 'ConfirmationCodeBox', 'DownloadProfileButton', 'EsimHintText'
 )
@@ -141,8 +141,10 @@ function New-MainWindow {
         Copy         = $Copy
         Open         = $Open
         View         = $null
-        # The settings the form was last filled with, and the newest command outcome seen.
+        # The settings the form was last filled with, the SIM its APN settings are of (the
+        # snapshot's token), and the newest command outcome seen.
         FormSettings = $null
+        FormSimToken = $null
         LastResultId = $null
         # A hint on the SIM tab, until the next PIN action.
         SimHint      = $null
@@ -264,7 +266,8 @@ function New-MainWindow {
                 Update-MainWindow -View $script:MainWindow.View
             }
         })
-    $controls.SelectSlotButton.Add_Click({ Invoke-WindowSlotSwitch })
+    $controls.UsePhysicalButton.Add_Click({ Invoke-WindowSlotSwitch -Slot 0 })
+    $controls.UseEsimButton.Add_Click({ Invoke-WindowSlotSwitch -Slot 1 })
     $controls.CopyEidButton.Add_Click({ Copy-WindowEid })
     $controls.ReadEsimButton.Add_Click({ Send-WindowEsimCommand -Kind 'ReadEsim' })
     $controls.ProfilesGrid.Add_SelectionChanged({ Select-WindowProfile })
@@ -368,6 +371,7 @@ function Show-WindowMessageList {
     $messages = $View.Messages
     $controls.MessagesTab.Header = $messages.TabText
     $controls.MessagesStateText.Text = [string]$messages.StateText
+    $controls.MessageFromText.Text = [string]$messages.FromText
     $signature = @($messages.Items | ForEach-Object { "$($_.Key)|$($_.New)" }) -join ';'
     if ($signature -ne $script:MainWindow.MessagesShown) {
         $script:MainWindow.Updating = $true
@@ -452,7 +456,9 @@ function Save-WindowUsageSetting {
         return
     }
     $controls.UsageProblemText.Text = ''
-    & $script:MainWindow.Send 'SaveSettings' @{ Settings = $checked.Settings }
+    # Without the APN settings, which are the SIM in use's: the worker keeps them as they are,
+    # whatever SIM is in use by then.
+    & $script:MainWindow.Send 'SaveSettings' @{ Settings = (Select-WindowSharedSetting -Settings $checked.Settings) }
     # Filled again from the snapshot once the worker has saved them.
     $script:MainWindow.FormUsage = $null
 }
@@ -469,12 +475,12 @@ function Invoke-BlockerAction {
             $settings = $view.Settings | Select-Object -Property *
             $settings.Apn = $controls.BlockerInput.Text.Trim()
             if ($settings.Apn) {
-                & $script:MainWindow.Send 'SaveSettings' @{ Settings = $settings }
+                & $script:MainWindow.Send 'SaveSettings' @{ Settings = $settings; SimToken = $view.SimToken }
             }
         }
         'ApnPassword' {
             if ($controls.BlockerSecret.SecurePassword.Length -gt 0) {
-                & $script:MainWindow.Send 'SaveSettings' @{ Settings = $view.Settings; ApnPassword = $controls.BlockerSecret.SecurePassword }
+                & $script:MainWindow.Send 'SaveSettings' @{ Settings = $view.Settings; ApnPassword = $controls.BlockerSecret.SecurePassword; SimToken = $view.SimToken }
                 $controls.BlockerSecret.Clear()
             }
         }
@@ -602,15 +608,18 @@ function Send-WindowEsimCommand {
 }
 
 function Invoke-WindowSlotSwitch {
-    # Use slot N: once the user confirmed it, No preselected - the modem keeps the slot, the
-    # connection drops, and an eSIM with no profile enabled has no network (decided 2026-10-04).
+    # Use the physical SIM (slot 0, on the SIM tab) or the eSIM (slot 1, on the eSIM tab): once
+    # the user confirmed it, No preselected - the modem keeps the slot, the connection drops, and
+    # an eSIM with no profile enabled has no network (decided 2026-10-04).
+    param([int] $Slot)
+
     $view = $script:MainWindow.View
-    if (-not $view -or -not $view.Esim -or -not $view.Esim.CanSwitch) {
+    $allowed = if ($Slot -eq 0) { 'CanUsePhysical' } else { 'CanUseEsim' }
+    if (-not $view -or -not $view.Esim -or -not $view.Esim.$allowed) {
         return
     }
-    $slot = [int]$view.Esim.OtherSlot
-    if (& $script:MainWindow.Ask (Get-AppText 'Confirm.SelectSlotTitle') (Get-AppText 'Confirm.SelectSlot' ($slot + 1))) {
-        Send-WindowEsimCommand -Kind 'SelectSimSlot' -Parameter @{ Slot = $slot }
+    if (& $script:MainWindow.Ask (Get-AppText 'Confirm.SelectSlotTitle') (Get-AppText 'Confirm.SelectSlot' ($Slot + 1))) {
+        Send-WindowEsimCommand -Kind 'SelectSimSlot' -Parameter @{ Slot = $Slot }
     }
 }
 
@@ -763,8 +772,13 @@ function Show-WindowEsim {
     $controls.EsimSlotText.Text = [string]$esim.SimInUse
     $controls.EsimStateText.Text = [string]$esim.StateText
     $controls.EsimStateText.Visibility = if ($esim.StateText) { 'Visible' } else { 'Collapsed' }
-    $controls.SelectSlotButton.Content = $esim.SlotText
-    $controls.SelectSlotButton.IsEnabled = $esim.CanSwitch -and -not $waiting
+    # The two SIMs' buttons, on the SIM tab and here: the one in use says so, and is off.
+    $controls.UsePhysicalButton.Content = $esim.PhysicalText
+    $controls.UsePhysicalButton.IsEnabled = $esim.CanUsePhysical -and -not $waiting
+    $controls.UseEsimButton.Content = $esim.EsimText
+    $controls.UseEsimButton.IsEnabled = $esim.CanUseEsim -and -not $waiting
+    $controls.SimSlotNoteText.Text = [string]$esim.SlotNote
+    $controls.EsimSlotNoteText.Text = [string]$esim.SlotNote
     $controls.EidPanel.Visibility = if ($esim.Eid) { 'Visible' } else { 'Collapsed' }
     $controls.EidBox.Text = [string]$esim.Eid
     $controls.EsimChipText.Text = [string]$esim.ChipText
@@ -956,11 +970,14 @@ function Save-WindowSetting {
         return
     }
     $controls.SettingsProblemText.Text = ''
-    $parameter = @{ Settings = $checked.Settings }
-    if ($controls.ClearPasswordBox.IsChecked) {
+    # The APN settings are the SIM's the form was filled for: the worker saves none for another.
+    # With none identified they can't be changed, and go without them.
+    $token = $script:MainWindow.FormSimToken
+    $parameter = @{ Settings = $(if ($token) { $checked.Settings } else { Select-WindowSharedSetting -Settings $checked.Settings }); SimToken = $token }
+    if ($token -and $controls.ClearPasswordBox.IsChecked) {
         $parameter['ApnPassword'] = [securestring]::new()
     }
-    elseif ($controls.ApnPasswordBox.SecurePassword.Length -gt 0) {
+    elseif ($token -and $controls.ApnPasswordBox.SecurePassword.Length -gt 0) {
         $parameter['ApnPassword'] = $controls.ApnPasswordBox.SecurePassword
     }
     & $script:MainWindow.Send 'SaveSettings' $parameter
@@ -974,6 +991,28 @@ function Save-WindowSetting {
     $controls.ClearPasswordBox.IsChecked = $false
     # Filled again from the snapshot once the worker has saved them.
     $script:MainWindow.FormSettings = $null
+}
+
+function Select-WindowSharedSetting {
+    # The settings every SIM shares: without the APN ones - the SIM in use's -, for a save that
+    # doesn't touch them. A copy.
+    param([object] $Settings)
+
+    $Settings | Select-Object -Property * -ExcludeProperty Apn, PdpType, ApnAuthentication, ApnUser
+}
+
+function Show-WindowApnSetting {
+    # The connection form's APN settings - the SIM in use's -, from the settings; a password being
+    # typed is cleared with them.
+    param([object] $Settings)
+
+    $controls = $script:MainWindow.Controls
+    $controls.ApnBox.Text = $Settings.Apn
+    Select-ComboBoxItem -ComboBox $controls.PdpTypeBox -Text $Settings.PdpType
+    Select-ComboBoxItem -ComboBox $controls.AuthenticationBox -Text $Settings.ApnAuthentication
+    $controls.ApnUserBox.Text = $Settings.ApnUser
+    $controls.ApnPasswordBox.Clear()
+    $controls.ClearPasswordBox.IsChecked = $false
 }
 
 function Select-ComboBoxItem {
@@ -995,7 +1034,7 @@ function Update-MainWindow {
     .DESCRIPTION
         Fills every text and table from the view. What the user is typing is left alone: the
         connection form is filled from the settings only when it was never filled, after Undo,
-        and after a save.
+        and after a save - and its APN settings when another SIM is in use: they are that SIM's.
     .EXAMPLE
         Update-MainWindow -View (ConvertTo-WindowView -Snapshot $snapshot)
     #>
@@ -1069,6 +1108,14 @@ function Update-MainWindow {
     }
 
     $controls.ApnPasswordStoredText.Text = Get-AppText $(if ($View.ApnPasswordStored) { 'Window.PasswordStored' } else { 'Window.NoPassword' })
+    # The APN settings are the SIM in use's: said whose, and changed only while one is identified.
+    $simToken = if ($View.PSObject.Properties['SimToken']) { $View.SimToken } else { $null }
+    $controls.ApnSimText.Text = if ($View.PSObject.Properties['ApnSimText']) { [string]$View.ApnSimText } else { '' }
+    $controls.ApnSimText.Visibility = & $show $controls.ApnSimText.Text
+    $editable = -not $View.PSObject.Properties['ApnEditable'] -or [bool]$View.ApnEditable
+    foreach ($name in 'ApnBox', 'PdpTypeBox', 'AuthenticationBox', 'ApnUserBox', 'ApnPasswordBox', 'ClearPasswordBox') {
+        $controls.$name.IsEnabled = $editable
+    }
     if ($View.Dns) {
         $controls.DohStateText.Text = [string]$View.Dns.Text
         $controls.DohStateText.Visibility = & $show $View.Dns.Text
@@ -1107,12 +1154,15 @@ function Update-MainWindow {
         $controls.StartupNoteText.Text = [string]$View.Startup.Note
         $controls.StartupNoteText.Visibility = if ($View.Startup.Note) { 'Visible' } else { 'Collapsed' }
     }
+    if ($View.Settings -and $null -ne $script:MainWindow.FormSettings -and $simToken -ne $script:MainWindow.FormSimToken) {
+        # Another SIM in use: its own APN settings, the rest of the form as the user left it.
+        Show-WindowApnSetting -Settings $View.Settings
+        $script:MainWindow.FormSimToken = $simToken
+    }
     if ($View.Settings -and $null -eq $script:MainWindow.FormSettings) {
         $settings = $View.Settings
-        $controls.ApnBox.Text = $settings.Apn
-        Select-ComboBoxItem -ComboBox $controls.PdpTypeBox -Text $settings.PdpType
-        Select-ComboBoxItem -ComboBox $controls.AuthenticationBox -Text $settings.ApnAuthentication
-        $controls.ApnUserBox.Text = $settings.ApnUser
+        Show-WindowApnSetting -Settings $settings
+        $script:MainWindow.FormSimToken = $simToken
         $controls.DnsBox.Text = @($settings.DnsServers) -join ', '
         $controls.DohBox.IsChecked = [bool]$settings.DnsOverHttps
         $controls.DohTemplateBox.Text = [string]$settings.DohTemplate

@@ -103,6 +103,7 @@
                                 <Button x:Name="SendMessageButton" DockPanel.Dock="Right" Content="[[Xaml.Send]]" Padding="16,3" Margin="8,0,0,0"/>
                                 <TextBlock x:Name="MessageCountText" VerticalAlignment="Center" Foreground="#606060" TextWrapping="Wrap"/>
                             </DockPanel>
+                            <TextBlock x:Name="MessageFromText" Margin="0,4,0,0" Foreground="#606060" TextWrapping="Wrap"/>
                             <TextBlock Text="[[Xaml.SendNote]]" Margin="0,4,0,0" Foreground="#606060" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Border>
@@ -180,6 +181,11 @@
             <TabItem x:Name="SimTab" Header="SIM">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="10">
+                        <!-- The physical SIM's button; the eSIM tab has the eSIM's: one SIM at a time. -->
+                        <DockPanel Margin="0,0,0,10">
+                            <Button x:Name="UsePhysicalButton" DockPanel.Dock="Right" Padding="10,2" Margin="8,0,0,0" VerticalAlignment="Top"/>
+                            <TextBlock x:Name="SimSlotNoteText" TextWrapping="Wrap" Foreground="#606060"/>
+                        </DockPanel>
                         <TextBlock x:Name="SimStateText" TextWrapping="Wrap"/>
                         <TextBlock x:Name="SimRequestText" Margin="0,2,0,0" TextWrapping="Wrap"/>
                         <TextBlock x:Name="SimStoredText" Margin="0,2,0,0" TextWrapping="Wrap"/>
@@ -198,16 +204,17 @@
                 </ScrollViewer>
             </TabItem>
 
-            <!-- The eSIM (decided 2026-10-04): the slot in use and the other one, the EID with Copy,
+            <!-- The eSIM (decided 2026-10-04): the slot in use and the eSIM's button, the EID with Copy,
                  the profiles and what can be done with each, a download from an activation code
                  typed or read from the image of its QR code. -->
             <TabItem x:Name="EsimTab" Header="[[Xaml.EsimTab]]">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="10">
                         <DockPanel>
-                            <Button x:Name="SelectSlotButton" DockPanel.Dock="Right" Padding="10,2" Margin="8,0,0,0" VerticalAlignment="Top"/>
+                            <Button x:Name="UseEsimButton" DockPanel.Dock="Right" Padding="10,2" Margin="8,0,0,0" VerticalAlignment="Top"/>
                             <StackPanel>
                                 <TextBlock x:Name="EsimSlotText" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="EsimSlotNoteText" TextWrapping="Wrap" Margin="0,4,0,0" Foreground="#606060"/>
                                 <TextBlock x:Name="EsimStateText" TextWrapping="Wrap" Margin="0,4,0,0" Foreground="#606060"/>
                             </StackPanel>
                         </DockPanel>
@@ -302,87 +309,91 @@
             <TabItem x:Name="ConnectionTab" Header="[[Xaml.ConnectionTab]]">
                 <!-- Scrolls when the window is too small for it. -->
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <Grid Margin="10">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Text="APN" Margin="0,4,12,4" VerticalAlignment="Center"/>
-                        <TextBox x:Name="ApnBox" Grid.Row="0" Grid.Column="1" Margin="0,4" ToolTip="[[Xaml.ApnTip]]"/>
-                        <TextBlock Grid.Row="1" Text="[[Xaml.PdpType]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
-                        <ComboBox x:Name="PdpTypeBox" Grid.Row="1" Grid.Column="1" Margin="0,4" Width="140" HorizontalAlignment="Left">
-                            <ComboBoxItem Content="IPV4V6" Tag="IPV4V6"/>
-                            <ComboBoxItem Content="IP" Tag="IP"/>
-                        </ComboBox>
-                        <TextBlock Grid.Row="2" Text="[[Xaml.Authentication]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
-                        <ComboBox x:Name="AuthenticationBox" Grid.Row="2" Grid.Column="1" Margin="0,4" Width="140" HorizontalAlignment="Left">
-                            <ComboBoxItem Content="[[Xaml.AuthNone]]" Tag="None"/>
-                            <ComboBoxItem Content="PAP" Tag="PAP"/>
-                            <ComboBoxItem Content="CHAP" Tag="CHAP"/>
-                        </ComboBox>
-                        <TextBlock Grid.Row="3" Text="[[Xaml.User]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
-                        <TextBox x:Name="ApnUserBox" Grid.Row="3" Grid.Column="1" Margin="0,4"/>
-                        <TextBlock Grid.Row="4" Text="[[Xaml.Password]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
-                        <WrapPanel Grid.Row="4" Grid.Column="1" Margin="0,4">
-                            <PasswordBox x:Name="ApnPasswordBox" Width="200" Margin="0,0,10,0"/>
-                            <CheckBox x:Name="ClearPasswordBox" Content="[[Xaml.ClearPassword]]" VerticalAlignment="Center"/>
-                        </WrapPanel>
-                        <TextBlock x:Name="ApnPasswordStoredText" Grid.Row="5" Grid.Column="1" Margin="0,0,0,4" Foreground="#606060"/>
-                        <TextBlock Grid.Row="6" Text="[[Xaml.DnsServers]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
-                        <TextBox x:Name="DnsBox" Grid.Row="6" Grid.Column="1" Margin="0,4" ToolTip="[[Xaml.DnsTip]]"/>
-                        <TextBlock Grid.Row="7" Text="[[Xaml.EncryptedDns]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
-                        <CheckBox x:Name="DohBox" Grid.Row="7" Grid.Column="1" Margin="0,4" VerticalAlignment="Center">
-                            <TextBlock Text="[[Xaml.Doh]]" TextWrapping="Wrap"/>
-                        </CheckBox>
-                        <TextBlock Grid.Row="8" Text="[[Xaml.DohTemplate]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
-                        <TextBox x:Name="DohTemplateBox" Grid.Row="8" Grid.Column="1" Margin="0,4" ToolTip="[[Xaml.DohTemplateTip]]"/>
-                        <WrapPanel Grid.Row="9" Grid.Column="1" Margin="0,4">
-                            <TextBlock Text="[[Xaml.RefreshBefore]]" VerticalAlignment="Center"/>
-                            <TextBox x:Name="DohRefreshBox" Width="60" Margin="6,0"/>
-                            <TextBlock Text="[[Xaml.RefreshAfter]]" VerticalAlignment="Center" Foreground="#606060" TextWrapping="Wrap"/>
-                        </WrapPanel>
-                        <TextBlock x:Name="DohStateText" Grid.Row="10" Grid.Column="1" Margin="0,0,0,4" Foreground="#606060" TextWrapping="Wrap"/>
-                        <TextBlock Grid.Row="11" Text="[[Xaml.Metric]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
-                        <DockPanel Grid.Row="11" Grid.Column="1" Margin="0,4">
-                            <TextBox x:Name="MetricBox" Width="80" VerticalAlignment="Center"/>
-                            <TextBlock Text="[[Xaml.MetricNote]]" Margin="10,0,0,0" VerticalAlignment="Center" Foreground="#606060" TextWrapping="Wrap"/>
-                        </DockPanel>
-                        <TextBlock Grid.Row="12" Text="[[Xaml.Updates]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
-                        <CheckBox x:Name="UpdateCheckBox" Grid.Row="12" Grid.Column="1" Margin="0,4" VerticalAlignment="Center">
-                            <TextBlock Text="[[Xaml.UpdateCheck]]" TextWrapping="Wrap"/>
-                        </CheckBox>
-                        <TextBlock Grid.Row="13" Text="[[Xaml.Startup]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
-                        <StackPanel Grid.Row="13" Grid.Column="1" Margin="0,4">
-                            <CheckBox x:Name="StartupBox" VerticalAlignment="Center">
-                                <TextBlock Text="[[Xaml.StartAtLogon]]" TextWrapping="Wrap"/>
+                    <StackPanel Margin="10">
+                        <!-- Whose APN settings these are: each SIM keeps its own. -->
+                        <TextBlock x:Name="ApnSimText" TextWrapping="Wrap" Foreground="#606060" Margin="0,0,0,4"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Text="APN" Margin="0,4,12,4" VerticalAlignment="Center"/>
+                            <TextBox x:Name="ApnBox" Grid.Row="0" Grid.Column="1" Margin="0,4" ToolTip="[[Xaml.ApnTip]]"/>
+                            <TextBlock Grid.Row="1" Text="[[Xaml.PdpType]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="PdpTypeBox" Grid.Row="1" Grid.Column="1" Margin="0,4" Width="140" HorizontalAlignment="Left">
+                                <ComboBoxItem Content="IPV4V6" Tag="IPV4V6"/>
+                                <ComboBoxItem Content="IP" Tag="IP"/>
+                            </ComboBox>
+                            <TextBlock Grid.Row="2" Text="[[Xaml.Authentication]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="AuthenticationBox" Grid.Row="2" Grid.Column="1" Margin="0,4" Width="140" HorizontalAlignment="Left">
+                                <ComboBoxItem Content="[[Xaml.AuthNone]]" Tag="None"/>
+                                <ComboBoxItem Content="PAP" Tag="PAP"/>
+                                <ComboBoxItem Content="CHAP" Tag="CHAP"/>
+                            </ComboBox>
+                            <TextBlock Grid.Row="3" Text="[[Xaml.User]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
+                            <TextBox x:Name="ApnUserBox" Grid.Row="3" Grid.Column="1" Margin="0,4"/>
+                            <TextBlock Grid.Row="4" Text="[[Xaml.Password]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
+                            <WrapPanel Grid.Row="4" Grid.Column="1" Margin="0,4">
+                                <PasswordBox x:Name="ApnPasswordBox" Width="200" Margin="0,0,10,0"/>
+                                <CheckBox x:Name="ClearPasswordBox" Content="[[Xaml.ClearPassword]]" VerticalAlignment="Center"/>
+                            </WrapPanel>
+                            <TextBlock x:Name="ApnPasswordStoredText" Grid.Row="5" Grid.Column="1" Margin="0,0,0,4" Foreground="#606060"/>
+                            <TextBlock Grid.Row="6" Text="[[Xaml.DnsServers]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
+                            <TextBox x:Name="DnsBox" Grid.Row="6" Grid.Column="1" Margin="0,4" ToolTip="[[Xaml.DnsTip]]"/>
+                            <TextBlock Grid.Row="7" Text="[[Xaml.EncryptedDns]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
+                            <CheckBox x:Name="DohBox" Grid.Row="7" Grid.Column="1" Margin="0,4" VerticalAlignment="Center">
+                                <TextBlock Text="[[Xaml.Doh]]" TextWrapping="Wrap"/>
                             </CheckBox>
-                            <TextBlock x:Name="StartupNoteText" Foreground="#606060" TextWrapping="Wrap" Margin="0,2,0,0" Visibility="Collapsed"/>
-                        </StackPanel>
-                        <StackPanel Grid.Row="14" Grid.ColumnSpan="2" Margin="0,12,0,0">
-                            <StackPanel Orientation="Horizontal">
-                                <Button x:Name="SaveSettingsButton" Content="[[Xaml.Save]]" Padding="16,3"/>
-                                <Button x:Name="ReloadSettingsButton" Content="[[Xaml.Undo]]" Margin="8,0,0,0" Padding="10,3"/>
+                            <TextBlock Grid.Row="8" Text="[[Xaml.DohTemplate]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
+                            <TextBox x:Name="DohTemplateBox" Grid.Row="8" Grid.Column="1" Margin="0,4" ToolTip="[[Xaml.DohTemplateTip]]"/>
+                            <WrapPanel Grid.Row="9" Grid.Column="1" Margin="0,4">
+                                <TextBlock Text="[[Xaml.RefreshBefore]]" VerticalAlignment="Center"/>
+                                <TextBox x:Name="DohRefreshBox" Width="60" Margin="6,0"/>
+                                <TextBlock Text="[[Xaml.RefreshAfter]]" VerticalAlignment="Center" Foreground="#606060" TextWrapping="Wrap"/>
+                            </WrapPanel>
+                            <TextBlock x:Name="DohStateText" Grid.Row="10" Grid.Column="1" Margin="0,0,0,4" Foreground="#606060" TextWrapping="Wrap"/>
+                            <TextBlock Grid.Row="11" Text="[[Xaml.Metric]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
+                            <DockPanel Grid.Row="11" Grid.Column="1" Margin="0,4">
+                                <TextBox x:Name="MetricBox" Width="80" VerticalAlignment="Center"/>
+                                <TextBlock Text="[[Xaml.MetricNote]]" Margin="10,0,0,0" VerticalAlignment="Center" Foreground="#606060" TextWrapping="Wrap"/>
+                            </DockPanel>
+                            <TextBlock Grid.Row="12" Text="[[Xaml.Updates]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
+                            <CheckBox x:Name="UpdateCheckBox" Grid.Row="12" Grid.Column="1" Margin="0,4" VerticalAlignment="Center">
+                                <TextBlock Text="[[Xaml.UpdateCheck]]" TextWrapping="Wrap"/>
+                            </CheckBox>
+                            <TextBlock Grid.Row="13" Text="[[Xaml.Startup]]" Margin="0,4,12,4" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Row="13" Grid.Column="1" Margin="0,4">
+                                <CheckBox x:Name="StartupBox" VerticalAlignment="Center">
+                                    <TextBlock Text="[[Xaml.StartAtLogon]]" TextWrapping="Wrap"/>
+                                </CheckBox>
+                                <TextBlock x:Name="StartupNoteText" Foreground="#606060" TextWrapping="Wrap" Margin="0,2,0,0" Visibility="Collapsed"/>
                             </StackPanel>
-                            <TextBlock x:Name="SettingsProblemText" TextWrapping="Wrap" Foreground="#B03030" Margin="0,8,0,0"/>
-                        </StackPanel>
-                    </Grid>
+                            <StackPanel Grid.Row="14" Grid.ColumnSpan="2" Margin="0,12,0,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <Button x:Name="SaveSettingsButton" Content="[[Xaml.Save]]" Padding="16,3"/>
+                                    <Button x:Name="ReloadSettingsButton" Content="[[Xaml.Undo]]" Margin="8,0,0,0" Padding="10,3"/>
+                                </StackPanel>
+                                <TextBlock x:Name="SettingsProblemText" TextWrapping="Wrap" Foreground="#B03030" Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
                 </ScrollViewer>
             </TabItem>
 

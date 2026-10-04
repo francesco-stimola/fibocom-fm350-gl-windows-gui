@@ -218,6 +218,20 @@ Describe 'ConvertTo-WindowView' {
         $view = ConvertTo-WindowView -Snapshot $null
         $view.Title | Should -Be 'Not monitoring'
         $view.Sim | Should -BeNullOrEmpty
+        $view.ApnSimText | Should -BeNullOrEmpty
+        $view.ApnEditable | Should -BeFalse
+    }
+
+    It 'says whose APN settings the form shows: the SIM in use''s, changed only while one is identified' {
+        $view = ConvertTo-WindowView -Snapshot $script:online
+        $view.SimToken | Should -Be $script:online.SimToken
+        $view.SimToken | Should -Not -BeNullOrEmpty
+        $view.ApnEditable | Should -BeTrue
+        $view.ApnSimText | Should -Be 'SIM in use: slot 1, a physical SIM. Each SIM keeps its own APN settings: these are the SIM in use''s.'
+        $none = ConvertTo-WindowView -Snapshot (Copy-Snapshot $script:online @{ SimToken = $null })
+        $none.ApnEditable | Should -BeFalse
+        $none.ApnSimText | Should -Be 'Each SIM keeps its own APN settings: they can be changed once a SIM is ready.'
+        (ConvertTo-WindowView -Snapshot $script:online -Worker Restarting).ApnEditable | Should -BeFalse -Because 'no worker takes them meanwhile'
     }
 }
 
@@ -315,6 +329,8 @@ Describe 'Command outcomes' {
         @{ Kind = 'ConnectNow'; Result = 'Done' }
         @{ Kind = 'SaveSettings'; Result = 'Done' }
         @{ Kind = 'SaveSettings'; Result = 'Failed' }
+        @{ Kind = 'SaveSettings'; Result = 'NoSim' }
+        @{ Kind = 'SaveSettings'; Result = 'SimChanged' }
         @{ Kind = 'SaveSimPin'; Result = 'Done' }
         @{ Kind = 'SaveSimPin'; Result = 'SimNotIdentified' }
         @{ Kind = 'SaveSimPin'; Result = 'NoModem' }
@@ -717,7 +733,7 @@ Describe 'The Messages tab' {
 
     It 'lists the messages newest first, the new ones marked, and says how full the SIM is' {
         $view = Get-MessagesView -Snapshot $script:online
-        $view.StateText | Should -Be '4 of 70 places used on the SIM.'
+        $view.StateText | Should -Be 'SIM in use: slot 1, a physical SIM. 4 of 70 places used on the SIM.'
         $view.TabText | Should -Be 'Messages (2)'
         @($view.Items | ForEach-Object From) | Should -Be @('Info', '+10000000000', 'Operator')
         @($view.Items | ForEach-Object Marker) | Should -Be @([string][char]0x25CF, [string][char]0x25CF, '')
@@ -732,6 +748,13 @@ Describe 'The Messages tab' {
         $view.CanDelete | Should -BeTrue
         $view.CanSend | Should -BeTrue
         $view.SendingText | Should -BeNullOrEmpty
+        $view.FromText | Should -Be 'A message goes out from the SIM in use: the modem uses one at a time. To send from the other one, put it in use from the SIM or eSIM tab.'
+    }
+
+    It 'names the SIM in use only once its slot is read' {
+        $esim = $script:online.Esim | Select-Object -Property *
+        $esim.Slot = $null
+        (Get-MessagesView -Snapshot (Copy-Snapshot $script:online @{ Esim = $esim })).StateText | Should -Be '4 of 70 places used on the SIM.'
     }
 
     It 'says why there are none: <Name>' -ForEach @(
@@ -745,12 +768,13 @@ Describe 'The Messages tab' {
         $view.TabText | Should -Be 'Messages'
         $view.CanSend | Should -BeFalse
         $view.CanDelete | Should -BeFalse
+        $view.FromText | Should -BeNullOrEmpty
     }
 
     It 'says an empty SIM, and a full one' {
-        (Get-MessagesView -Snapshot (Copy-Snapshot $script:online @{ Messages = (Get-TestMessageList -Item @() -Used 0) })).StateText | Should -Be '0 of 70 places used on the SIM. No messages on the SIM.'
+        (Get-MessagesView -Snapshot (Copy-Snapshot $script:online @{ Messages = (Get-TestMessageList -Item @() -Used 0) })).StateText | Should -Be 'SIM in use: slot 1, a physical SIM. 0 of 70 places used on the SIM. No messages on the SIM.'
         $full = Get-MessagesView -Snapshot (Copy-Snapshot $script:online @{ Messages = (Get-TestMessageList -Item @(Get-TestMessage) -Used 70) })
-        $full.StateText | Should -Be '70 of 70 places used on the SIM. The SIM is full: new messages can''t be stored until some are deleted.'
+        $full.StateText | Should -Be 'SIM in use: slot 1, a physical SIM. 70 of 70 places used on the SIM. The SIM is full: new messages can''t be stored until some are deleted.'
     }
 
     It 'says what a message shows instead of text, and what it lacks: <Name>' -ForEach @(
@@ -1022,9 +1046,11 @@ Describe 'The eSIM tab' {
         $row.State | Should -Be 'Disabled'
         $row.Enabled | Should -BeFalse
         $view.Esim.StateText | Should -BeNullOrEmpty
-        $view.Esim.SlotText | Should -Be 'Use slot 1...'
-        $view.Esim.OtherSlot | Should -Be 0
-        foreach ($can in 'CanSwitch', 'CanRead', 'CanManage', 'CanDownload') {
+        $view.Esim.EsimText | Should -Be 'In use: the eSIM (slot 2)'
+        $view.Esim.CanUseEsim | Should -BeFalse -Because 'the eSIM is in use'
+        $view.Esim.PhysicalText | Should -Be 'Use the physical SIM (slot 1)...'
+        $view.Esim.SlotNote | Should -Be 'The modem uses one SIM at a time: the physical SIM (slot 1) or the eSIM (slot 2). The SIM tab puts the physical SIM in use, the eSIM tab the eSIM; the switch drops the connection for a moment.'
+        foreach ($can in 'CanUsePhysical', 'CanRead', 'CanManage', 'CanDownload') {
             $view.Esim.$can | Should -BeTrue -Because $can
         }
     }
@@ -1059,9 +1085,10 @@ Describe 'The eSIM tab' {
         $view = ConvertTo-WindowView -Snapshot $script:online
         $view.SimInUse | Should -Be 'SIM in use: slot 1, a physical SIM.'
         $view.Esim.StateText | Should -Be 'The eSIM''s profiles can be managed only while its slot is in use.'
-        $view.Esim.SlotText | Should -Be 'Use slot 2...'
-        $view.Esim.OtherSlot | Should -Be 1
-        $view.Esim.CanSwitch | Should -BeTrue
+        $view.Esim.EsimText | Should -Be 'Use the eSIM (slot 2)...'
+        $view.Esim.CanUseEsim | Should -BeTrue
+        $view.Esim.PhysicalText | Should -Be 'In use: the physical SIM (slot 1)'
+        $view.Esim.CanUsePhysical | Should -BeFalse -Because 'the physical SIM is in use'
         foreach ($can in 'CanRead', 'CanManage', 'CanDownload', 'CanReadQr') {
             $view.Esim.$can | Should -BeFalse -Because $can
         }
@@ -1081,7 +1108,8 @@ Describe 'The eSIM tab' {
     ) {
         $view = Get-EsimView -Snapshot (Copy-Esim -Snapshot $script:empty -Change $Change -Outer $Outer)
         $view.StateText | Should -Be $Text
-        $view.CanSwitch | Should -Be $Switch
+        $view.CanUsePhysical | Should -Be $Switch
+        $view.CanUseEsim | Should -BeFalse -Because 'the eSIM is in use'
         $view.CanRead | Should -Be $Read
         $view.CanManage | Should -Be $Manage
         $view.CanDownload | Should -Be $Download
@@ -1101,7 +1129,10 @@ Describe 'The eSIM tab' {
         $none = Get-EsimView -Snapshot $null
         $none.SimInUse | Should -BeNullOrEmpty
         $none.StateText | Should -BeNullOrEmpty
-        $none.CanSwitch | Should -BeFalse
+        $none.CanUsePhysical | Should -BeFalse
+        $none.CanUseEsim | Should -BeFalse
+        $none.PhysicalText | Should -Be 'Use the physical SIM (slot 1)...' -Because 'with no slot read, neither says it is in use'
+        $none.EsimText | Should -Be 'Use the eSIM (slot 2)...'
         $before = $script:online | Select-Object -Property * -ExcludeProperty Esim
         (ConvertTo-WindowView -Snapshot $before).SimInUse | Should -BeNullOrEmpty
     }

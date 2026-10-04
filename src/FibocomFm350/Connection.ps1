@@ -234,8 +234,12 @@ function Get-ModemObservation {
         state, PinAttemptsLeft, read while the SIM waits for its PIN, NetworkModeRead and
         NetworkModeSupport, the modem's mode setting and what it supports, ContextDns, the
         operator's DNS servers for the context), and what the steps
-        need: Context (the app's context parameters), AdapterState and AdapterPlan. The ICCID is
-        read only to match the stored PIN, and kept nowhere.
+        need: Context (the app's context parameters), AdapterState and AdapterPlan, Settings and
+        ApnSecretPath (the SIM's own, with -SimSettings). The ICCID is read to match the stored
+        PIN and, with -SimSettings, to tell the SIM in use at every pass - a SIM can change
+        without the port closing -, and kept nowhere: Sim carries its fingerprint, with the Id
+        and Source of Resolve-SimSetting - $null when the SIM was not read, or its ICCID couldn't
+        be: then the context is not read either, and stays unknown.
     .EXAMPLE
         $observation = Get-ModemObservation -Channel $channel -Settings $settings -AdapterInstanceId $modem.Network.InstanceId
     #>
@@ -258,6 +262,10 @@ function Get-ModemObservation {
         [string] $SimPinPath = (Get-AppDataPath -Name 'sim-pin.json'),
 
         [string] $ApnSecretPath = (Get-AppDataPath -Name 'apn-password.dat'),
+
+        # The settings kept for each SIM (Import-SimSetting's): the SIM in use connects with its
+        # own APN settings. Without them, -Settings are every SIM's.
+        [object] $SimSettings,
 
         # The data-path probes' verdict: Address (the one they were sent from) and Healthy
         # (Resolve-DataPathHealth's). It counts only for the context's address.
@@ -283,7 +291,7 @@ function Get-ModemObservation {
         Adapter = $null; AdapterConfigured = $null; AdapterProblem = $null; Elevated = $null; DataPath = $null
         DohSupported = $null; DohServers = $null; DohKnown = $null; DnsUnread = $null; DnsAdvertised = $null
     }
-    $result = [pscustomobject]@{ Facts = $null; Context = $null; AdapterState = $null; AdapterPlan = $null }
+    $result = [pscustomobject]@{ Facts = $null; Context = $null; AdapterState = $null; AdapterPlan = $null; Settings = $Settings; ApnSecretPath = $ApnSecretPath; Sim = $null }
     $finish = {
         $result.Facts = [pscustomobject]$facts
         $result
@@ -318,6 +326,7 @@ function Get-ModemObservation {
     $facts.PinAttemptsLeft = $attemptsLeft
     # The SIM is identified when a PIN may be sent to it, and when a ready SIM could confirm a
     # pending attempt - only the stored PIN's SIM does.
+    $iccid = $null
     if ($stored -and ($sim.State -eq 'PinRequired' -or ($sim.State -eq 'Ready' -and $stored.Attempted))) {
         $iccid = ConvertFrom-AtIccid -Lines (& $ask 'AT+ICCID').Lines
         $stored = Get-SimPin -Path $SimPinPath -Iccid $iccid
@@ -329,7 +338,32 @@ function Get-ModemObservation {
     $facts.Sim = Resolve-SimPinAction -SimState $sim.State -PinStored:([bool]$stored) -PinForThisSim $pinForThisSim `
         -PinAttempted:([bool]$stored -and $stored.Attempted) -AttemptsLeft $attemptsLeft
     if ($facts.Sim.Action -ne 'Continue') {
+        if ($SimSettings) {
+            # No SIM ready: none to connect with.
+            $result.Sim = [pscustomobject]@{ Fingerprint = $null; Id = $null; Source = 'Unknown' }
+        }
         return & $finish
+    }
+
+    # The SIM in use, and its own APN settings (ARCHITECTURE -> Settings and logs).
+    if ($SimSettings) {
+        if (-not $iccid) {
+            $iccid = ConvertFrom-AtIccid -Lines (& $ask 'AT+ICCID').Lines
+            if (& $stopped) {
+                return & $finish
+            }
+        }
+        if ($iccid) {
+            $fingerprint = Get-SimSettingFingerprint -Iccid $iccid
+            $own = Resolve-SimSetting -Settings $Settings -SimSettings $SimSettings -Fingerprint $fingerprint
+            $Settings = $own.Settings
+            $ApnSecretPath = Get-SimApnSecretPath -ApnSecretPath $ApnSecretPath -Id $own.Id
+            $result.Settings = $Settings
+            $result.ApnSecretPath = $ApnSecretPath
+            $result.Sim = [pscustomobject]@{ Fingerprint = $fingerprint; Id = $own.Id; Source = $own.Source }
+            $facts.ApnSet = [bool]$Settings.Apn
+            $facts.ApnPasswordUnreadable = $Settings.ApnAuthentication -ne 'None' -and (Test-Path -LiteralPath $ApnSecretPath -PathType Leaf) -and -not (Get-ApnPassword -Path $ApnSecretPath)
+        }
     }
 
     # Radio and registration.
@@ -371,7 +405,11 @@ function Get-ModemObservation {
 
     # The app's data context: its definition and whether it is active, read together, so a
     # definition is never written over a context whose activation is not known. A read that
-    # fails leaves its fact unknown ($null), never "no".
+    # fails leaves its fact unknown ($null), never "no" - and so does a SIM whose settings are not
+    # known: its ICCID couldn't be read.
+    if ($SimSettings -and -not $result.Sim) {
+        return & $finish
+    }
     $definitions = & $ask 'AT+CGDCONT?'
     $activations = & $ask 'AT+CGACT?'
     if (& $stopped) {
@@ -592,11 +630,16 @@ function Invoke-ModemConnect {
         an address and differs from the settings; set its authentication and activate it;
         configure the adapter (administrator rights).
 
+        With -SimSettings (Import-SimSetting's), the SIM in use connects with its own APN
+        settings: its context is defined and activated as they say.
+
         Returns State, Action (the step still missing), Reason, Blocked, Dropped,
         SettingsPending (as Resolve-ConnectionState), Steps (the steps run, their commands
-        redacted), Observation (the last facts) and Written (the network mode written: Command,
+        redacted), Observation (the last facts), Written (the network mode written: Command,
         Before - the setting's text as read before it - and Status, the modem's answer; or
-        $null). With -LogFolder, the steps and the state change go to the redacted log there.
+        $null) and Sim (Get-ModemObservation's: the SIM in use's fingerprint - an identifier's,
+        for the caller alone -, Id and Source; $null when not read). With -LogFolder, the steps
+        and the state change go to the redacted log there.
     .EXAMPLE
         $pass = Invoke-ModemConnect -Channel $channel -Settings $settings -AdapterInstanceId $modem.Network.InstanceId -Previous $last.State
     #>
@@ -621,6 +664,9 @@ function Invoke-ModemConnect {
         [string] $SimPinPath = (Get-AppDataPath -Name 'sim-pin.json'),
 
         [string] $ApnSecretPath = (Get-AppDataPath -Name 'apn-password.dat'),
+
+        # The settings kept for each SIM, as Get-ModemObservation takes them.
+        [object] $SimSettings,
 
         [string] $LogFolder,
 
@@ -668,7 +714,8 @@ function Invoke-ModemConnect {
 
     while ($true) {
         $observation = Get-ModemObservation -Channel $Channel -Settings $Settings -AdapterInstanceId $AdapterInstanceId -SimulatedAdapter $SimulatedAdapter `
-            -SimPinPath $SimPinPath -ApnSecretPath $ApnSecretPath -DataPath $DataPath -NetworkModeSupport $NetworkModeSupport -NetworkModeLastWrite $NetworkModeLastWrite
+            -SimPinPath $SimPinPath -ApnSecretPath $ApnSecretPath -SimSettings $SimSettings -DataPath $DataPath -NetworkModeSupport $NetworkModeSupport `
+            -NetworkModeLastWrite $NetworkModeLastWrite
         if (-not $NetworkModeSupport -and $observation.Facts.NetworkModeSupport) {
             $NetworkModeSupport = $observation.Facts.NetworkModeSupport
         }
@@ -687,8 +734,9 @@ function Invoke-ModemConnect {
             break
         }
         [void]$done.Add($decision.Action)
-        $step = Invoke-ConnectionStep -Channel $Channel -Action $decision.Action -Observation $observation -Settings $Settings `
-            -SimPinPath $SimPinPath -ApnSecretPath $ApnSecretPath -InitializeTimeoutMs $InitializeTimeoutMs -SimulatedAdapter $SimulatedAdapter
+        # The SIM in use's own settings, as the observation found them.
+        $step = Invoke-ConnectionStep -Channel $Channel -Action $decision.Action -Observation $observation -Settings $observation.Settings `
+            -SimPinPath $SimPinPath -ApnSecretPath $observation.ApnSecretPath -InitializeTimeoutMs $InitializeTimeoutMs -SimulatedAdapter $SimulatedAdapter
         $steps.Add($step)
         if ($step.Action -eq 'ApplyNetworkMode') {
             # A write refused is remembered as one not kept: never written again over the same
@@ -716,5 +764,6 @@ function Invoke-ModemConnect {
         Steps           = [object[]]$steps.ToArray()
         Observation     = $observation.Facts
         Written         = $written
+        Sim             = $observation.Sim
     }
 }

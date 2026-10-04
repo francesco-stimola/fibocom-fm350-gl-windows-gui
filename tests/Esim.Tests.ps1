@@ -884,9 +884,9 @@ Describe 'The simulated eUICC' {
     It 'sets and clears a nickname, deletes, downloads, and sends the notifications' {
         [void](& $script:ask 'AT+GTDUALSIM=1')
         $euicc = $script:device.Modem.Euicc
-        (& $script:run SetNickname @{ ProfileId = '8900100000000000000'; Nickname = 'Laboratorio è' }).Code | Should -Be 0
+        (& $script:run SetNickname @{ ProfileId = '8900100000000000001'; Nickname = 'Laboratorio è' }).Code | Should -Be 0
         $euicc.Profiles[0].Nickname | Should -Be 'Laboratorio è'
-        (& $script:run SetNickname @{ ProfileId = '8900100000000000000' }).Code | Should -Be 0
+        (& $script:run SetNickname @{ ProfileId = '8900100000000000001' }).Code | Should -Be 0
         $euicc.Profiles[0].Nickname | Should -BeNullOrEmpty
         $download = & $script:run DownloadProfile @{ ActivationCode = 'LPA:1$smdp.example.com$ABC-1' }
         $download.Code | Should -Be 0
@@ -1017,6 +1017,82 @@ Describe 'The worker and the eSIM' {
         $outcome.Result | Should -Be 'Failed'
         $outcome.Detail | Should -Match 'Stopped'
         @($script:device.Modem.Received | Select-Object -Skip $before | Where-Object { $_ -like 'AT+CCHO=*' }) | Should -BeNullOrEmpty
+    }
+
+    Context 'each SIM''s own APN settings' {
+        BeforeAll {
+            # Passes until the SIM in use is identified again, after a switch.
+            function Invoke-EsimPass {
+                for ($i = 0; $i -lt 3; $i++) {
+                    $script:worker.PassForced = $true
+                    Invoke-ModemWorkerCycle -Worker $script:worker
+                }
+                $script:link['Snapshot']
+            }
+
+            function Save-EsimApn {
+                param([string] $Apn, [string] $Token)
+                $settings = $script:link['Snapshot'].Settings | Select-Object -Property *
+                $settings.Apn = $Apn
+                Invoke-EsimCommand -Worker $script:worker -Kind SaveSettings -Parameter @{ Settings = $settings; SimToken = $Token }
+            }
+
+            $script:simsPath = Join-Path $script:folder 'sim-settings.json'
+            $script:settingsPath = Join-Path $script:folder 'settings.json'
+        }
+
+        It 'gives the APN settings saved before to the first SIM identified; another SIM starts with the subscription''s APN' {
+            Export-AppSetting -Settings @{ Apn = 'internet' } -Path $script:settingsPath
+            $script:worker = Get-EsimWorker -Scenario Esim
+            $script:link['Snapshot'].Settings.Apn | Should -Be 'internet'
+            @((Import-SimSetting -Path $script:simsPath).Sims | ForEach-Object Apn) | Should -Be @('internet')
+            (Import-AppSetting -Path $script:settingsPath).Settings.Apn | Should -Be '' -Because 'they are that SIM''s now'
+            (Invoke-EsimCommand -Worker $script:worker -Kind SelectSimSlot -Parameter @{ Slot = 0 }).Result | Should -Be 'Done'
+            $physical = Invoke-EsimPass
+            $physical.Esim.SimType | Should -Be 'Usim'
+            $physical.Settings.Apn | Should -Be ''
+            @((Import-SimSetting -Path $script:simsPath).Sims).Count | Should -Be 1 -Because 'only the first SIM takes them'
+        }
+
+        It 'keeps each SIM''s APN apart, and shows the one of the SIM in use' {
+            $script:worker = Get-EsimWorker -Scenario Esim
+            $esim = $script:link['Snapshot'].SimToken
+            $esim | Should -Not -BeNullOrEmpty
+            (Save-EsimApn -Apn 'truphone.com' -Token $esim).Result | Should -Be 'Done'
+            $script:link['Snapshot'].Settings.Apn | Should -Be 'truphone.com'
+            (Invoke-EsimCommand -Worker $script:worker -Kind SelectSimSlot -Parameter @{ Slot = 0 }).Result | Should -Be 'Done'
+            $physical = Invoke-EsimPass
+            $physical.SimToken | Should -Not -BeNullOrEmpty
+            $physical.SimToken | Should -Not -Be $esim
+            $physical.Settings.Apn | Should -Be ''
+            (Save-EsimApn -Apn 'internet' -Token $physical.SimToken).Result | Should -Be 'Done'
+            (Invoke-EsimCommand -Worker $script:worker -Kind SelectSimSlot -Parameter @{ Slot = 1 }).Result | Should -Be 'Done'
+            (Invoke-EsimPass).Settings.Apn | Should -Be 'truphone.com'
+            $script:device.Modem.Received | Should -Contain 'AT+CGDCONT=1,"IPV4V6","truphone.com"'
+            (Import-AppSetting -Path $script:settingsPath).Settings.Apn | Should -Be '' -Because 'no SIM''s APN is every SIM''s'
+        }
+
+        It 'saves no APN for a SIM that changed since the window showed it, nor with none ready' {
+            $script:worker = Get-EsimWorker -Scenario Esim
+            $old = $script:link['Snapshot'].SimToken
+            (Invoke-EsimCommand -Worker $script:worker -Kind SelectSimSlot -Parameter @{ Slot = 0 }).Result | Should -Be 'Done'
+            [void](Invoke-EsimPass)
+            (Save-EsimApn -Apn 'truphone.com' -Token $old).Result | Should -Be 'SimChanged'
+            $script:link['Snapshot'].Settings.Apn | Should -Be ''
+            Close-ModemWorker -Worker $script:worker
+            $script:worker = Get-EsimWorker -Scenario EsimEmpty
+            $script:link['Snapshot'].SimToken | Should -BeNullOrEmpty
+            (Save-EsimApn -Apn 'truphone.com' -Token $null).Result | Should -Be 'NoSim'
+            (Invoke-EsimCommand -Worker $script:worker -Kind SaveSettings -Parameter @{ Settings = @{ InterfaceMetric = 30 } }).Result | Should -Be 'Done' -Because 'the other settings are every SIM''s'
+        }
+
+        It 'forgets a deleted profile''s APN settings' {
+            $script:worker = Get-EsimWorker -Scenario Esim
+            (Save-EsimApn -Apn 'truphone.com' -Token $script:link['Snapshot'].SimToken).Result | Should -Be 'Done'
+            (Invoke-EsimCommand -Worker $script:worker -Kind DisableProfile -Parameter @{ Aid = 'A0000005591010FFFFFFFF8900001000' }).Result | Should -Be 'Done'
+            (Invoke-EsimCommand -Worker $script:worker -Kind DeleteProfile -Parameter @{ Aid = 'A0000005591010FFFFFFFF8900001000' }).Result | Should -Be 'Done'
+            @((Import-SimSetting -Path $script:simsPath).Sims).Count | Should -Be 0
+        }
     }
 
     It 'publishes an eUICC with no profile as read, with none' {

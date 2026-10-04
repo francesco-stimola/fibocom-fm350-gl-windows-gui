@@ -6,6 +6,7 @@
         '000000000000000'                   # IMEI
         '001010000000001'                   # IMSI on the 3GPP test network, MCC 001 / MNC 01
         '8900100000000000000'               # ICCID, 19 digits
+        '8900100000000000001'               # ICCID, 19 digits: a second SIM's (an eSIM profile's)
         '89001000000000000000'              # ICCID, 20 digits
         '89001000000000000000000000000000'  # EID, 32 digits
     )

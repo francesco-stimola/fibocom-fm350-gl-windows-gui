@@ -192,7 +192,10 @@ function Send-ModemCommand {
         - ConnectNow: a connect pass now.
         - SaveSettings: Settings (validated by the worker, which refuses an invalid value);
           ApnPassword, a SecureString - an empty one removes the stored password - or left out
-          to keep it. The network mode in them is left as it is: SetNetworkMode sets it.
+          to keep it. The network mode in them is left as it is: SetNetworkMode sets it. The
+          APN settings and password are the SIM in use's: saved with SimToken, the snapshot's
+          when the window showed them - 'SimChanged' when the SIM changed since, 'NoSim' with
+          none identified, and then nothing is saved.
         - SetNetworkMode: NetworkMode, LteBands, NrBands - each left out keeps its setting. A
           mode is written at once, in a maintenance window, and tried: saved once the modem
           registers with it, undone when it finds no network. '' stops managing it.
@@ -462,8 +465,10 @@ function New-ModemSnapshot {
         while a message goes out); Esim (Get-WorkerEsimView: the SIM slot in use and its kind,
         whether lpac and ZXing.Net are there, the eUICC's EID - shown with Copy, never logged - and
         its facts and profiles - no ICCID -, the notifications waiting, the eSIM command under way,
-        the last read's failure); AppVersion; Settings, ApnPasswordStored,
-        SettingsProblems and SettingsIssues (ConvertTo-AppSetting's Problems and Issues); Results
+        the last read's failure); AppVersion; Settings - with the SIM in use's own APN settings -,
+        ApnPasswordStored (the SIM in use's), SimToken (a random token for the SIM in use, $null
+        with none identified: the APN settings shown are that SIM's), SettingsProblems and
+        SettingsIssues (ConvertTo-AppSetting's Problems and Issues); Results
         (the last commands' outcomes: Id, Kind, Result, Detail, AttemptsLeft, Parts - of a
         message sent: Sent, Count -, Time).
     .EXAMPLE
@@ -570,8 +575,9 @@ function New-ModemSnapshot {
         Esim              = Get-WorkerEsimView -Worker $Worker
         AppVersion        = if ($Worker.AppVersion) { $Worker.AppVersion.ToString() } else { $null }
         StartAtLogon      = $Worker.StartAtLogon
-        Settings          = if ($Worker.Settings) { $Worker.Settings | Select-Object -Property * } else { $null }
+        Settings          = if ($Worker.Settings) { (Get-WorkerSimSetting -Worker $Worker).Settings } else { $null }
         ApnPasswordStored = $Worker.ApnPasswordStored
+        SimToken          = $Worker.SimToken
         SettingsProblems  = [string[]]@($Worker.SettingsProblems)
         SettingsIssues    = [object[]]@($Worker.SettingsIssues)
         Results           = [object[]]$Worker.Results.ToArray()
@@ -629,6 +635,7 @@ function New-ModemWorker {
         @{
             Settings         = Join-Path -Path $DataFolder -ChildPath 'settings.json'
             SimPin           = Join-Path -Path $DataFolder -ChildPath 'sim-pin.json'
+            SimSettings      = Join-Path -Path $DataFolder -ChildPath 'sim-settings.json'
             ApnSecret        = Join-Path -Path $DataFolder -ChildPath 'apn-password.dat'
             Log              = Join-Path -Path $DataFolder -ChildPath 'logs'
             DriverStaging    = Join-Path -Path $DataFolder -ChildPath 'driver-staging'
@@ -641,6 +648,7 @@ function New-ModemWorker {
         @{
             Settings         = Get-AppDataPath -Name 'settings.json'
             SimPin           = Get-AppDataPath -Name 'sim-pin.json'
+            SimSettings      = Get-AppDataPath -Name 'sim-settings.json'
             ApnSecret        = Get-AppDataPath -Name 'apn-password.dat'
             Log              = Get-AppDataPath -Name 'logs' -Local
             DriverStaging    = Join-Path -Path ([Environment]::GetFolderPath('Windows')) -ChildPath 'Temp'
@@ -662,6 +670,16 @@ function New-ModemWorker {
         Settings          = $null
         SettingsProblems  = [string[]]@()
         SettingsIssues    = [object[]]@()
+        # The settings kept for each SIM (Import-SimSetting's, read with the settings); the SIM in
+        # use, as the last pass identified it - its fingerprint never in a snapshot -, and a
+        # random token that changes with it, which the window sends back with the APN settings
+        # it shows; a failure to give the old APN settings to the SIM, and a ready SIM that can't
+        # be identified, each logged once.
+        SimSettings       = $null
+        Sim               = $null
+        SimToken          = $null
+        SimMoveFailure    = $null
+        SimUnreadLogged   = $false
         Presence          = $null
         PortError         = $null
         Channel           = $null
@@ -1316,7 +1334,9 @@ function Close-WorkerChannel {
     $Worker.Messages = $null
     $Worker.MessageStorage = $null
     $Worker.MessagesFailure = $null
-    # The slot and the eUICC are read again through the next port; until then, nothing is shown.
+    # The slot, the SIM in use and the eUICC are read again through the next port; until then,
+    # nothing is shown.
+    Clear-WorkerSim -Worker $Worker
     $Worker.SimSlotRead = $false
     $Worker.SimSlot = $null
     $Worker.SimType = $null
@@ -1621,6 +1641,91 @@ function Get-WorkerSetting {
         $settings.DnsServers = [string[]]$doh.Servers
     }
     $settings
+}
+
+function Get-WorkerSimSetting {
+    # The settings of the SIM in use, as the last pass identified it (Resolve-SimSetting's), from
+    # the saved ones: what the window shows and saves.
+    param([hashtable] $Worker)
+
+    $fingerprint = if ($Worker.Sim) { $Worker.Sim.Fingerprint } else { $null }
+    Resolve-SimSetting -Settings $Worker.Settings -SimSettings $Worker.SimSettings -Fingerprint $fingerprint
+}
+
+function Test-WorkerApnPassword {
+    # Whether an APN password is stored for the SIM in use: its own, or the one saved before the
+    # settings were kept for each SIM, which the first SIM identified takes.
+    param([hashtable] $Worker)
+
+    if (-not $Worker.Settings) {
+        return $false
+    }
+    $sim = Get-WorkerSimSetting -Worker $Worker
+    $sim.Source -in 'Sim', 'Legacy', 'Unknown' -and (Test-Path -LiteralPath (Get-SimApnSecretPath -ApnSecretPath $Worker.Paths.ApnSecret -Id $sim.Id) -PathType Leaf)
+}
+
+function Update-WorkerSim {
+    # The SIM in use as a pass identified it (Invoke-ModemConnect's Sim): one not read is unknown,
+    # never "none". Another SIM gets a new token: the window fills its APN settings again. The
+    # first SIM identified takes the APN settings saved before they were kept for each SIM
+    # (Move-ApnSettingToSim); should that fail, it is tried again at the next pass.
+    # A ready SIM whose ICCID can't be read is said in the log, once: its settings are unknown, and
+    # the data context is left as it is.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Changes the worker''s in-memory state, and once the app''s own settings files, as decided.')]
+    param([hashtable] $Worker, [object] $Sim, [object] $Facts)
+
+    $unread = -not $Sim -and $Facts -and $Facts.SimState -eq 'Ready' -and $Facts.PortOpen -eq $true -and $Facts.Responsive -eq $true
+    if ($unread -and -not $Worker.SimUnreadLogged) {
+        Write-WorkerLog -Worker $Worker -Level 'Warning' -Message 'SIM in use: its ICCID can''t be read, so its APN settings are not known; the data context is left as it is until it can'
+    }
+    $Worker.SimUnreadLogged = $unread
+    if (-not $Sim) {
+        return
+    }
+    $before = if ($Worker.Sim) { $Worker.Sim.Fingerprint } else { $null }
+    $Worker.Sim = $Sim
+    if ($Sim.Fingerprint -ne $before) {
+        $Worker.SimToken = if ($Sim.Fingerprint) { [guid]::NewGuid().ToString('N') } else { $null }
+        if ($Sim.Fingerprint) {
+            $what = switch ($Sim.Source) {
+                'Sim' { 'its own APN settings' }
+                'New' { 'no APN settings of its own yet: the subscription''s APN' }
+                default { 'the APN settings saved before each SIM had its own' }
+            }
+            Write-WorkerLog -Worker $Worker -Level 'Info' -Message "SIM in use identified: $what"
+        }
+    }
+    if ($Sim.Fingerprint -and $Sim.Source -eq 'Legacy' -and -not $Worker.ObserveOnly) {
+        try {
+            [void](Move-ApnSettingToSim -Fingerprint $Sim.Fingerprint -SettingsPath $Worker.Paths.Settings -Path $Worker.Paths.SimSettings `
+                    -ApnSecretPath $Worker.Paths.ApnSecret -Confirm:$false)
+            Write-WorkerLog -Worker $Worker -Level 'Info' -Message 'Settings: the APN settings saved are now the SIM in use''s; each SIM keeps its own'
+            $Worker.SimMoveFailure = $null
+        }
+        catch {
+            $failure = $_.Exception.GetType().Name
+            if ($failure -ne $Worker.SimMoveFailure) {
+                Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Settings: the APN settings saved couldn't be given to the SIM in use ($failure); tried again at the next pass"
+            }
+            $Worker.SimMoveFailure = $failure
+        }
+        $read = Import-AppSetting -Path $Worker.Paths.Settings
+        $Worker.Settings = $read.Settings
+        $Worker.SimSettings = Import-SimSetting -Path $Worker.Paths.SimSettings
+        $own = Get-WorkerSimSetting -Worker $Worker
+        $Worker.Sim = [pscustomobject]@{ Fingerprint = $Sim.Fingerprint; Id = $own.Id; Source = $own.Source }
+    }
+    $Worker.ApnPasswordStored = Test-WorkerApnPassword -Worker $Worker
+}
+
+function Clear-WorkerSim {
+    # The SIM in use is about to change - a slot switched, a profile enabled or disabled -, or the
+    # port is gone: none is known until a pass identifies it.
+    param([hashtable] $Worker)
+
+    $Worker.Sim = $null
+    $Worker.SimToken = $null
 }
 
 function Save-WorkerNetworkMode {
@@ -2226,6 +2331,7 @@ function Invoke-WorkerEsimCommand {
         # nothing escalates over. A write left unanswered may have switched too, as a network
         # mode's may. The eUICC is read again once the slot says it is in use.
         Open-WorkerMaintenanceWindow -Worker $Worker -Now (& $Worker.Clock)
+        Clear-WorkerSim -Worker $Worker
         $Worker.SimSlotRead = $false
         $Worker.EsimInfo = $null
         $Worker.EsimProfiles = $null
@@ -2315,10 +2421,21 @@ function Invoke-WorkerEsimCommand {
         # operation, which nothing escalates over. A run that failed may have switched too: an
         # APDU answered too late fails lpac's run, not the eUICC's switch.
         Open-WorkerMaintenanceWindow -Worker $Worker -Now (& $Worker.Clock)
+        Clear-WorkerSim -Worker $Worker
         $Worker.PassForced = $true
     }
     if ($why) {
         return & $outcome $(if ($run.Outcome -eq 'Timeout') { 'Timeout' } else { 'Failed' }) $why
+    }
+    if ($Kind -eq 'DeleteProfile' -and $chosen.Iccid) {
+        # Nothing of a deleted profile is kept: its APN settings neither.
+        try {
+            Remove-SimSetting -Fingerprint (Get-SimSettingFingerprint -Iccid $chosen.Iccid) -Path $Worker.Paths.SimSettings -ApnSecretPath $Worker.Paths.ApnSecret -Confirm:$false
+        }
+        catch {
+            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Settings: the deleted profile's APN settings couldn't be forgotten ($($_.Exception.GetType().Name))"
+        }
+        $Worker.SimSettings = Import-SimSetting -Path $Worker.Paths.SimSettings
     }
     & $outcome 'Done' $null
 }
@@ -2414,19 +2531,67 @@ function Invoke-WorkerCommand {
                     foreach ($name in $script:NetworkModeSettings) {
                         $settings[$name] = $saved.$name
                     }
-                    Export-AppSetting -Settings $settings -Path $Worker.Paths.Settings -Confirm:$false
-                    if ($parameter.ContainsKey('ApnPassword')) {
-                        $password = $parameter['ApnPassword']
-                        if ($password -and $password.Length -gt 0) {
-                            Save-ApnPassword -Password $password -Path $Worker.Paths.ApnSecret -Confirm:$false
-                        }
-                        else {
-                            Remove-ApnPassword -Path $Worker.Paths.ApnSecret -Confirm:$false
+                    # The APN settings are the SIM in use's (ARCHITECTURE -> Settings and logs),
+                    # saved only for the SIM the window showed them for: with none, or another
+                    # one since, nothing is saved.
+                    $own = Get-WorkerSimSetting -Worker $Worker
+                    foreach ($name in $script:SimSettingNames) {
+                        # Left out: kept as they are.
+                        if (-not $settings.ContainsKey($name)) {
+                            $settings[$name] = $own.Settings.$name
                         }
                     }
-                    $Worker.Settings = $null
-                    # The cycle and the quota may have changed: usage is measured again at once.
-                    $Worker.LastUsage = $null
+                    $changed = $parameter.ContainsKey('ApnPassword') -or
+                    @($script:SimSettingNames | Where-Object { [string]$settings[$_] -cne [string]$own.Settings.$_ }).Count -gt 0
+                    # Everything checked before the first write: nothing is half saved.
+                    $checked = ConvertTo-AppSetting -InputObject $settings
+                    if ($checked.Problems.Count -gt 0) {
+                        throw [System.ArgumentException]::new("Settings not saved: $($checked.Problems -join ' ')", 'Settings')
+                    }
+                    $password = $parameter['ApnPassword']
+                    if ($password -and $password.Length -gt 0 -and -not (Test-AtStringValue -Value ([System.Net.NetworkCredential]::new('', $password).Password))) {
+                        throw [System.ArgumentException]::new('The APN password must be printable ASCII without double quotes.', 'ApnPassword')
+                    }
+                    if ($changed -and $own.Source -eq 'Unknown') {
+                        $result = 'NoSim'
+                    }
+                    elseif ($changed -and [string]$parameter['SimToken'] -ne [string]$Worker.SimToken) {
+                        $result = 'SimChanged'
+                    }
+                    else {
+                        try {
+                            $secret = $Worker.Paths.ApnSecret
+                            if ($changed) {
+                                if ($own.Source -eq 'Legacy') {
+                                    [void](Move-ApnSettingToSim -Fingerprint $Worker.Sim.Fingerprint -SettingsPath $Worker.Paths.Settings -Path $Worker.Paths.SimSettings `
+                                            -ApnSecretPath $Worker.Paths.ApnSecret -Confirm:$false)
+                                }
+                                $entry = Save-SimSetting -Fingerprint $Worker.Sim.Fingerprint -Setting $settings -Path $Worker.Paths.SimSettings -Confirm:$false
+                                $secret = Get-SimApnSecretPath -ApnSecretPath $Worker.Paths.ApnSecret -Id $entry.Id
+                            }
+                            # Once each SIM keeps its own, the settings file's are no SIM's.
+                            if (Test-Path -LiteralPath $Worker.Paths.SimSettings -PathType Leaf) {
+                                foreach ($name in $script:SimSettingNames) {
+                                    $settings[$name] = $script:DefaultSettings[$name]
+                                }
+                            }
+                            Export-AppSetting -Settings $settings -Path $Worker.Paths.Settings -Confirm:$false
+                            if ($parameter.ContainsKey('ApnPassword')) {
+                                if ($password -and $password.Length -gt 0) {
+                                    Save-ApnPassword -Password $password -Path $secret -Confirm:$false
+                                }
+                                else {
+                                    Remove-ApnPassword -Path $secret -Confirm:$false
+                                }
+                            }
+                            # The cycle and the quota may have changed: usage is measured again at once.
+                            $Worker.LastUsage = $null
+                        }
+                        finally {
+                            # Read again whatever was written, even part of it.
+                            $Worker.Settings = $null
+                        }
+                    }
                 }
                 'SetNetworkMode' {
                     $outcome = Set-WorkerNetworkMode -Worker $Worker -Parameter $parameter
@@ -2606,12 +2771,13 @@ function Invoke-ModemWorkerCycle {
     if ($null -eq $Worker.Settings) {
         $read = Import-AppSetting -Path $Worker.Paths.Settings
         $Worker.Settings = $read.Settings
+        $Worker.SimSettings = Import-SimSetting -Path $Worker.Paths.SimSettings
         $Worker.SettingsProblems = [string[]]@($read.Problems)
         $Worker.SettingsIssues = [object[]]@($read.Issues)
         foreach ($problem in $read.Problems) {
             Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Settings: $problem"
         }
-        $Worker.ApnPasswordStored = Test-Path -LiteralPath $Worker.Paths.ApnSecret -PathType Leaf
+        $Worker.ApnPasswordStored = Test-WorkerApnPassword -Worker $Worker
         $Worker.PinStored = [bool](Get-SimPin -Path $Worker.Paths.SimPin)
     }
 
@@ -2651,10 +2817,11 @@ function Invoke-ModemWorkerCycle {
         if ($null -eq $Worker.Settings) {
             $read = Import-AppSetting -Path $Worker.Paths.Settings
             $Worker.Settings = $read.Settings
+            $Worker.SimSettings = Import-SimSetting -Path $Worker.Paths.SimSettings
             $Worker.SettingsProblems = [string[]]@($read.Problems)
             $Worker.SettingsIssues = [object[]]@($read.Issues)
         }
-        $Worker.ApnPasswordStored = Test-Path -LiteralPath $Worker.Paths.ApnSecret -PathType Leaf
+        $Worker.ApnPasswordStored = Test-WorkerApnPassword -Worker $Worker
         $Worker.PinStored = [bool](Get-SimPin -Path $Worker.Paths.SimPin)
     }
 
@@ -2705,11 +2872,12 @@ function Invoke-ModemWorkerCycle {
             $options['SimulatedAdapter'] = $Worker.Simulation.Adapter
         }
         $pass = Invoke-ModemConnect -Channel $Worker.Channel -Settings (Get-WorkerSetting -Worker $Worker) -AdapterInstanceId $Worker.AdapterInstanceId `
-            -SimPinPath $Worker.Paths.SimPin -ApnSecretPath $Worker.Paths.ApnSecret -LogFolder $Worker.Paths.Log `
+            -SimPinPath $Worker.Paths.SimPin -ApnSecretPath $Worker.Paths.ApnSecret -SimSettings $Worker.SimSettings -LogFolder $Worker.Paths.Log `
             -DataPath (Get-WorkerDataPath -Worker $Worker) -NetworkModeSupport $Worker.NetworkModeSupport -NetworkModeLastWrite $Worker.NetworkModeWrite `
             -WhatIf:$Worker.ObserveOnly -Confirm:$false @options
         $Worker.LastPass = $started
         $Worker.PassForced = $false
+        Update-WorkerSim -Worker $Worker -Sim $pass.Sim -Facts $pass.Observation
         $wasOnline = $Worker.State -eq 'Online'
         Register-WorkerDecision -Worker $Worker -Decision $pass -Logged
         if (-not $wasOnline -and $Worker.State -eq 'Online' -and @($Worker.EsimNotifications | Where-Object { $_ }).Count -gt 0) {

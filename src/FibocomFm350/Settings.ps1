@@ -49,6 +49,12 @@ $script:SettingBandRanges = @{ LteBands = @(1, 99); NrBands = @(1, 512) }
 $script:PdpTypes = @('IP', 'IPV4V6')
 $script:ApnAuthentications = @('None', 'PAP', 'CHAP')
 
+# The settings that belong to a SIM, kept for each SIM apart (decided 2026-10-04, DEVLOG): an
+# operator gives them together. In sim-settings.json, each SIM told by a fingerprint of its ICCID,
+# encrypted as the PIN file's is; its APN password in a file of its own, named by the entry's
+# random Id.
+$script:SimSettingNames = @('Apn', 'PdpType', 'ApnAuthentication', 'ApnUser')
+
 function Get-AppDataPath {
     # The path of one of the app's files under %APPDATA% (settings and secrets) or %LOCALAPPDATA%
     # (logs, data).
@@ -510,5 +516,343 @@ function Remove-ApnPassword {
 
     if ((Test-Path -LiteralPath $Path) -and $PSCmdlet.ShouldProcess($Path, 'Delete the APN password')) {
         Remove-Item -LiteralPath $Path -Force
+    }
+}
+
+function Get-SimSettingFingerprint {
+    # What tells a SIM among the settings kept for each SIM: Get-SimFingerprint's, of its ICCID
+    # without the filler F - the modem's +ICCID carries it on a 19-digit ICCID, lpac's list of
+    # profiles doesn't.
+    param([string] $Iccid)
+
+    Get-SimFingerprint -Iccid $Iccid.Trim().TrimEnd('F', 'f')
+}
+
+function Get-SimSettingValue {
+    # The APN settings among settings - an object or a dictionary -, as a hashtable of those
+    # given.
+    param([object] $Settings)
+
+    $values = @{}
+    foreach ($name in $script:SimSettingNames) {
+        $value = if ($Settings -is [System.Collections.IDictionary]) { $Settings[$name] } elseif ($null -ne $Settings -and $Settings.PSObject.Properties[$name]) { $Settings.$name } else { $null }
+        if ($null -ne $value) {
+            $values[$name] = $value
+        }
+    }
+    $values
+}
+
+function Get-SimApnSecretPath {
+    <#
+    .SYNOPSIS
+        Where a SIM's APN password is kept.
+    .DESCRIPTION
+        A file of its own beside -ApnSecretPath, named by the SIM's entry's Id - which tells
+        nothing of the SIM. Without an Id, -ApnSecretPath itself: the password saved before the
+        settings were kept for each SIM.
+    .EXAMPLE
+        Get-SimApnSecretPath -ApnSecretPath (Get-AppDataPath -Name 'apn-password.dat') -Id $entry.Id
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [string] $ApnSecretPath,
+
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string] $Id
+    )
+
+    if (-not $Id) {
+        return $ApnSecretPath
+    }
+    Join-Path -Path (Split-Path -Parent $ApnSecretPath) -ChildPath "apn-password-$Id.dat"
+}
+
+function Import-SimSetting {
+    <#
+    .SYNOPSIS
+        Reads the settings kept for each SIM.
+    .DESCRIPTION
+        Returns Exists - whether the file is there: once it is, the settings file's APN settings
+        belong to no SIM (Resolve-SimSetting) - and Sims, an entry per SIM: Fingerprint
+        (Get-SimFingerprint's, decrypted - never in a snapshot or the log), Id (32 hexadecimal
+        digits, which name its APN password's file), Apn, PdpType, ApnAuthentication and ApnUser.
+        An entry that can't be decrypted or whose values are not valid is left out; a file that
+        can't be read holds no SIM.
+    .EXAMPLE
+        $sims = Import-SimSetting
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [string] $Path = (Get-AppDataPath -Name 'sim-settings.json')
+    )
+
+    $sims = [System.Collections.Generic.List[object]]::new()
+    $exists = Test-Path -LiteralPath $Path -PathType Leaf
+    $content = $null
+    if ($exists) {
+        try {
+            $content = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        }
+        catch {
+            $content = $null
+        }
+    }
+    $entries = if ($content -and $content.PSObject.Properties['Sims']) { @($content.Sims) } else { @() }
+    foreach ($entry in $entries) {
+        if (-not $entry -or -not $entry.PSObject.Properties['Sim'] -or -not $entry.PSObject.Properties['Id'] -or [string]$entry.Id -cnotmatch '^[0-9a-f]{32}$') {
+            continue
+        }
+        $sim = ConvertFrom-ProtectedText -Text ([string]$entry.Sim)
+        $checked = ConvertTo-AppSetting -InputObject (Get-SimSettingValue -Settings $entry)
+        if (-not $sim -or $checked.Issues.Count -gt 0) {
+            continue
+        }
+        $item = [ordered]@{ Fingerprint = [System.Net.NetworkCredential]::new('', $sim).Password; Id = [string]$entry.Id }
+        foreach ($name in $script:SimSettingNames) {
+            $item[$name] = $checked.Settings.$name
+        }
+        $sims.Add([pscustomobject]$item)
+    }
+    [pscustomobject]@{ Exists = $exists; Sims = [object[]]$sims.ToArray() }
+}
+
+function Export-SimSetting {
+    # Writes the settings kept for each SIM - Import-SimSetting's Sims -, each fingerprint
+    # encrypted again. The file is replaced as a whole.
+    param([object[]] $Sims, [string] $Path)
+
+    $entries = foreach ($sim in @($Sims | Where-Object { $_ })) {
+        $item = [ordered]@{ Sim = ConvertTo-ProtectedText -Text $sim.Fingerprint; Id = $sim.Id }
+        foreach ($name in $script:SimSettingNames) {
+            $item[$name] = $sim.$name
+        }
+        [pscustomobject]$item
+    }
+    Write-AppFile -Path $Path -Content ([pscustomobject]@{ Sims = [object[]]@($entries) } | ConvertTo-Json -Depth 4)
+}
+
+function Save-SimSetting {
+    <#
+    .SYNOPSIS
+        Keeps the APN settings of one SIM.
+    .DESCRIPTION
+        Sets the SIM's entry among the settings kept for each SIM: Apn, PdpType,
+        ApnAuthentication and ApnUser, taken from -Setting and validated - one that is not valid
+        is refused, and nothing is written. An entry new for this SIM gets a new random Id.
+        Returns the entry, as Import-SimSetting gives it. The SIM is told by its fingerprint
+        (Get-SimFingerprint). The file is replaced as a whole.
+    .EXAMPLE
+        Save-SimSetting -Fingerprint (Get-SimFingerprint -Iccid $iccid) -Setting @{ Apn = 'internet' }
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidatePattern('^[0-9A-F]{64}$')]
+        [string] $Fingerprint,
+
+        [Parameter(Mandatory)]
+        [object] $Setting,
+
+        [string] $Path = (Get-AppDataPath -Name 'sim-settings.json')
+    )
+
+    $checked = ConvertTo-AppSetting -InputObject (Get-SimSettingValue -Settings $Setting)
+    if ($checked.Problems.Count -gt 0) {
+        throw [System.ArgumentException]::new("SIM settings not saved: $($checked.Problems -join ' ')", 'Setting')
+    }
+    $sims = [System.Collections.Generic.List[object]]::new()
+    foreach ($sim in (Import-SimSetting -Path $Path).Sims) {
+        $sims.Add($sim)
+    }
+    $old = @($sims | Where-Object Fingerprint -EQ $Fingerprint) | Select-Object -First 1
+    $entry = [ordered]@{
+        Fingerprint = $Fingerprint.ToUpperInvariant()
+        Id          = if ($old) { $old.Id } else { [System.Convert]::ToHexString([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(16)).ToLowerInvariant() }
+    }
+    foreach ($name in $script:SimSettingNames) {
+        $entry[$name] = $checked.Settings.$name
+    }
+    $entry = [pscustomobject]$entry
+    if ($old) {
+        $sims[$sims.IndexOf($old)] = $entry
+    }
+    else {
+        $sims.Add($entry)
+    }
+    if ($PSCmdlet.ShouldProcess($Path, 'Keep the settings of a SIM')) {
+        Export-SimSetting -Sims $sims.ToArray() -Path $Path
+    }
+    $entry
+}
+
+function Remove-SimSetting {
+    <#
+    .SYNOPSIS
+        Forgets the settings kept for one SIM, and its APN password.
+    .DESCRIPTION
+        For an eSIM profile deleted: nothing of it is kept. -ApnSecretPath is the APN password's
+        path that Get-SimApnSecretPath starts from. Does nothing for a SIM without settings of
+        its own.
+    .EXAMPLE
+        Remove-SimSetting -Fingerprint (Get-SimFingerprint -Iccid $profile.Iccid)
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)]
+        [ValidatePattern('^[0-9A-F]{64}$')]
+        [string] $Fingerprint,
+
+        [string] $Path = (Get-AppDataPath -Name 'sim-settings.json'),
+
+        [string] $ApnSecretPath = (Get-AppDataPath -Name 'apn-password.dat')
+    )
+
+    $sims = (Import-SimSetting -Path $Path).Sims
+    $gone = @($sims | Where-Object Fingerprint -EQ $Fingerprint)
+    if ($gone.Count -eq 0 -or -not $PSCmdlet.ShouldProcess($Path, 'Forget the settings of a SIM')) {
+        return
+    }
+    Export-SimSetting -Sims @($sims | Where-Object Fingerprint -NE $Fingerprint) -Path $Path
+    foreach ($entry in $gone) {
+        Remove-ApnPassword -Path (Get-SimApnSecretPath -ApnSecretPath $ApnSecretPath -Id $entry.Id) -Confirm:$false
+    }
+}
+
+function Move-ApnSettingToSim {
+    <#
+    .SYNOPSIS
+        Gives the APN settings saved before they were kept for each SIM to the SIM in use.
+    .DESCRIPTION
+        The first SIM identified takes the settings file's Apn, PdpType, ApnAuthentication and
+        ApnUser, and the APN password (decided 2026-10-04): its entry is written, with the
+        password file copied as it is to the entry's own first; then the old one is deleted and
+        the settings file's APN settings go back to their defaults. Once the file of the settings
+        kept for each SIM is there, the settings file's are no SIM's: a step that fails after it
+        leaves nothing a SIM would take, and the move does nothing again - it returns the SIM's
+        entry, if it has one. A settings file that can't be read is never taken for one without
+        APN settings: the move throws, to be tried again. Returns the entry (Save-SimSetting's).
+    .EXAMPLE
+        Move-ApnSettingToSim -Fingerprint (Get-SimFingerprint -Iccid $iccid)
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidatePattern('^[0-9A-F]{64}$')]
+        [string] $Fingerprint,
+
+        [string] $SettingsPath = (Get-AppDataPath -Name 'settings.json'),
+
+        [string] $Path = (Get-AppDataPath -Name 'sim-settings.json'),
+
+        [string] $ApnSecretPath = (Get-AppDataPath -Name 'apn-password.dat')
+    )
+
+    $kept = Import-SimSetting -Path $Path
+    if ($kept.Exists) {
+        return @($kept.Sims | Where-Object Fingerprint -EQ $Fingerprint) | Select-Object -First 1
+    }
+    if (-not $PSCmdlet.ShouldProcess($Path, 'Give the APN settings to the SIM in use')) {
+        return
+    }
+    $read = Import-AppSetting -Path $SettingsPath
+    if (@($read.Issues | Where-Object Rule -EQ 'Unreadable').Count -gt 0) {
+        throw [System.IO.IOException]::new("The settings file can't be read: the APN settings are given to no SIM yet.")
+    }
+    $settings = $read.Settings
+    $id = [System.Convert]::ToHexString([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(16)).ToLowerInvariant()
+    $copy = Get-SimApnSecretPath -ApnSecretPath $ApnSecretPath -Id $id
+    # Copied as it is: one that can't be decrypted stays so - never an empty password.
+    if (Test-Path -LiteralPath $ApnSecretPath -PathType Leaf) {
+        [System.IO.File]::Copy($ApnSecretPath, $copy, $true)
+    }
+    try {
+        $entry = [pscustomobject]@{ Fingerprint = $Fingerprint.ToUpperInvariant(); Id = $id }
+        foreach ($name in $script:SimSettingNames) {
+            $entry | Add-Member -NotePropertyName $name -NotePropertyValue $settings.$name
+        }
+        $sims = @((Import-SimSetting -Path $Path).Sims | Where-Object { $_.Fingerprint -ne $entry.Fingerprint }) + $entry
+        Export-SimSetting -Sims $sims -Path $Path
+    }
+    catch {
+        Remove-ApnPassword -Path $copy -Confirm:$false
+        throw
+    }
+    Remove-ApnPassword -Path $ApnSecretPath -Confirm:$false
+    $values = [ordered]@{}
+    foreach ($property in $settings.PSObject.Properties) {
+        $values[$property.Name] = $property.Value
+    }
+    $moved = @($script:SimSettingNames | Where-Object { $values[$_] -cne $script:DefaultSettings[$_] }).Count -gt 0
+    foreach ($name in $script:SimSettingNames) {
+        $values[$name] = $script:DefaultSettings[$name]
+    }
+    # Written only when it held some: the settings file is not created for nothing.
+    if ($moved) {
+        Export-AppSetting -Settings $values -Path $SettingsPath -Confirm:$false
+    }
+    $entry
+}
+
+function Resolve-SimSetting {
+    <#
+    .SYNOPSIS
+        The settings a SIM connects with: the app's, with that SIM's own APN settings.
+    .DESCRIPTION
+        A pure function. -SimSettings is Import-SimSetting's; -Fingerprint the SIM's
+        (Get-SimFingerprint), $null when none is identified. Returns Settings (-Settings with
+        Apn, PdpType, ApnAuthentication and ApnUser replaced), Id (the SIM's entry's, which names
+        its APN password's file - Get-SimApnSecretPath -; $null without one) and Source:
+        - 'Sim': the SIM's own.
+        - 'Legacy': no SIM has settings of its own yet: the settings file's, as saved before they
+          were kept for each SIM - the first SIM identified takes them (Move-ApnSettingToSim).
+        - 'New': a SIM without settings of its own: the defaults - the subscription's own APN -
+          until the user gives some (decided 2026-10-04).
+        - 'Unknown': no SIM identified: the settings file's, which nothing connects with.
+    .EXAMPLE
+        (Resolve-SimSetting -Settings $settings -SimSettings (Import-SimSetting) -Fingerprint $fingerprint).Settings
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [object] $Settings,
+
+        [AllowNull()]
+        [object] $SimSettings,
+
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string] $Fingerprint
+    )
+
+    $own = if ($Fingerprint -and $SimSettings) { @($SimSettings.Sims | Where-Object { $_ -and $_.Fingerprint -eq $Fingerprint }) | Select-Object -First 1 } else { $null }
+    $source = if (-not $Fingerprint) { 'Unknown' } elseif ($own) { 'Sim' } elseif (-not $SimSettings -or -not $SimSettings.Exists) { 'Legacy' } else { 'New' }
+    $values = [ordered]@{}
+    if ($Settings -is [System.Collections.IDictionary]) {
+        foreach ($key in $Settings.Keys) {
+            $values[[string]$key] = $Settings[$key]
+        }
+    }
+    else {
+        foreach ($property in $Settings.PSObject.Properties) {
+            $values[$property.Name] = $property.Value
+        }
+    }
+    if ($source -in 'Sim', 'New') {
+        foreach ($name in $script:SimSettingNames) {
+            $values[$name] = if ($own) { $own.$name } else { $script:DefaultSettings[$name] }
+        }
+    }
+    [pscustomobject]@{
+        Settings = [pscustomobject]$values
+        Id       = if ($own) { $own.Id } else { $null }
+        Source   = $source
     }
 }
