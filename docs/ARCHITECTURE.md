@@ -944,7 +944,10 @@ What a prepaid or capped SIM needs day to day (facts: `AT-COMMANDS.md` §9).
   functions** with a matrix of tests (`Sms.ps1`): GSM 7-bit with its extension table, UCS-2, long
   messages reassembled from their parts, long messages split for sending.
 - **What the codec does with the edges.** A PDU that can't be read is still listed, as malformed,
-  so it can be deleted. 8-bit data and compressed text have no text to show, and say so. A message
+  so it can be deleted. 8-bit data and compressed text have no text to show, and say so. A silent
+  message (*short message type 0*: never to be shown) is listed by its sender and time alone —
+  marked, never new, never announced —, since a modem that stores it gives it a place only deleting
+  frees (decided 2026-10-04). A message
   that names a national language table is read with the default tables and flagged: the tables
   of 23.038 annex A are not carried. UCS2 is read and written as UTF-16, so the emoji that phones
   send in surrogate pairs come out whole, and a pair is never split between two parts. Sending:
@@ -999,7 +1002,8 @@ What a prepaid or capped SIM needs day to day (facts: `AT-COMMANDS.md` §9).
   the user — no text, no number. A fingerprint leaves when its message is opened or deleted, or is
   no longer in the storage: the file holds at most what the storage can, and is rewritten whole.
 - **The tray says who wrote** (decided 2026-10-04): a notification with the sender alone; the text
-  only in the window.
+  only in the window. Windows keeps the sender in its notification history, for the same Windows
+  account that can open the window anyway.
 
 ### USSD
 **Not built.** USSD was planned as best effort — dropped, not emulated, if the FM350 couldn't do

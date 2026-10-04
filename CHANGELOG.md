@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- A silent message — one the network asks never to show — is listed in the *Messages* tab, marked
+  and without its text, so it can be deleted: it takes a place on the SIM. It is never announced.
+
 ## [1.1.0] - 2026-10-04
 
 ### Added

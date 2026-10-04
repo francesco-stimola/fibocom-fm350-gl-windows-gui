@@ -4,6 +4,20 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-04 — Decided: silent messages listed, the sender kept in the notification
+
+The two open decisions from M8's review, taken by the maintainer:
+- **A silent message is listed, marked** — sender and time, never its text —, so it can be deleted:
+  a *short message type 0* is never to be shown (23.040 §9.2.3.9), yet a modem that stores it
+  takes a place on the SIM with it that only deleting frees, and the storage's count showed it
+  while the list did not. Never new, never announced. Rejected: deleting it as it is listed (a
+  write on the SIM nobody asked for, and the user never learns it came); leaving it hidden (enough
+  of them fill the storage, with nothing in the app to free it).
+- **The tray's notification keeps the newest sender**, as decided for M8. Windows keeps the
+  notification in its history, but per Windows account, and that account can open the app's window
+  and read the messages anyway. Rejected: only how many came (a notification that says less, for no
+  one it hides from); a setting (a choice for a case without a reader).
+
 ## 2026-10-04 — Decided: M10, the AT port on Windows' own WinUSB, and Windows on Arm
 
 Taken by the maintainer, once the AT port was proven on WinUSB (next entry); planned as M10, `v2.0.0`:

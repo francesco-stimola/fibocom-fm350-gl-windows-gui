@@ -213,8 +213,7 @@ Decided by the maintainer (2026-10-04, `DEVLOG.md`):
 Decisions that change what happens next and are the maintainer's to take. Remove a line when it is
 decided, and record the decision in `DEVLOG.md`.
 
-- **Silent messages (M8).** A *short message type 0* (23.040: never shown) is hidden from the inbox but stays on the SIM, where nothing lets the user delete it: enough of them would fill the storage. Options: 1. leave them (no cost; the storage's count still shows them); 2. delete them as they are listed (a write the user never asked for); 3. show them, marked, so the user can delete them. Recommended: 3.
-- **The sender in the tray's notification (M8).** Windows keeps notifications in its history, so a sender's number stays there after the app has shown it. Options: 1. keep the sender, as decided (no cost); 2. say only how many new messages came (the sender in the window alone). Recommended: 1, unless the history matters on shared computers.
+*None at the moment.*
 
 ---
 
