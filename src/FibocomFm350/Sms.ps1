@@ -885,12 +885,14 @@ function Update-SmsUnread {
         Decides which stored message parts are new, after a reading of the whole storage.
     .DESCRIPTION
         A pure function. -Unread: the fingerprints new before; -Entry: what AT+CMGL=4 listed
-        (Pdu, Status); -Opened: the fingerprints of the parts the user opened since. A part the
-        modem reports unread is new - the listing has just marked it read on the modem -; a part
-        new before stays new while it is stored; a part opened is new no more. Returns the
-        fingerprints, sorted: never more than the storage holds.
+        (Pdu, Status); -Opened: the fingerprints of the parts the user opened since; -Elsewhere:
+        those of the parts that came in on another SIM than the one in use (Update-SmsOwner's). A
+        part the modem reports unread is new - the listing has just marked it read on the modem -;
+        a part new before stays new while it is stored, or while it is another SIM's - its storage
+        is not the one listed (AT-COMMANDS section 9) -; a part opened is new no more. Returns the
+        fingerprints, sorted: never more than the storages hold and the SIMs remembered.
     .EXAMPLE
-        $unread = Update-SmsUnread -Unread $unread -Entry $entries
+        $unread = Update-SmsUnread -Unread $unread -Entry $entries -Elsewhere $elsewhere
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
         Justification = 'Pure: returns the new list and changes nothing.')]
@@ -904,10 +906,13 @@ function Update-SmsUnread {
         [object[]] $Entry = @(),
 
         [AllowEmptyCollection()]
-        [string[]] $Opened = @()
+        [string[]] $Opened = @(),
+
+        [AllowEmptyCollection()]
+        [string[]] $Elsewhere = @()
     )
 
-    $stored = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $stored = [System.Collections.Generic.HashSet[string]]::new([string[]]@($Elsewhere | Where-Object { $_ }), [System.StringComparer]::OrdinalIgnoreCase)
     $new = [System.Collections.Generic.SortedSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($item in $Entry) {
         $fingerprint = Get-SmsFingerprint -Pdu $item.Pdu

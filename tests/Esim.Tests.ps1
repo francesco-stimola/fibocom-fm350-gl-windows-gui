@@ -1142,6 +1142,41 @@ Describe 'The worker and the eSIM' {
             Get-Content -LiteralPath (Join-Path $script:folder 'sms-sim.dat') -Raw | Should -Not -Match 'Travel' -Because 'the file is encrypted'
         }
 
+        It 'keeps a message new across a switch, though the next profile''s storage doesn''t list it' {
+            $script:worker = Get-EsimWorker -Scenario Esim
+            $script:device.Modem.Messaging.Deliver($script:hello, $script:device.Modem)
+            $hello = @((Invoke-EsimMessagePass).Items | Where-Object Text -EQ 'hello')
+            $hello.Count | Should -Be 1
+            $hello[0].New | Should -BeTrue
+            $notice = $script:link['Snapshot'].MessageNotice.Id
+            # The part a profile keeps on its own goes with it: the test profile doesn't list it.
+            $stored = @($script:device.Modem.Messaging.Stored | Where-Object Pdu -EQ $script:hello)[0]
+            (Invoke-EsimCommand -Worker $script:worker -Kind DisableProfile -Parameter @{ Aid = $script:travel }).Result | Should -Be 'Done'
+            [void]$script:device.Modem.Messaging.Stored.Remove($stored)
+            (Invoke-EsimCommand -Worker $script:worker -Kind EnableProfile -Parameter @{ Aid = $script:lab }).Result | Should -Be 'Done'
+            @((Invoke-EsimMessagePass).Items | Where-Object Text -EQ 'hello') | Should -BeNullOrEmpty
+            (Invoke-EsimCommand -Worker $script:worker -Kind DisableProfile -Parameter @{ Aid = $script:lab }).Result | Should -Be 'Done'
+            $script:device.Modem.Messaging.Stored.Add($stored)
+            (Invoke-EsimCommand -Worker $script:worker -Kind EnableProfile -Parameter @{ Aid = $script:travel }).Result | Should -Be 'Done'
+
+            $back = Invoke-EsimMessagePass
+            @($back.Items | Where-Object Text -EQ 'hello')[0].New | Should -BeTrue -Because 'it was never opened'
+            $script:link['Snapshot'].MessageNotice.Id | Should -Be $notice -Because 'a message announced is not announced again'
+        }
+
+        It 'reads the storage before a slot switch: a message that just came in stays the profile''s' {
+            $script:worker = Get-EsimWorker -Scenario Esim
+            # It comes in, its notice not read yet, and the user switches to the physical SIM.
+            $script:device.Modem.Messaging.Deliver($script:hello, $script:device.Modem)
+            (Invoke-EsimCommand -Worker $script:worker -Kind SelectSimSlot -Parameter @{ Slot = 0 }).Result | Should -Be 'Done'
+
+            $physical = Invoke-EsimMessagePass
+            $hello = @($physical.Items | Where-Object Text -EQ 'hello')
+            $hello.Count | Should -Be 1 -Because 'the simulated modem keeps one storage for both slots'
+            $hello[0].Owner | Should -Be 'Other'
+            $hello[0].OwnerName | Should -Be 'Travel'
+        }
+
         It 'keeps the name a profile had last for its messages, once it is deleted' {
             $script:worker = Get-EsimWorker -Scenario Esim
             (Invoke-EsimCommand -Worker $script:worker -Kind DisableProfile -Parameter @{ Aid = $script:travel }).Result | Should -Be 'Done'

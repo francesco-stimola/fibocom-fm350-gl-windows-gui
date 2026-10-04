@@ -1748,6 +1748,40 @@ Describe 'Messages on the simulated modem' {
         $script:link['Snapshot'].Messages.Items.Count | Should -Be 3 -Because 'only another eSIM profile still on the eUICC hides one'
     }
 
+    It 'reads the messages again when a pass finds another SIM, though its storage holds as many' {
+        $device = New-SimulatedDevice -Scenario Online
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+        $before = @($device.Modem.Received | Where-Object { $_ -eq 'AT+CMGL=4' }).Count
+        # Another SIM in the slot, swapped while the port stayed open.
+        $device.Modem.SetAnswer('AT+ICCID', @('+ICCID: 8900100000000000001', 'OK'))
+        $script:now += 30000
+        $worker.PassForced = $true
+        Invoke-ModemWorkerCycle -Worker $worker
+
+        @($device.Modem.Received | Where-Object { $_ -eq 'AT+CMGL=4' }).Count | Should -Be ($before + 1) -Because 'the list shown was the other SIM''s'
+        $script:link['Snapshot'].Messages.Items.Owner | Should -Be @('Other', 'Other', 'Unknown')
+    }
+
+    It 'keeps another SIM''s messages new while the SIM in use can''t be identified, and tells none as another''s' {
+        New-Item -ItemType Directory -Path $script:folder -Force | Out-Null
+        $operator = Get-SmsFingerprint -Pdu $script:simulation.Messages.Stored[0].Pdu
+        $away = Get-SmsFingerprint -Pdu $script:arrival
+        Export-SmsOwner -Owner @(
+            [pscustomobject]@{ Message = $operator; Sim = 'C' * 64; Kind = 'Esim'; Name = 'Travel' }
+            [pscustomobject]@{ Message = $away; Sim = 'C' * 64; Kind = 'Esim'; Name = 'Travel' }
+        ) -Path (Join-Path $script:folder 'sms-sim.dat') -Confirm:$false
+        Export-SmsUnread -Fingerprint @($away) -Path (Join-Path $script:folder 'sms-new.dat') -Confirm:$false
+        $device = New-SimulatedDevice -Scenario Online
+        $device.Modem.SetAnswer('AT+ICCID', @('+CME ERROR: 100'))
+        $worker = Get-TestWorker -Device $device
+        Invoke-ModemWorkerCycle -Worker $worker
+
+        $worker.SmsUnread | Should -Contain $away -Because 'it may be in another SIM''s storage, not this one'
+        (Get-TestMessage 'Operator').Owner | Should -Be 'Unknown' -Because 'the SIM in use may be the one it came in on'
+        $script:link['Snapshot'].Messages.Hidden | Should -Be 0
+    }
+
     It 'reads the messages of a SIM whose ICCID can''t be read, every one shown, none told as its own' {
         $device = New-SimulatedDevice -Scenario Online
         $device.Modem.SetAnswer('AT+ICCID', @('+CME ERROR: 100'))

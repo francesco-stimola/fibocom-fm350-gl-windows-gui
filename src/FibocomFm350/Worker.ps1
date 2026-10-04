@@ -1044,7 +1044,11 @@ function Read-WorkerInbox {
     Update-WorkerSmsOwner -Worker $Worker -Entry $entries
     $storage = ConvertFrom-AtMessageStorage -Lines (Invoke-AtCommand -Channel $Worker.Channel -Command 'AT+CPMS?').Lines
     $before = [string[]]@($Worker.SmsUnread)
-    $unread = [string[]]@(Update-SmsUnread -Unread $before -Entry @($entries | Where-Object { -not $_.Sms.Silent }))
+    # What came in on another SIM is in a storage not listed now: still new. With the SIM in use not
+    # identified, every part whose SIM is known may be another's.
+    $current = if ($Worker.Sim) { [string]$Worker.Sim.Fingerprint } else { '' }
+    $elsewhere = [string[]]@($Worker.SmsOwners | Where-Object { $_ -and (-not $current -or $_.Sim -ne $current) } | ForEach-Object Message)
+    $unread = [string[]]@(Update-SmsUnread -Unread $before -Entry @($entries | Where-Object { -not $_.Sms.Silent }) -Elsewhere $elsewhere)
     $messages = @(Join-SmsPart -Entry $entries)
     # New since the last reading: a part new now, and none of it new before - a long message's
     # second part, coming after the first, is not announced again.
@@ -1768,7 +1772,9 @@ function Test-WorkerApnPassword {
 
 function Update-WorkerSim {
     # The SIM in use as a pass identified it (Invoke-ModemConnect's Sim): one not read is unknown,
-    # never "none". Another SIM gets a new token: the window fills its APN settings again. The
+    # never "none". Another SIM gets a new token: the window fills its APN settings again; its
+    # messages are read again, whatever changed the SIM - a SIM swapped, a profile switched by
+    # another program -: the list shown was the other SIM's. The
     # first SIM identified takes the APN settings saved before they were kept for each SIM
     # (Move-ApnSettingToSim); should that fail, it is tried again at the next pass.
     # A ready SIM whose ICCID can't be read is said in the log, once: its settings are unknown, and
@@ -1789,6 +1795,7 @@ function Update-WorkerSim {
     $Worker.Sim = $Sim
     if ($Sim.Fingerprint -ne $before) {
         $Worker.SimToken = if ($Sim.Fingerprint) { [guid]::NewGuid().ToString('N') } else { $null }
+        Clear-WorkerMessageList -Worker $Worker
         if ($Sim.Fingerprint) {
             $what = switch ($Sim.Source) {
                 'Sim' { 'its own APN settings' }
@@ -1829,6 +1836,13 @@ function Clear-WorkerSim {
 
     $Worker.Sim = $null
     $Worker.SimToken = $null
+    Clear-WorkerMessageList -Worker $Worker
+}
+
+function Clear-WorkerMessageList {
+    # The messages shown were another SIM's: none until the storage is read again, whole.
+    param([hashtable] $Worker)
+
     $Worker.Messages = $null
     $Worker.MessageStorage = $null
     $Worker.MessagesDue = $true
@@ -1842,7 +1856,7 @@ function Update-WorkerInboxBeforeSwitch {
         Justification = 'Reads the storage, as a cycle does.')]
     param([hashtable] $Worker)
 
-    if ($Worker.Sim -and $Worker.MessagesReady -and -not $Worker.ObserveOnly -and $Worker.Channel -and $Worker.Channel.State -eq 'Open') {
+    if ($Worker.Sim -and $Worker.Sim.Fingerprint -and $Worker.MessagesReady -and -not $Worker.ObserveOnly -and $Worker.Channel -and $Worker.Channel.State -eq 'Open') {
         [void](Update-WorkerInbox -Worker $Worker)
     }
 }
@@ -3149,7 +3163,7 @@ function Invoke-ModemWorkerCycle {
     # its own. A step the modem refused waits for the next pass. None in observe-only mode:
     # listing marks messages read on the modem.
     if ($Worker.Channel -and $Worker.Channel.State -eq 'Open' -and -not $Worker.ObserveOnly -and (Test-WorkerSimReady -Worker $Worker) -and
-        ($Worker.Sim -or $Worker.SimUnreadLogged) -and ($passRan -or (-not $Worker.MessagesFailure -and ($Worker.MessagesDue -or -not $Worker.MessagesReady)))) {
+        (($Worker.Sim -and $Worker.Sim.Fingerprint) -or $Worker.SimUnreadLogged) -and ($passRan -or (-not $Worker.MessagesFailure -and ($Worker.MessagesDue -or -not $Worker.MessagesReady)))) {
         if (Update-WorkerInbox -Worker $Worker) {
             $published = $true
         }

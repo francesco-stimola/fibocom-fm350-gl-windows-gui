@@ -784,6 +784,20 @@ Describe 'What is new' {
         @($result) | Should -Be @(@($After | ForEach-Object { $prints[$_] }) | Sort-Object)
     }
 
+    It 'keeps <Name>' -ForEach @(
+        @{ Name = 'what was new on another SIM, though not listed: its storage is not this one'; Before = @('f3'); Stored = @(, @('one', 'Read')); Opened = @(); Elsewhere = @('f3'); After = @('f3') }
+        @{ Name = 'nothing of another SIM''s that was not new'; Before = @(); Stored = @(); Opened = @(); Elsewhere = @('f3'); After = @() }
+        @{ Name = 'nothing of another SIM''s the user opened'; Before = @('f3'); Stored = @(); Opened = @('f3'); Elsewhere = @('f3'); After = @() }
+        @{ Name = 'what was new on another SIM, whatever the case of its fingerprint'; Before = @('f3'); Stored = @(); Opened = @(); Elsewhere = @('f3 lower'); After = @('f3') }
+    ) {
+        $names = @{ one = $script:one; two = $script:two; three = $script:three }
+        $prints = @{ f1 = $script:f1; f2 = $script:f2; f3 = $script:f3; 'f3 lower' = $script:f3.ToLowerInvariant() }
+        $entries = foreach ($pair in $Stored) { [pscustomobject]@{ Pdu = $names[$pair[0]]; Status = $pair[1] } }
+        $result = Update-SmsUnread -Unread @($Before | ForEach-Object { $prints[$_] }) -Entry @($entries) -Opened @($Opened | ForEach-Object { $prints[$_] }) -Elsewhere @($Elsewhere | ForEach-Object { $prints[$_] })
+
+        @($result) | Should -Be @(@($After | ForEach-Object { $prints[$_] }) | Sort-Object)
+    }
+
     It 'joins a message''s fingerprints, part by part' {
         $entries = @(
             [pscustomobject]@{ Index = 1; Status = 'Unread'; Pdu = $script:one; Sms = ConvertFrom-SmsPdu -Pdu $script:one }
