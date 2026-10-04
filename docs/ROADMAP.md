@@ -214,11 +214,23 @@ Decided by the maintainer (2026-10-04, `DEVLOG.md`):
 Decisions that change what happens next and are the maintainer's to take. Remove a line when it is
 decided, and record the decision in `DEVLOG.md`.
 
-*None at the moment.*
+- **The activation code, its confirmation code and a profile's ICCID go on lpac's command line**
+  (M9's review): lpac `2.2.1` takes them nowhere else (`AT-COMMANDS.md` §8). They never reach the
+  app's log, but for the seconds lpac runs they are visible to what records process command
+  lines — an administrator's tools, Windows' process-creation auditing when a policy turns it on
+  with command lines, Sysmon, an EDR agent. Options: accept it and say so (ARCHITECTURE, README);
+  ask lpac for another input and take it in a later pin; refuse the nickname, the one operation
+  that puts an identifier there.
 
 ---
 
 ## Ideas (not scheduled)
 
-*None at the moment.* Considered and declined: distribution through the PowerShell Gallery
+- **The activation code, its confirmation code and a profile's ICCID go on lpac's command line**
+  (M9's review): lpac `2.2.1` takes them nowhere else (`AT-COMMANDS.md` §8). They never reach the
+  app's log, but for the seconds lpac runs they are visible to what records process command
+  lines — an administrator's tools, Windows' process-creation auditing when a policy turns it on
+  with command lines, Sysmon, an EDR agent. Options: accept it and say so (ARCHITECTURE, README);
+  ask lpac for another input and take it in a later pin; refuse the nickname, the one operation
+  that puts an identifier there. Considered and declined: distribution through the PowerShell Gallery
 (DEVLOG, 2026-09-29).

@@ -4,6 +4,26 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-04 — M9: a switch whose answer is lost, an exit during lpac's run
+
+From M9's review:
+- **A slot switch left unanswered is taken for one that may have landed**, as a network mode's
+  write is: a maintenance window, the slot read again. Before, a lost `OK` left the old slot shown
+  and every eSIM read refused for the rest of the port's life, and the outage open to escalation.
+- **Enabling or disabling a profile opens the maintenance window whatever lpac's run gave**: an
+  APDU answered past `AT+CGLA`'s 10 s fails lpac's run while the eUICC switched and reset the SIM.
+  The cost: a window over a refusal that changed nothing.
+- **A slot read the modem left unanswered is tried again at the next pass**, and *Read again*
+  reads the slot too: one timeout no longer hides the slot until the port reopens.
+- **lpac's run ends when the worker does**: the app waits 5 s for its worker at exit; a run that
+  went on — a download takes up to 5 min — was cut with the process, its logical channel left
+  open until the SIM's next reset.
+- **A nickname refuses control characters only** (`\p{Cc}`), as the window does: an emoji is a
+  pair of surrogates, and its joiners format characters, which SGP.22's `UTF8String` takes.
+- The EID is copied with two tries 50 ms apart: WPF's clipboard retries for seconds, on the UI
+  thread.
+- **Still open**: the activation code, its confirmation code and an ICCID go on lpac's command
+  line, where process auditing can record them (ROADMAP → *Open decisions*).
 ## 2026-10-04 — M9: the eSIM tab, a QR code read from an image, the bundled programs tested
 
 The window's *eSIM* tab as decided (ARCHITECTURE → *eSIM*), and what its building settled:

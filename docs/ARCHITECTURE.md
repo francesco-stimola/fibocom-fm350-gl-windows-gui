@@ -948,8 +948,11 @@ runs as an external process, one invocation per operation (facts: `AT-COMMANDS.m
   - Every request gets one answer line: lpac reads one per request. A request for the network
     that fails its check, or on the way, is answered with no status — lpac reads it as the
     server's error —, and the run says why, with the host.
-  - A run ends with lpac's output, at its time limit (lpac stopped), or on a lost port. The loop
-    owns the process from its start and disposes it whatever happens.
+  - A run ends with lpac's output, at its time limit (lpac stopped), on a lost port, or when the
+    worker is ending — asked at every beat; a request for the network under way is given up —:
+    the app waits 5 s for its worker, and a channel left open would stay so until the SIM resets.
+    No run starts once the worker is ending. The loop owns the process from its start and
+    disposes it, its redirected streams with it, whatever happens.
 - **lpac runs with the app's settings, nothing else of its own**: `LPAC_APDU=stdio` and
   `LPAC_HTTP=stdio` are named, and lpac's and its library's other variables are taken out of the
   environment it inherits — the user's environment reaches the elevated
@@ -965,8 +968,9 @@ runs as an external process, one invocation per operation (facts: `AT-COMMANDS.m
   from standard input, which the APDUs use) nor `-i` (the IMEI); `notification list`;
   `notification process -a -r`. `chip purge` has no operation.
 - **The SIM slot in use** (`AT+GTDUALSIM?`) and the kind of SIM in it (`AT+SIMTYPE?`) are read
-  once per port and after a switch. lpac reaches the eUICC only while its slot is the one in
-  use.
+  once per port, after a switch, and when the user asks to read the eSIM again; a read the modem
+  leaves unanswered is tried again at the next pass. lpac reaches the eUICC only while its slot
+  is the one in use.
 - **The eUICC is read** — `chip info`, `profile list`, `notification list` — when it is the SIM in
   use, its SIM ready or with no profile enabled (never while it resets), and a read is due: on the
   first port, after an eSIM command, at the user's request, and when the connection comes back
@@ -982,7 +986,10 @@ runs as an external process, one invocation per operation (facts: `AT-COMMANDS.m
   activation and confirmation codes travel as `SecureString`s, are checked first
   (`ConvertFrom-EsimActivationCode`), and are never logged nor shown back.
 - **Switching** the SIM slot (`AT+GTDUALSIM`) or the enabled profile disrupts the link, so it runs
-  inside a **maintenance window** (see *Maintenance windows*). The slot setting is **persistent**
+  inside a **maintenance window** (see *Maintenance windows*) — also when the switch's answer is
+  lost or lpac's run fails: a slot write left unanswered, like a network mode's, may have landed,
+  and an APDU answered too late fails lpac's run, not the eUICC's switch; the slot is then read
+  again. The slot setting is **persistent**
   modem state (`AT-COMMANDS.md` §4): the app writes it only after a confirmation saying that the
   choice stays in the modem across restarts, and always shows the active slot.
 - **An eUICC with no profile enabled** (`+CPIN: EMPTY_EUICC`) is a SIM state of its own,

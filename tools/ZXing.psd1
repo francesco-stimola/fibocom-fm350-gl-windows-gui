@@ -18,8 +18,8 @@
     # built for .NET 9, which PowerShell 7.6 loads.
     Files   = @{ 'lib/net9.0/zxing.dll' = 'zxing.dll' }
 
-    # Its license, Apache-2.0, which the package doesn't carry: the project's own copy at the
-    # release's tag.
+    # Its license, Apache-2.0, which the package's .nuspec names but doesn't carry: the project's
+    # copy at the release's tag.
     License = @{
         Name   = 'COPYING'
         Url    = 'https://raw.githubusercontent.com/micjahn/ZXing.Net/v0.16.11.0/COPYING'
