@@ -26,7 +26,8 @@ When the link drops, nothing brings it back. This app does both, from the system
 
 ## Scope and non-goals
 
-- **Windows 10/11 x64, PowerShell 7.6+.** No other platform: on Linux the modem is served by
+- **Windows 10/11 on x64 or Arm64, PowerShell 7.6+** — Arm64 compatible in software, not verified on
+  hardware (M10). No other platform: on Linux the modem is served by
   ModemManager/NetworkManager, and almost everything here (drivers, PnP, adapter configuration,
   autostart) is Windows-specific. Windows PowerShell 5.1, part of Windows, only starts it
   (*Startup, elevation, single instance*). Encrypted DNS needs Windows 11 (*Network
@@ -182,10 +183,10 @@ the process, and the port, alive.
   after the zip. The installer copies those entries and nothing else, so an *extract here* into a
   busy folder never takes the folder along.
 - **`install.cmd`** runs the launcher in Windows PowerShell. It first refuses a Windows the app
-  can't run on — anything but 64-bit Windows on an x64 processor, read from `Win32_Processor`
-  (`Test-LauncherPlatform`): PowerShell 7.6 has no 32-bit build, and Windows on Arm loads only
-  Arm64 kernel drivers, which the modem's driver package lacks (`AT-COMMANDS.md` §11.2; decided
-  2026-10-03). Then it finds PowerShell 7 and starts the installer (`Installer\Invoke-Fm350Setup.ps1`) with the one UAC prompt, in a window
+  can't run on — anything but 64-bit Windows on an x64 or an Arm64 processor, read from
+  `Win32_Processor` (`Test-LauncherPlatform`): PowerShell 7.6 has no 32-bit build. Windows on
+  Arm was refused up to 1.x, for the modem's driver package had no Arm64 driver; from 2.0 the
+  app's driver is Windows' own WinUSB (M10; `AT-COMMANDS.md` §11.2). Then it finds PowerShell 7 and starts the installer (`Installer\Invoke-Fm350Setup.ps1`) with the one UAC prompt, in a window
   that waits for Enter at the end. The installer runs as the account that ran the `.cmd`: when the
   prompt is answered with another account's credentials, that other account is not the one the
   app must run as, and nothing is done.
@@ -212,9 +213,13 @@ the process, and the port, alive.
 - **Uninstall** (`uninstall.cmd`, in the zip and in the install folder, or *Uninstall* in
   Windows' installed apps, which runs it): the running app exits as above, then the tasks and
   their folder, the shortcut and the install folder are removed, and the app's entry in the list
-  last — until the folder is gone, an uninstallation that failed can run again from there. Nothing
-  on the modem or its adapter is undone: the connection stays as it is, as *Exit* leaves it. The
-  uninstaller asks whether to delete the settings, the stored SIM PIN and APN password, and the
+  last — until the folder is gone, an uninstallation that failed can run again from there. First,
+  while the app's code is still there, the modem's functions on WinUSB go back to the driver
+  Windows ranks best (`Restore-ModemUsbFunction`, M10; *USB functions and WinUSB*): MediaTek's
+  COM ports come back where its driver is in the driver store; a function another program holds,
+  or a modem not plugged in, stays on WinUSB, and the uninstaller says so — a failure there stops
+  nothing. Nothing else on the modem or its adapter is undone: the connection stays as it is, as
+  *Exit* leaves it. The uninstaller asks whether to delete the settings, the stored SIM PIN and APN password, and the
   logs too.
 
 ### Updates (M7)
@@ -995,8 +1000,9 @@ runs as an external process, one invocation per operation (facts: `AT-COMMANDS.m
   app's children, and a variable could name another backend (one opens a COM port itself),
   another ISD-R, or debug output carrying the APDUs. Its arguments are passed one by one, never
   joined into a command line; no window. **Its path is named in one place** (`Get-LpacPath`):
-  the `lpac` folder beside the app's modules, under Program Files (invariant 10). No setting
-  names it.
+  the `lpac` folder beside the app's modules, under Program Files (invariant 10), the build of
+  the Windows it runs on — `x64` or `arm64` (M10) —, native whatever PowerShell runs the app. No
+  setting names it.
 - **lpac's command lines** (`Get-LpacArgument`, pure): `chip info`; `profile list`; `profile
   enable|disable <AID> 1` — the refresh flag always given: lpac's code defaults to none, and the
   modem resets the SIM only on the refresh —; `profile nickname <ICCID>`; `profile delete <AID>`;
@@ -1055,9 +1061,10 @@ runs as an external process, one invocation per operation (facts: `AT-COMMANDS.m
   redistributed. **Version `2.2.1`** (decided 2026-10-04): `2.3.0`'s `stdio` backend doesn't work
   (`AT-COMMANDS.md` §8). The release workflow downloads the pinned version from lpac's official
   GitHub release (`tools/Lpac.psd1`), checks the SHA-256 of each file — the one computed at the
-  first download, GitHub listing none for that release —, and puts the files the pin lists in the
-  zip's `lpac` folder — `lpac.exe`, its README and licenses; not `libcurl.dll`, which the app
-  doesn't use — with `SOURCE.txt`, which says where the source is; lpac's source archive for the
+  first download, GitHub listing none for that release —, and puts the files the pin lists of each
+  of its Windows builds, x64 and Arm64 (M10), in the zip's `lpac\x64` and `lpac\arm64` folders —
+  `lpac.exe`, its README and licenses; not `libcurl.dll`, which the app doesn't use — with
+  `SOURCE.txt`, which says where the source is; lpac's source archive for the
   same tag is attached to the GitHub Release as the corresponding source. The binaries are never
   committed to git; a `lpac` folder in `src/` is never packaged.
 - **The window's *eSIM* tab** (decided 2026-10-04): the SIM in use — also in the top panel — and
@@ -1370,7 +1377,8 @@ None beyond **PowerShell 7.6+ on Windows**. Everything the app uses ships with t
 SetupAPI, part of Windows (the AT port, M10), WPF and WinForms (UI), `System.Drawing` (icon), `System.Net.Http` (the update notice),
 and the Windows modules `PnpDevice`, `NetAdapter`, `NetTCPIP`, `DnsClient`, `ScheduledTasks`.
 Windows PowerShell 5.1 and its `Appx` module, part of Windows, run the launcher. From `v1.2.0`
-the release zip also carries lpac for eSIM — `lpac.exe`, in the `lpac` folder — and ZXing.Net to
+the release zip also carries lpac for eSIM — `lpac.exe`, in the `lpac` folder, for x64 and, from
+`v2.0.0`, Arm64 — and ZXing.Net to
 read a QR code from an image — `zxing.dll`, in the `zxing` folder (see *eSIM*); nothing has to be
 installed separately.
 

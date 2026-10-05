@@ -4,6 +4,28 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-05 — M10: the way back at the uninstallation; Windows on Arm64
+
+- **The uninstallation gives the modem's functions back** before the app's folder goes, with the
+  installed app's own code (`Restore-ModemUsbFunction`): every FM350 present — not only the one the
+  app used —, its vendor functions on WinUSB, each read whole, never the network function nor ADB;
+  `DiInstallDevice` with no driver named, MediaTek's driver coming back where it is in the driver
+  store. A function another program holds is left, and so is every function of a modem not plugged
+  in — `DiInstallDevice` reaches present devices only —: the uninstaller says how many went back,
+  wait for a restart, or stayed, and Device Manager can give those another driver. A failure there
+  stops nothing: an uninstallation that can't restore a driver still removes the app. Rejected:
+  asking the user to plug the modem in first — a question the uninstallation can't wait on, for a
+  modem that may never come back.
+- **Windows on Arm64 is let in**: the launcher's platform check takes 64-bit Windows on an x64 or
+  an Arm64 processor (`Win32_Processor`'s architecture 9 or 12, 64-bit), and says one thing for
+  anything else. Nothing else in the app names an architecture: the C#'s structures take their
+  sizes from the marshaller, pointers are `IntPtr`, the same code for both.
+- **lpac for Arm64**: `v2.2.1`'s Arm64 build (a native Arm64 program), pinned with the SHA-256 of
+  its first download — GitHub lists none — beside the x64 one; the zip has `lpac\x64` and
+  `lpac\arm64`, the same files each, one `SOURCE.txt` and one source archive for both.
+  `Get-LpacPath` takes the build of the Windows's own architecture, native even when the
+  PowerShell that runs the app is emulated. The tests check each build's PE machine in the zip CI
+  builds, and run the x64 one. Not run on Arm64, nor anything else of the app: no hardware.
 ## 2026-10-05 — M10: the binding, the transport and the way back, on the device
 
 The app's own code on our modem (AT-COMMANDS §1.2, §2), the network function up throughout and

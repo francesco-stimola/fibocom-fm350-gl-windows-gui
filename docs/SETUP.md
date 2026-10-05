@@ -204,7 +204,8 @@ GitHub Release is the only distribution channel.
    version's `CHANGELOG.md` section as its notes (`gh release create`, the job's own token), and
    lpac's source archive beside the zip (from `v1.2.0`). Its actions are pinned to commits.
 5. **lpac and ZXing.Net** (from `v1.2.0`): the package takes their pins - `tools/Lpac.psd1`:
-   lpac's Windows build into the zip's `lpac` folder, its source archive beside the zip;
+   lpac's Windows builds, x64 and Arm64, into the zip's `lpac\x64` and `lpac\arm64` folders (from
+   `v2.0.0`), its source archive beside the zip;
    `tools/ZXing.psd1`: ZXing.Net's library for .NET 9 from its nuget.org package, and its license,
    into the zip's `zxing` folder -, each file used only when its SHA-256 matches the pin. It
    downloads them into `dist/download/` (`download` in the output folder), or takes them from
