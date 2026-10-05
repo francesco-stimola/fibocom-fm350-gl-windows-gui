@@ -219,12 +219,7 @@ Decided by the maintainer (2026-10-04, `DEVLOG.md`):
 Decisions that change what happens next and are the maintainer's to take. Remove a line when it is
 decided, and record the decision in `DEVLOG.md`.
 
-- **M10 — a modem not plugged in at the uninstallation.** Its functions stay on WinUSB, which
-  Windows remembers for that device: plugged in again, it comes back on WinUSB, without the app.
-  Since the second review pass the uninstaller counts them and says so. Further: remove those
-  devices' entries — the vendor functions on `winusb.inf` of an FM350 not present, never the
-  network function —, so that Windows chooses their driver afresh when the modem comes back,
-  MediaTek's where it is in the driver store. A new system change, with its own test on the device.
+*None at the moment.*
 
 ---
 

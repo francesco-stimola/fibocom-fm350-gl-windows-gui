@@ -4,6 +4,15 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-05 — Decided: a modem not plugged in at the uninstallation stays on WinUSB, said
+
+The uninstallation gives back only the modems plugged in; one that isn't keeps its functions on
+WinUSB, which Windows remembers for that device. Decided by the maintainer: **that stays so** — the
+uninstaller counts those functions and says so, Device Manager being the way out. Rejected:
+removing those devices' entries, so that Windows would choose their driver afresh at the next
+plug-in — a further change to the system, and a device test unplugging the modem from the VM, for a
+rare case —; asking the user to plug the modem in, a question the uninstallation can't wait on.
+
 ## 2026-10-05 — M10: the second review pass
 
 The second review pass (of three: the uninstallation's way back, Windows on Arm64, lpac's Arm64
@@ -14,7 +23,7 @@ build) found three, fixed with tests:
   Windows remembers but that aren't plugged in are now counted (`Measure-AbsentWinUsbFunction`)
   and said, with Device Manager as the way out; *no modem plugged in* is no longer said when
   nothing is on WinUSB at all. Removing those devices' entries, so that Windows chooses afresh at
-  the next plug-in, is a further system change: an open decision (ROADMAP).
+  the next plug-in, would be a further system change (decided against: the entry above).
 - **The uninstallation would give back a WinUSB another tool chose**: every vendor function on
   WinUSB went back to its best driver. Only the functions on Windows' own `winusb.inf` — the model
   the app installs — are given back now; one on an INF of its own is not the app's.
