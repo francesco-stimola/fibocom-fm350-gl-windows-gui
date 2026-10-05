@@ -19,6 +19,8 @@ System tray app · PowerShell 7 · recovery ladder · band lock · no driver to 
 
 [The problem](#the-problem) · [Features](#features) · [Install](#install) · [How it works](#how-it-works) · [Requirements](#requirements) · [Roadmap](docs/ROADMAP.md) · [Architecture](docs/ARCHITECTURE.md)
 
+<img alt="The app's window, tab by tab: signal, messages, data, SIM, eSIM, network, connection, USB" src="assets/window.gif" width="686">
+
 </div>
 
 ---

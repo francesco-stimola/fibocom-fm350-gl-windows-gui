@@ -750,8 +750,8 @@ from the logo's geometry at every size an icon file needs, no image file in the 
   for the state, and the technology label (`5G`, `4G`) where it is legible — 24 pixels and up; at
   16 pixels (100 % scaling) the bars alone.
 - **Tones**: green online; amber on its way; red when the user must act (a PIN, an APN, an FCC
-  lock, a disabled adapter, no driver…); grey with no modem, or while the worker restarts or
-  doesn't answer (a restart touches no connection).
+  lock, a disabled adapter, a function Windows wouldn't put on WinUSB…); grey with no modem, or
+  while the worker restarts or doesn't answer (a restart touches no connection).
 - **Recovering** (M4, decided 2026-10-02): amber, headline *Recovering*, while a recovery step
   settles or the next cycle is awaited — the text says the step (*Restarting the data
   connection.*) or what fails and when the steps start again; a modem off USB during its reset is
@@ -899,7 +899,8 @@ itself. The network function stays on Windows' RNDIS driver, as before.
    driver, it is looked at again next time —; a function the user disabled; one with a
    problem on WinUSB; one whose installation failed already — **tried once per instance**, again
    at the app's next start, at a new instance, or when the user asks to check now (decided
-   2026-10-04).
+   2026-10-04) — not again by a worker that replaces another: the snapshot carries the failed
+   instances to it as hashes (SHA-256), never their IDs.
 4. **Put them on WinUSB** (`Install-WinUsbDriver`, in the worker, with administrator rights):
    - **Never under another program.** A function whose COM port or device interface another
      program holds is left on its driver: each is opened for an instant, exclusively, nothing read
@@ -940,9 +941,11 @@ itself. The network function stays on Windows' RNDIS driver, as before.
    WinUSB where they named a COM port.
 6. **The way back** (`Restore-UsbFunctionDriver`): the app's interface class taken out of the
    function's `DeviceInterfaceGUIDs`, then `DiInstallDevice` with no driver named — the best match
-   in the driver store, MediaTek's serial driver when it is there —; with none, a null driver: the
-   function as Windows leaves one it found no driver for. The uninstallation does it for every
-   vendor function on `winusb.inf` of every FM350 plugged in. Those of an FM350 not plugged in,
+   in the driver store, MediaTek's serial driver when it is there —; with none — Windows answering
+   *no compatible driver* or *no driver selected*, and only then —, a null driver: the function as
+   Windows leaves one it found no driver for. Any other failure is said, the function left on its
+   driver. The uninstallation does it for every vendor function on `winusb.inf` of every FM350
+   plugged in, reading PnP again once when a read missed one, and saying one still missed. Those of an FM350 not plugged in,
    which Windows remembers on WinUSB, it removes from Windows (`Select-AbsentWinUsbFunction`,
    `Remove-AbsentUsbFunction`: `DiUninstallDevice`), so that their driver is chosen afresh when
    the modem comes back — never the network function, never ADB, never a device plugged in, which

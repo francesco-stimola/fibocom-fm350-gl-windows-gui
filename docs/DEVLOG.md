@@ -4,6 +4,39 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-05 — M10: the third review pass
+
+The third review pass (of three: the whole change since `v1.2.0`) found three, fixed with tests:
+- **A function a PnP read missed was skipped by the uninstallation, unsaid**: the worker reads
+  again at its next look, the uninstaller reads once. It now reads again once when an FM350
+  vendor function was missed (`Select-UnreadModemFunction`), and says one still missed, left as
+  it is; the uninstaller's line for functions left says so.
+- **The way back took the null driver after any failure** but access denied: a policy or a
+  blocked driver would have left a function with no driver where MediaTek's was in the store, the
+  uninstaller saying it was given back. Only *no compatible drivers* and *no driver selected* lead
+  to it now (`TakesNullDriver`); the binding's rollback goes the same way.
+- **A worker that replaced another tried its failed installations again**, against *once per
+  instance*: the failed instances now go with the snapshot, as SHA-256 hashes, to the worker that
+  replaces it, and the AT port's failure — a restart awaited stays said.
+
+And, minor: a look at a function's ports that throws counts as tried, logged once; the AT port is
+closed when its channel can't be made; the uninstaller of 2.0 says nothing of an installed 1.x
+app, which put nothing on WinUSB; texts left from M6 in SETUP, ARCHITECTURE and a comment.
+
+## 2026-10-05 — The README's GIF
+
+The README shows the main window tab by tab, an animated GIF under its title. It is made, never
+drawn by hand: `tools/New-ReadmeGif.ps1` shows the app's own window off screen with the simulated
+modem's view in English, renders each tab (`RenderTargetBitmap`), gives each frame its own
+256-colour palette and writes a GIF that loops, two seconds a tab — WPF's encoder writes neither the
+loop nor the delays, which the script adds block by block. What changes between runs without the
+window changing is fixed: the footer's time, the AT port named as on a real modem, no development
+note; and, decided by the maintainer, **no app version**, so that the GIF changes only with the
+window. Rejected: making it in CI or at release — a commit by a bot on `main`, and fonts and DPI of
+the runner changing the bytes every time. A test makes it in the test drive and checks the committed
+one has a frame for each tab, so that a tab added or taken away fails before a release; SETUP →
+*Releasing* says when to make it again.
+
 ## 2026-10-05 — M10: the regression session on WinUSB
 
 The installed 2.0 build on our modem (AT-COMMANDS §1.2), every earlier milestone's device check
@@ -26,7 +59,7 @@ listed, the `AT+CMGS` prompt given and cancelled. Learned:
   time it succeeded, since M7: the folder it runs from is gone when `cmd` looks for the batch file
   again after its last line. `(goto)` now leaves the batch file first; the exit code is the
   setup's, a failure still pauses. A test runs the real file with the setup stood in for by a
-  command that deletes its folder.
+  command that deletes its folder; on the device, an uninstallation through it exited 0.
 
 ## 2026-10-05 — Decided: the uninstallation removes the functions of a modem not plugged in
 
