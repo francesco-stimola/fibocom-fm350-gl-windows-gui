@@ -49,10 +49,10 @@ notice, and names the zip in `FM350_PACKAGE` for the tests that run what it bund
   limit.
 - **This test command needs no modem and no admin rights.** Tests that talk to a real device are
   tagged `Hardware`, and every documented command excludes them: Pester itself runs every tag
-  unless told otherwise. Run them on purpose on a machine where the modem is attached **and this
-  app is not running** (it would hold the AT port), naming the modem's AT port:
-  `$env:FM350_AT_PORT = 'COM5'; Invoke-Pester -Path ./tests -TagFilter Hardware`. Without the
-  variable they are skipped.
+  unless told otherwise. Run them on purpose on a machine where the modem is attached, its AT
+  function already on WinUSB as the app puts it, **and this app is not running** (it would hold
+  the AT port): `$env:FM350_HARDWARE = '1'; Invoke-Pester -Path ./tests -TagFilter Hardware`. The
+  AT port is found by PnP, as the app finds it. Without the variable they are skipped.
 - **The programs the zip bundles are tested from a zip**: `tests/Bundled.Tests.ps1` takes lpac and
   ZXing.Net out of the zip `FM350_PACKAGE` names, and runs them — lpac through the bridge against
   the simulated eUICC, ZXing.Net on QR codes it writes. Without the variable they are skipped. To

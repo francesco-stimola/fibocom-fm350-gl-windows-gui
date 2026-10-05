@@ -6,8 +6,8 @@ section says which milestone implements it (see [`ROADMAP.md`](ROADMAP.md)). Thr
 
 ## Overview
 
-Used over a USB adapter, the FM350-GL shows up on Windows as a set of serial ports and a network
-adapter, but nothing brings the data connection up by itself: someone has to register on the
+Used over a USB adapter, the FM350-GL shows up on Windows as a set of vendor USB functions — the AT
+port among them — and a network adapter, but nothing brings the data connection up by itself: someone has to register on the
 network and activate a data context over AT commands, then configure the adapter's IP address.
 When the link drops, nothing brings it back. This app does both, from the system tray.
 
@@ -18,7 +18,7 @@ When the link drops, nothing brings it back. This app does both, from the system
  │  ┌──────────────────────┐   commands   ┌─────────────────────────────────┐ │
  │  │ tray icon + menu     │ ───────────► │ connection state machine        │ │
  │  │ main window (WPF)    │    queue     │ health checks · recovery ladder │ │
- │  │ supervisor           │ ◄─────────── │ AT channel ──────► COMx (MD AT) │ │
+ │  │ supervisor           │ ◄─────────── │ AT channel ────► MD AT (WinUSB) │ │
  │  └──────────────────────┘   snapshots  │ network config ──► modem NIC    │ │
  │                                        └─────────────────────────────────┘ │
  └────────────────────────────────────────────────────────────────────────────┘
@@ -33,7 +33,9 @@ When the link drops, nothing brings it back. This app does both, from the system
   configuration*).
 - **FM350-GL over USB.** Laptops with an OEM-integrated FM350 (PCIe) that already work through
   Windows' mobile broadband stack are out of scope.
-- **No redistribution of the modem driver**, nor of any binary whose license doesn't allow it.
+- **No driver to bring, install or redistribute** (M10): the modem's vendor functions run on
+  Windows' own WinUSB driver (*USB functions and WinUSB*). No binary ships whose license doesn't
+  allow it.
   Open-source tools ship only under their own license (lpac and ZXing.Net, from `v1.2.0` — see
   *eSIM*).
 - Not a firmware tool: no flashing, no IMEI changes, no NV editing — with one exception the user
@@ -50,7 +52,7 @@ user reopens it and monitoring resumes.
   the network or PnP. A dispatcher timer ticks every 500 ms: it takes the worker's latest
   snapshot, supervises the worker, and redraws the tray icon, its tooltip and the window only when
   the snapshot or the worker's state changed (`Update-App`).
-- **Worker runspace**: owns the COM port, the state machine, health checks, recovery, network
+- **Worker runspace**: owns the AT port, the state machine, health checks, recovery, network
   configuration (`Invoke-ModemWorker`). It publishes an **immutable snapshot** of its state after
   every change and consumes the UI's commands from a queue.
 - **Supervisor**: the worker writes a heartbeat; if it ends (an error) or stops beating (a hang),
@@ -69,8 +71,7 @@ user reopens it and monitoring resumes.
 - **Commands** (`Send-ModemCommand`): check now (a connect pass, which never breaks a connection
   that works), save settings and the APN password, set the network mode (tried, *Modes and*
   *bands*), store or forget the SIM PIN, remove the PIN from the SIM, lift the FCC lock, enable
-  the adapter, check a driver package, install it, uninstall the AT port's driver (*Drivers*),
-  the messages' (*SMS*), the eSIM's (*eSIM*). Secrets travel as `SecureString`s and stay
+  the adapter, the messages' (*SMS*), the eSIM's (*eSIM*). Secrets travel as `SecureString`s and stay
   in the process. Each command's outcome comes back in the next snapshots (the last ten).
 - **Cadence** (`Resolve-WorkerSchedule`, pure; decided 2026-10-01): a connect pass every 30 s
   online, every 10 s while the connection is on its way, every 30 s while it waits for the user
@@ -81,8 +82,8 @@ user reopens it and monitoring resumes.
 - **Recovery is decided on every cycle** — a pure function, cheap — on the state the last pass or
   probe left (*Health checks and the recovery ladder*), and its step taken in the same cycle.
 - **The port is found again at every look**: by PnP (`Resolve-ModemPresence`), never remembered —
-  after a re-enumeration the modem can come back as a new device instance under other COM numbers
-  (`AT-COMMANDS.md` §1). A lost port is closed at once; the next look finds the device again. While
+  after a re-enumeration the modem can come back as a new device instance, on its old driver
+  (`AT-COMMANDS.md` §1), which the worker puts on WinUSB again (*USB functions and WinUSB*). A lost port is closed at once; the next look finds the device again. While
   a pass finds no network adapter, PnP is read again for it at the scan cadence, the port left
   open: one PnP read that missed it must not leave the connection blocked.
 - **What is shown is what was read**: below a ready SIM the radio is not read, and the last
@@ -106,20 +107,19 @@ user reopens it and monitoring resumes.
   and warnings the worker writes are taken and logged at every tick, so they never pile up.
 - **Development mode** (`Start-Fm350App -Simulated -Scenario …`): the worker drives a simulated
   modem and adapter (`New-SimulatedDevice`, scenarios in `Data/Simulation.psd1`: online, connect,
-  an APN needed, a PIN required, an FCC lock and its unlock, a disabled adapter, no modem, no
-  driver; and M4's faults — a path that settles, a data path down, a network that drops ICMP, a
+  an APN needed, a PIN required, an FCC lock and its unlock, a disabled adapter, no modem, its
+  functions not on WinUSB yet; and M4's faults — a path that settles, a data path down, a network that drops ICMP, a
   registration lost, a modem that doesn't answer, a network that refuses it for good; and M5's
   modem in LTE-only mode, in NR-only mode where there is no 5G SA, and a network with 5G SA; and
   M9's eUICC in use, with no profile enabled and with one) — no device, no administrator rights,
   nothing changed on the system. The recovery steps act on the simulated modem as on a real one,
-  every time they run; so do the driver's install and uninstall, while a package chosen is copied
-  and checked for real, in the development folder. Its settings,
+  every time they run, and so does putting its functions on WinUSB. Its settings,
   secrets and log live in a folder of their own, and it runs beside the real app.
 - **Observe only** (`-ObserveOnly`): the worker reads and never writes — no step, no command that
   changes the modem or the system. The window says which step it withholds.
 
 ### Startup, elevation, single instance
-- The app needs admin rights (adapter configuration, device restart, drivers). To avoid a UAC
+- The app needs admin rights (adapter configuration, device restart, the USB functions' driver). To avoid a UAC
   prompt at every start, the installer (M7) registers two **scheduled tasks** that run with the
   highest privileges as the user who installed it — *Start at logon*, which starts the app hidden
   in the tray, and *Open*, which starts it with its window — and a **Start-menu shortcut** that
@@ -159,10 +159,10 @@ user reopens it and monitoring resumes.
   (`AT-COMMANDS.md` §11.2): a program running as the user can reach an elevated process of the same
   user in ways no app closes — the user's environment, for one, reaches every process the user
   starts. The app closes the paths made of files: its own, PowerShell's, the modules and profiles,
-  the settings, a driver package.
-- A named **mutex** enforces one instance (`Enter-AppInstance`): machine-wide, since the COM port
+  the settings.
+- A named **mutex** enforces one instance (`Enter-AppInstance`): machine-wide, since the AT port
   is. A second launch signals the first to show its window — through an event of its Windows
-  session — and exits: two instances would fight over the COM port. A mutex left by an instance
+  session — and exits: two instances would fight over the AT port. A mutex left by an instance
   that died is taken over. A launch without the running instance's administrator rights can't
   signal it, and exits quietly. Development mode has a mutex of its own.
 - **Without administrator rights** the app runs, reads and connects, and stops before configuring
@@ -243,7 +243,8 @@ start, not the day it is published.
   only, reads one to the list of releases as none published, and fails on anything else — never
   asking again. The tray menu
   links the release's page, **built from the tag** — no address from the answer is ever opened —,
-  through Explorer, as the Driver tab opens its page. Development mode never sends the request.
+  through Explorer: the elevated app never starts a browser itself. Development mode never sends
+  the request.
 
 ## AT channel (M1)
 
@@ -251,13 +252,21 @@ Everything the worker says to the modem goes through one **AT channel** per port
 `AT-COMMANDS.md` §2).
 
 - **Transport.** The channel talks to a *transport*: any object with `PortName`, `Lost`,
-  `Write`, `Read` and `Close`. There are two: the serial port (`System.IO.Ports`) and the
-  **simulated modem**, which answers from fixtures and plays scripted faults — the tests use it,
-  and so does the app's development mode (M3). A transport that loses its port sets `Lost`
-  instead of throwing, and never touches the port again; the channel then reports `PortLost` to
-  every command, and the worker opens a new channel once the device is back — found again by PnP,
-  because it can come back as a new device instance under another COM number (`AT-COMMANDS.md`
-  §1).
+  `Write`, `Read` and `Close`. There are two: the **WinUSB transport** (M10, `Transport.ps1`)
+  and the **simulated modem**, which answers from fixtures and plays scripted faults — the tests
+  use it, and so does the app's development mode (M3). A transport that loses its port sets
+  `Lost` instead of throwing, and never touches the port again; the channel then reports
+  `PortLost` to every command, and the worker opens a new channel once the device is back — found
+  again by PnP, because it can come back as a new device instance (`AT-COMMANDS.md` §1).
+- **The WinUSB transport** opens the AT function's interface (*USB functions and WinUSB*) and
+  talks through its bulk pipes, the pair read from the interface — one IN, one OUT (`AT-COMMANDS.md`
+  §1.2). No modem-control request is sent: the modem needs none. It reads **one packet at a time**:
+  a full packet completes a read as a short one does, so an answer whose length is a multiple of
+  the packet size never waits for a zero-length packet. Each read waits at most the time asked,
+  the pipe's own timeout; `ERROR_SEM_TIMEOUT` is nothing yet, **any other error means the port is
+  gone** — `Lost`. A write gets 2 s: one that times out is a modem not draining it, not a lost
+  port. Text travels as Latin-1 bytes, as on the COM port. The interface and its handles are
+  released once, by `Close`, on the error path too.
 - **Echo as anchor.** The modem's echo stays on (its power-on default). A command's answer starts
   after its echo: anything else that arrives before it is left over from an earlier command,
   typically a late answer after a timeout, and is discarded. Without the anchor, one late answer
@@ -316,7 +325,7 @@ Everything the worker says to the modem goes through one **AT channel** per port
   turn the radio on, select the operator automatically, define the app's context, activate it,
   configure the adapter. With no step to take, a **reason** says why — searching, SIM busy, a PIN
   the user must give, an FCC lock, a port another program holds — and **blocked** says whether it
-  is out of the app's reach: no device or driver, a SIM waiting for the user, an FCC lock, an APN
+  is out of the app's reach: no device, an AT port the app can't put on WinUSB, a SIM waiting for the user, an FCC lock, an APN
   the user must give, a network adapter missing or disabled by the user, no administrator rights
   to configure it. No recovery step changes those, so none is escalated (M4).
 - **What couldn't be read is unknown, never "no".** A read that fails leaves its fact `$null`, and
@@ -426,7 +435,7 @@ fails (`Resolve-HealthCheck`, pure). Only H7 has a read of its own: the data-pat
 
 | # | Check | Fails when | The pass's state |
 |---|---|---|---|
-| H1 | Device present (PnP) | The modem is gone from USB, its AT port has no driver or a problem. | `NoDevice` |
+| H1 | Device present (PnP) | The modem is gone from USB, its AT port is not on WinUSB (yet), or has a problem. | `NoDevice` |
 | H2 | AT port answers | The port can't be opened, or the modem doesn't answer on it. | `NoDevice` (`PortFailed`), `PortOpen` |
 | H3 | SIM ready | `+CPIN?` is not `READY`. | `Identified` |
 | H4 | Registered | Registration status is not home/roaming. | `SimReady` |
@@ -438,7 +447,7 @@ fails (`Resolve-HealthCheck`, pure). Only H7 has a read of its own: the data-pat
   every report it is asked for — no `+CSCON`, `+CGREG` or `+C5GREG` code was seen while the state
   changed (`AT-COMMANDS.md` §2) — so a code is a hint to read sooner, never the only source.
 - A failing check whose cause the state machine calls **blocked** is out of the app's reach — no
-  device or driver, a SIM waiting for its PIN or PUK, an FCC lock, an APN or an APN password to
+  device, an AT port that can't be put on WinUSB, a SIM waiting for its PIN or PUK, an FCC lock, an APN or an APN password to
   give, an adapter missing or disabled by the user, no administrator rights — and so is a port
   another program holds: recovery never acts under them. The tray says what it is instead.
 
@@ -527,6 +536,11 @@ step out (`Resolve-RecoveryAction`), proven by a matrix:
   port is held), finds the modem again by PnP — H1 must pass — and restarts its composite USB
   device, checked by its hardware ID, with `pnputil` from the system folder, never through `PATH`
   (invariant 10).
+- **On WinUSB (M10)** the ladder is the same. The AT port's handle is closed before R6 as the COM
+  port was; a reset (R5) or a USB restart (R6) brings the functions back as the same device
+  instances, still on WinUSB, and a lost transport is found again by the next look. A function
+  that comes back as a new instance is put on WinUSB again before its port opens — an intended
+  operation, under H1, whose ladder is empty (*USB functions and WinUSB*).
 - Timings decided 2026-10-02.
 
 ### Maintenance windows
@@ -602,8 +616,8 @@ the decisions are pure functions (`Resolve-NetworkMode`, `Resolve-NetworkModeTri
 ## Network configuration (M2)
 
 - The modem's adapter is found through the device it belongs to: its `PnPDeviceID` is the
-  instance ID of the modem's RNDIS function (`MI_00`, ARCHITECTURE → *Drivers*), never a name or
-  an index.
+  instance ID of the modem's RNDIS function (`MI_00`, *USB functions and WinUSB*), never a name
+  or an index.
 - **Configured from the context.** The FM350 serves no DHCP (`AT-COMMANDS.md` §1), so the app
   configures the adapter from the context: the IPv4 address — from `+CGCONTRDP`, or from
   `+CGPADDR` when, as on the FM350, `+CGCONTRDP` leaves it out — with its mask, a default route
@@ -770,15 +784,13 @@ comes back in a later snapshot, so the window never waits on the modem or the sy
 - **What blocks it, with the action that unblocks it**: an APN to give (`ApnNeeded`), the APN
   password to give again (`ApnPasswordUnreadable`), the PIN (`NoPin` and the like), *Enable
   adapter* for an adapter the user disabled (administrator rights; never done by the app on its
-  own), *Unlock…* for an FCC-locked modem, *Install the driver…* for an AT port without its
-  driver (the *Driver* tab), *Open the settings* for encrypted DNS that can't be set (M7), *Open
+  own), *Unlock…* for an FCC-locked modem, *Open the settings* for encrypted DNS that can't be set (M7), *Open
   eSIM* for an eSIM with no profile enabled (M9). What
   the app can't act on — a PUK, no SIM, the last PIN attempt — is said, with nothing to click.
 - **What changes something outside the app asks first**: the FCC unlock (it writes the modem's
   non-volatile memory and lifts the laptop maker's restriction), removing the PIN from the SIM (it
-  changes the SIM, in any phone too), uninstalling the AT port's driver (the app then can't watch
-  the connection), and installing a driver version the app doesn't know. A version it knows is
-  installed at *Install*. The eSIM's own (M9) are in *eSIM*.
+  changes the SIM, in any phone too). The eSIM's own (M9) are in *eSIM*. Putting the modem's
+  functions on WinUSB asks nothing: it is the app's way of working (*USB functions and WinUSB*).
 - **Tabs**: *Signal* — LTE and NR quality, serving and neighbour cells, carrier aggregation
   (uplink values only for a carrier that carries uplink); *SIM* — *Use the physical SIM (slot 1)…*
   (M9, *eSIM*), its state and attempts left, the stored PIN (store, forget), removing the PIN from
@@ -790,10 +802,10 @@ comes back in a later snapshot, so the window never waits on the modem or the sy
   the same validation the worker applies, and encrypted DNS against what the snapshot says Windows
   can do — the servers it knows a template for, whether it has the per-interface API —; whether
   the adapter's DNS is encrypted now, and for which servers; saving them never changes the network
-  mode; *Driver* (M6) — the AT port's driver, where a known copy is published, the package chosen
-  and what its check found, *Install*, *Uninstall the driver…* (*Drivers*); *eSIM* (M9, *eSIM*).
+  mode; *USB* (M10) — the modem's vendor functions, the driver of each, the last time they were
+  put on WinUSB (*USB functions and WinUSB*); *eSIM* (M9, *eSIM*).
   The footer says the app's version. Tabs whose content may outgrow the window — *SIM*,
-  *Connection*, *Driver*, *eSIM* — scroll; the outcome and the footer wrap beside *Check now*, never
+  *Connection*, *USB*, *eSIM* — scroll; the outcome and the footer wrap beside *Check now*, never
   under it.
 - **Its own on the taskbar** (decided 2026-10-03): the window and the Start-menu shortcut carry
   one AppUserModelID, `FibocomFm350Gl.WindowsGui` (`AppIdentity.ps1`; development mode its own).
@@ -831,79 +843,100 @@ the installer and the launcher. The **log stays in English**: it serves reports 
   XAML name exists and every English key is used, and show each language on every simulated
   scenario and in the window with no key missing.
 
-## Drivers (M6)
+## USB functions and WinUSB (M10)
 
-Only the modem's AT ports need a driver — the MediaTek serial driver `usb2ser_tm`; the network
-function is RNDIS, which Windows serves itself ([`AT-COMMANDS.md` §1](AT-COMMANDS.md#1-usb-identity)).
-No official public download exists for that driver, and redistributing it is not licensed, so the
-app follows **"bring your own driver", guided**: it never downloads or bundles a driver, it tells
-the user where a known copy is published and by whom, the user downloads it, and the app decides
-whether it is safe to install.
+The modem's AT port is one of its USB functions, of vendor class `ff/00/00`, which Windows' own
+serial driver doesn't claim ([`AT-COMMANDS.md` §1](AT-COMMANDS.md#1-usb-identity)). Up to 1.x the
+app needed MediaTek's serial driver for it, which has no license to be redistributed: the user
+brought it, and the app checked and installed it (M6, *bring your own driver*). From 2.0 the app
+puts the modem's vendor functions on **WinUSB**, the generic USB driver that comes with Windows,
+and talks to the AT function through its two bulk pipes (§1.2): nothing for the user to find,
+download or install, no package added to the driver store, nothing to sign — and no driver in the
+way of Windows on Arm64. Decided 2026-10-04 (`DEVLOG.md`): **WinUSB only**, also where MediaTek's
+driver is installed; **every vendor function**, never the network one; **by the worker**, by
+itself. The network function stays on Windows' RNDIS driver, as before.
 
-1. **Detect** the modem's USB functions by hardware ID and classify them: absent, present without
-   a driver (problem code 28 or 1; or none, and a service read as none, right after the driver
-   was uninstalled — a service that couldn't be read leaves it to the opening of the port),
-   present with another problem (disabled, failed to start), working. A modem is the composite device its functions hang from — not their container ID,
-   which a device on a port the firmware calls non-removable inherits from the computer and shares
-   with everything built in. For the same reason the network adapter is found by its own instance
-   ID (the adapter's `PnPDeviceID`). Instance IDs are not remembered across runs: the FM350's is
-   generated from the USB port it sits in. The classification is a pure function
-   (`Resolve-ModemUsbDevice`) over the PnP records; reading them is the thin part around it, in
-   the worker (`Get-ModemPnpRecord`, M2): one `Get-PnpDeviceProperty` call per device with every
-   key, given the device object — about 50 ms; given an instance ID, about a second — plus the COM
-   port name from the device's registry parameters. Never several devices in one call: the cmdlet
-   then sometimes labels one device's properties with another's instance ID.
-2. **Guide** — the main window's *Driver* tab, which the blocker of a modem without its AT-port
-   driver opens (*Install the driver…*). It says that the app doesn't come with the driver — it
-   has no license to redistribute it —, where a known copy is published, by whom and as which
-   file — a page pinned to a commit, from the known-fingerprints manifest (`Data/Drivers.psd1`:
-   SHA-256 of `.cat`, `.inf`, `.sys`, the page and the archive; hashes and links only, no
-   binaries) —, and that it is a third party's copy of MediaTek's driver. Two actions: *Open the
-   download page* — Explorer, from the Windows folder, hands it to the browser of the user's
-   session: the elevated app never starts a browser itself — and *Choose the downloaded
-   package…*, a zip or the INF of an extracted folder. The app never fetches the package: if the
-   page disappears, an identical copy from anywhere is still the verified version.
-3. **Take the package** (`Copy-DriverPackage`): copied — a zip extracted, none of its files outside
-   the folder; for an INF, its package's files alone, the catalogs and the files its
-   `[SourceDisksFiles]` sections name, not the rest of a folder it may share, such as Downloads; a
-   folder copied, links left out; at most 1000 files and 64 MB, a bigger folder given up at the
-   first file too many — into a **new folder only SYSTEM and administrators can open**, nothing
-   inherited, in Windows' own temporary folder, where users can create but neither list nor delete
-   what others create (`New-DriverStagingFolder`). Everything after happens on that copy, so what
-   is checked is what pnputil installs: no program running as the user can swap a file in between,
-   and the elevated app installs nothing from a folder the user can write (invariant 10). The copy
-   is deleted once installed, replaced or refused, and when the worker ends; one that can't be
-   deleted yet is tried again, and copies an app ended mid-install left behind are deleted at the
-   next start — only folders of that name that administrators own. Nothing in the package is ever
-   run: installers found in the wild are often unsigned. Copying and checking keep the worker's
-   heartbeat beating, and each file is hashed once.
-4. **Verify** — `Resolve-DriverPackage`, a pure decision over the facts `Get-DriverPackageFact`
-   reads (`AT-COMMANDS.md` §1.1):
-   - only an INF whose x64 models list the modem's AT port counts — its composition's MD AT
-     interface, with or without a revision; either composition's when no modem is attached;
-   - the catalog the INF names is in the package, and its signer is *Microsoft Windows Hardware
-     Compatibility Publisher*, `O=Microsoft Corporation`, with the WHQL enhanced key usage — an
-     attestation signature has another — **required**;
-   - `WinVerifyTrust`, against that catalog and no other, trusts its signature and finds the INF's
-     hash in it — **required**. The INF is the file the app reads; Windows checks every other file
-     against the catalog when the package is staged, and refuses one that doesn't match. Windows'
-     own catalogs are never asked: with a package installed, they vouch for any copy of its files;
-   - every SHA-256 of a known package matches: a **verified version**; else an unknown version,
-     signed — installed only once the user accepts it.
-5. **Install and uninstall**, in the worker, with pnputil from the system folder and administrator
-   rights; only the exit code is read. *Install* runs `/add-driver <inf> /install` on the copy:
-   `0` done, `3010` a restart to finish, `259` added but no device took it (none attached, or one
-   with a driver Windows ranks higher). Never over an AT port that works. *Uninstall the driver…*
-   runs `/delete-driver <oem#.inf> /uninstall` on the package the AT port reports
-   (`DEVPKEY_Device_DriverInfPath`) — only an `oem<n>.inf`, never one of Windows' own — after
-   closing the port, and never while a network mode is on trial: only the AT port can write it
-   back (*Modes and bands*). The data connection stays up — the network adapter has Windows' own driver —
-   but the app can't watch it until the driver is back: `NoDriver` is blocked, never escalated.
-   The worker waits for pnputil at most 5 minutes, its heartbeat beating; the command under way is
-   published before it runs, so the window says so. After an install, a maintenance window as long
-   as R6's settle time: a port just started may stay silent for minutes (`AT-COMMANDS.md` §2).
+1. **Read** the modem's USB functions by hardware ID and classify them. A modem is the composite
+   device its functions hang from — not their container ID, which a device on a port the firmware
+   calls non-removable inherits from the computer and shares with everything built in. For the
+   same reason the network adapter is found by its own instance ID (the adapter's `PnPDeviceID`).
+   Instance IDs are not remembered across runs: the FM350's is generated from the USB port it sits
+   in. Reading is the thin part (`Get-ModemPnpRecord`, in the worker): one `Get-PnpDeviceProperty`
+   call per device with every key, given the device object — about 50 ms; given an instance ID,
+   about a second; never several devices in one call, which then sometimes labels one device's
+   properties with another's instance ID —, plus the device's registry parameters: its COM port
+   (`PortName`) and its device interface classes (`DeviceInterfaceGUIDs`). The classification is
+   a pure function (`Resolve-ModemUsbDevice`): each function's role (the AT port, the network
+   function, another), what it is (MediaTek's INF names them: AP log, GNSS, AP META, MD AT, MD
+   META, NPT, debug), whether it is a **vendor function** — the AT port, and every function whose
+   compatible IDs name class `ff/00/00` —, whether its driver is WinUSB, and its state: working;
+   without a driver (problem code 28 or 1, or none and a service read as none); another problem.
+2. **Choose the modem** (`Resolve-ModemPresence`, pure, at every look): the first by instance ID
+   whose AT port works on WinUSB with the app's interface class — *Present*; one whose PnP read
+   failed counts too, the opening of its interface tells, as a COM port's opening did —, else the
+   first with an AT port: *Unbound* when its AT port is on another driver, on none, or on WinUSB without the
+   app's class; *Problem* when the user disabled it (problem code 22) or it has a problem on
+   WinUSB, which another installation wouldn't mend.
+3. **Decide** which functions go on WinUSB now (`Resolve-ModemBinding`, pure): the chosen modem's
+   vendor functions on another driver or none — so that none stands as an unknown device in
+   Device Manager —, and the AT port also on WinUSB without the app's interface class; the AT
+   port first. Never the network function, nor a function that is not a vendor one (ADB, which
+   Windows puts on WinUSB itself). Left as they are: a function that couldn't be read — its service
+   or its registry parameters, which a PnP read now and then misses: never taken for one on another
+   driver, it is looked at again next time —; a function the user disabled; one with a
+   problem on WinUSB; one whose installation failed already — **tried once per instance**, again
+   at the app's next start, at a new instance, or when the user asks to check now (decided
+   2026-10-04).
+4. **Put them on WinUSB** (`Install-WinUsbDriver`, in the worker, with administrator rights):
+   - **Never under another program.** A function whose COM port or device interface another
+     program holds is left on its driver: each is opened for an instant, exclusively, nothing read
+     or written (`Test-UsbFunctionFree`) — its COM port, and the interfaces of every class its
+     `DeviceInterfaceGUIDs` name (WinUSB's, or another program's: a function another tool put on
+     WinUSB) —, and a port held is said — for the AT port, *another program is using
+     the modem's AT port*, as before — and looked at again at the next look (decided 2026-10-04).
+   - **As Device Manager does when a driver is picked by hand** (`AT-COMMANDS.md` §1.2): for the
+     AT function, the app's device interface class `{4FDE9624-2286-4DC0-9D07-601A3922581A}`
+     added to its `DeviceInterfaceGUIDs` first, keeping any other there, so that its interface is
+     there at once; the function's class set to `USBDevice`; Windows' own `winusb.inf`, from the
+     Windows folder, its generic model chosen by its hardware ID `USB\MS_COMP_WINUSB` — never by
+     its name, which is localized —; `DiInstallDevice` with no window. Nothing is staged in the
+     driver store. A failure after the class changed gives the function back to its best driver,
+     and takes the interface class back out.
+   - On a thread of the pool, the worker waiting for it a second at a time, its heartbeat beating;
+     given up after 5 minutes, as pnputil was.
+   - **Never the network function** — refused by the decision, by the command's parameter check
+     and by the C# that calls Windows —, and never a modem reset.
+   - **Never an open port taken away**: the AT port is put on WinUSB only when it isn't usable
+     there, so the app holds no port on it — and the function whose port the worker holds is left
+     out of every decision, whatever a PnP read says of it. A network mode on trial isn't cut by it; its port comes
+     back by it.
+   - Once the AT port is on WinUSB, a **maintenance window** as long as R6's settle time: a port
+     just started may stay silent for minutes (`AT-COMMANDS.md` §2).
+   - A function that comes back as a **new device instance** — another USB port, a re-enumeration
+     — has its old driver again (MediaTek's, when it is in the driver store, or none) and is put
+     on WinUSB again: an intended operation, never a failed health check. Until then the check
+     failing is H1, whose ladder is empty: nothing escalates.
+   - **What stops it is said**, never escalated (*Connection state machine*): the installation
+     failed (`BindFailed`), Windows finishes it at the next restart (`BindRestartNeeded`), no
+     administrator rights (`BindNotElevated`), another program holds the port (`PortInUse`). In
+     observe-only mode the step is named and withheld.
+5. **Open the AT port** (`Get-WinUsbInterfacePath`, `Open-WinUsbAtTransport`): its interface in
+   the app's class, found for its instance ID by `CM_Get_Device_Interface_List` — a path never
+   shown nor logged —, then its bulk pair (*AT channel*). The window, the tooltip and the log say
+   WinUSB where they named a COM port.
+6. **The way back** (`Restore-UsbFunctionDriver`): the app's interface class taken out of the
+   function's `DeviceInterfaceGUIDs`, then `DiInstallDevice` with no driver named — the best match
+   in the driver store, MediaTek's serial driver when it is there —; with none, a null driver: the
+   function as Windows leaves one it found no driver for. The uninstallation does it for every
+   function on WinUSB (*Installing and updating*, M10).
+7. **The USB tab** (decided 2026-10-04): the state, with nothing to click — the app puts the
+   functions on WinUSB by itself, and *Check now* tries again what failed: each vendor function
+   with its driver (WinUSB, another, none) and its problem code, and the last time the app put
+   functions on WinUSB, when and how it went for each.
 
-`usb2ser_tm` 3.22.43.1 loads with Memory Integrity (core isolation) on (`AT-COMMANDS.md` §1).
+The facts of MediaTek's serial driver — what M6 checked before installing it — stay in
+`AT-COMMANDS.md` §1.1, for the record: they say why a COM port needed a driver the user had to
+bring.
 
 ## eSIM (M9)
 
@@ -958,7 +991,7 @@ runs as an external process, one invocation per operation (facts: `AT-COMMANDS.m
 - **lpac runs with the app's settings, nothing else of its own**: `LPAC_APDU=stdio` and
   `LPAC_HTTP=stdio` are named, and lpac's and its library's other variables are taken out of the
   environment it inherits — the user's environment reaches the elevated
-  app's children, and a variable could name another backend (one opens the COM port itself),
+  app's children, and a variable could name another backend (one opens a COM port itself),
   another ISD-R, or debug output carrying the APDUs. Its arguments are passed one by one, never
   joined into a command line; no window. **Its path is named in one place** (`Get-LpacPath`):
   the `lpac` folder beside the app's modules, under Program Files (invariant 10). No setting
@@ -1250,7 +1283,11 @@ src/
     Bands.ps1            AT+GTACT band codes (M0)
     AtText.ps1           framing and classifying the lines on the AT port (M1, pure)
     Timeouts.ps1         each command's documented worst case (M2, pure)
-    Transport.ps1        the serial transport, and the shape every transport has (M1)
+    WinUsb.ps1           the Windows calls of WinUSB, CfgMgr32 and SetupAPI, compiled at run time;
+                         the AT function's interface, a COM port tried, a function put on WinUSB
+                         and given back to its best driver (M10)
+    Transport.ps1        the WinUSB transport, and the shape every transport has (M1, M10); the
+                         bulk pipes picked (pure)
     SimulatedModem.ps1   the simulated modem: fixtures + scripted faults; fixture import (M1); its network mode (M5);
                          its message storage, notices and sending (M8); its SIM slots and eUICC (M9)
     AtChannel.ps1        the AT channel: commands, answers, unsolicited codes (M1); sending a PDU (M8)
@@ -1278,10 +1315,9 @@ src/
                          the templates Windows knows; the template's server by name, looked up
                          through Windows or with a DNS query of its own (M7)
     Log.ps1              redaction (pure), rolling log (M2)
-    Devices.ps1          the modem's USB functions: classification (M6, pure), PnP reader (M2),
-                         which modem to open (M3, pure), its USB restart (M4); pnputil
-    Drivers.ps1          the AT port's driver: the INF read and the verdict on a package (M6,
-                         pure), copying and checking it, installing and uninstalling it
+    Devices.ps1          the modem's USB functions: classification (M6, M10, pure), PnP reader (M2),
+                         which modem to open (M3, pure), which functions to put on WinUSB (M10,
+                         pure), its USB restart (M4); pnputil
     Radio.ps1            technology, bars, cells for display (M3, pure), and their reads
     Health.ps1           which check fails, the data path's verdict (M4, pure); the probe
     Recovery.ps1         the recovery decision (M4, pure), maintenance windows, the steps
@@ -1290,8 +1326,7 @@ src/
     Startup.ps1          the start at sign-in: the installer's logon task, read and turned on or off (M7)
     Worker.ps1           the worker: link, cadence (pure), snapshots (pure), commands, loop (M3)
     Data/                3GPP band tables, transcribed (EutraBands.psd1, NrBands.psd1); the
-                         simulated modem's answers (Simulation.psd1); the driver packages the
-                         app knows (Drivers.psd1); the GSM 7 bit default alphabet
+                         simulated modem's answers (Simulation.psd1); the GSM 7 bit default alphabet
                          (GsmAlphabet.psd1); the GSMA's root CI (GsmaRsp2RootCi1.pem)
   install.cmd            installs or updates the app (M7): runs Start-Fm350.ps1 -Mode Install
   uninstall.cmd          removes it (M7)
@@ -1330,8 +1365,8 @@ assets/                  logo (source: logo.html)
 
 ## Runtime dependencies
 
-None beyond **PowerShell 7.6+ on Windows**. Everything the app uses ships with it: `System.IO.Ports`
-(serial), WPF and WinForms (UI), `System.Drawing` (icon), `System.Net.Http` (the update notice),
+None beyond **PowerShell 7.6+ on Windows**. Everything the app uses ships with them: WinUSB and
+SetupAPI, part of Windows (the AT port, M10), WPF and WinForms (UI), `System.Drawing` (icon), `System.Net.Http` (the update notice),
 and the Windows modules `PnpDevice`, `NetAdapter`, `NetTCPIP`, `DnsClient`, `ScheduledTasks`.
 Windows PowerShell 5.1 and its `Appx` module, part of Windows, run the launcher. From `v1.2.0`
 the release zip also carries lpac for eSIM — `lpac.exe`, in the `lpac` folder — and ZXing.Net to
@@ -1340,7 +1375,7 @@ installed separately.
 
 ## Invariants
 
-1. **One owner per resource.** Only the worker opens the COM port; the mutex keeps a second
+1. **One owner per resource.** Only the worker opens the AT port; the mutex keeps a second
    instance away from it, and external tools such as lpac reach the modem only through the worker. Every handle, subscription, runspace and timer is released by its owner,
    on the error path too.
 2. **The UI thread never blocks.**
@@ -1351,15 +1386,18 @@ installed separately.
    port, the network or the clock.
 7. **No identifier leaves the process unredacted**, and no secret (SIM PIN, APN password) leaves
    it at all — encrypted at rest, never logged, never shown back.
-8. **System changes are scoped to the modem's adapter**, idempotent, and volatile where possible.
+8. **System changes are scoped to the modem**: its network adapter — idempotent, volatile where
+   possible — and its own vendor USB functions, put on WinUSB: a persistent change by nature, never
+   the network function, never under a port another program holds, given back to their best driver
+   by the uninstallation (M10).
 9. **Band codes round-trip.** A code read from the modem survives being written back, even when
    the app does not understand it.
 10. **Elevated code comes only from an admin-only location.** The app and the tools it runs are
     loaded from under `%ProgramFiles%` or the system folder, by literal paths; nothing
     user-writable (profile scripts, per-user modules, paths from settings or the environment) is
     executed by the elevated process — its module path is held to admin-only folders, also after
-    a runspace opens —, and a driver package is installed from a copy only administrators can
-    write. User Account Control is no security boundary: this closes the paths made of files
+    a runspace opens —, and the WinUSB driver comes from Windows' own `winusb.inf`, in the
+    Windows folder. User Account Control is no security boundary: this closes the paths made of files
     (*Startup, elevation, single instance*).
 
 ## Independent implementation

@@ -4,6 +4,81 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-05 — M10: the AT port on WinUSB, M6's intake removed, the USB tab
+
+The core of M10 (ARCHITECTURE → *USB functions and WinUSB*): the worker puts the modem's vendor
+functions on Windows' own WinUSB by itself and talks to the AT function through its bulk pipes; no
+COM port anywhere. Decided by the maintainer on the way:
+- **A failed installation is tried once per function instance**: again at the app's next start, at
+  a new instance — another USB port, a re-enumeration —, and when the user asks to check now; the
+  window says why it failed meanwhile. Rejected: retrying by itself after 1, 5, 15 minutes then
+  hourly (driver installations repeated where they can't succeed, a company's policy say); at every
+  look for the modem, every 5 s.
+- **A COM port another program holds is left alone**: before a function changes driver, its COM
+  port is opened for an instant, exclusively, nothing read or written; held, the function stays on
+  its driver, the AT port's case said as *another program is using the AT port*, and it is looked
+  at again at the next look. Rejected: changing the driver anyway, Windows finishing it at the next
+  restart — the other program losing its port then, unwarned.
+- **The tab that replaces *Driver* shows the state, with nothing to click**: each vendor function
+  with its driver, the last time the app put them on WinUSB and how it went for each. Rejected: a
+  button that puts them on WinUSB again, which *Check now* already does for what failed.
+- **The review passes split again**: M6's removal belongs to the core — WinUSB leaves no *AT port
+  without a driver* for M6's intake to act on, so its worker code and seventeen of its tests had
+  nothing left to run on —, so the first pass covers the core, M6's removal and the USB tab; the
+  second the uninstallation's way back, Windows on Arm64 and lpac's Arm64 build; the last the whole
+  change since `v1.2.0`, as planned. Rejected: adapting M6's tests to a path that can no longer
+  happen, to delete them a pass later.
+
+Design choices:
+- **One packet at a time.** A WinUSB read completes on a short packet or once the bytes asked for
+  have come (AT-COMMANDS §1.2): reading one maximum-size packet, a full one completes the read as a
+  short one does, so an answer whose length is a multiple of the packet size never waits for a
+  zero-length packet. The read's time is the pipe's own timeout, set when it changes;
+  `ERROR_SEM_TIMEOUT` is no answer yet, any other error a lost port. No zero-length packet after a
+  write. Rejected: overlapped reads with a wait of our own — a second way to time out a read, for
+  the same outcome.
+- **The app's own interface class** for the AT function, `{4FDE9624-2286-4DC0-9D07-601A3922581A}`,
+  added to its `DeviceInterfaceGUIDs` and kept beside any other program's; the interface found by
+  `CM_Get_Device_Interface_List` for the function's instance ID. A function on WinUSB without it is
+  given it again — an installation, which the new value needs to take effect.
+- **Which functions**: the AT port, and every function whose compatible IDs name the vendor class
+  `ff/00/00`, of the modem chosen — not every modem's: a second FM350, which the app doesn't use,
+  is left to whatever uses it. Never the network function, refused three times over: by the
+  decision, by the command's parameter check, by the C#.
+- **A failure halfway is undone**: the class changed and the installation failed, the function is
+  given back to its best driver, and the interface class taken out.
+- **The installation runs on a thread of the pool**, the worker waiting a second at a time with its
+  heartbeat beating — `DiInstallDevice` takes seconds, and the supervisor would take a worker silent
+  for 60 s for hung; 5 minutes at most, as pnputil had.
+- **After the AT port goes on WinUSB, a maintenance window as long as R6's settle time**, as after
+  M6's installation: a port just started may stay silent for minutes. The binding never takes an
+  open port away — the AT port is bound only when it isn't usable on WinUSB —, so a network mode on
+  trial isn't cut by it: M6's rule against uninstalling during a trial has nothing to apply to.
+- **An AT port not on WinUSB is H1**, whose ladder is empty: putting it there is an intended
+  operation, not a failure to escalate; what stops it is said (`BindFailed`, `BindRestartNeeded`,
+  `BindNotElevated`, `PortInUse`), and in observe-only mode the step is named and withheld.
+- **The simulated device reports PnP records**, which the worker reads through the same pure
+  functions as the real ones; its *Unbound* scenario — the functions on MediaTek's driver — replaces
+  *NoDriver*, and it can come back from a reset as a new instance on MediaTek's driver.
+- **M6 removed whole**: the *Driver* tab, the blocker's *Install the driver…*, `Drivers.ps1` and
+  `Data/Drivers.psd1`, the package's copy and verification, the pnputil commands, their texts in
+  eight languages and their tests. Copies of packages a 1.x app ended mid-install may stay in
+  Windows' temporary folder, owned by administrators: 2.0 no longer looks for them. MediaTek's
+  driver's facts stay in AT-COMMANDS §1.1, for the record. `System.IO.Ports` is no longer used.
+
+The first review pass (of three) found two, fixed with tests:
+- **A PnP read that failed made a function look like it was on another driver**: an unread service
+  or registry parameters read as *not on WinUSB*, and *Check now* could install a driver on the
+  very function whose port the worker held open. A function is now known only once its service and
+  its parameters were read — one that couldn't be is left to the next look, never bound —, the
+  function whose port the worker holds is left out of every decision, and an AT port that couldn't
+  be read counts as there: the opening of its interface tells, as a COM port's did.
+- **Only COM ports were looked at for another program**: a function put on WinUSB by another tool,
+  held through its own interface, would have been reinstalled under it. Every interface of the
+  classes a function's `DeviceInterfaceGUIDs` name is now opened for an instant too, as its COM
+  port is (`Test-UsbFunctionFree`). An interface a driver registers under a class not named there
+  is not looked at.
+And a minor one: the tab said every function was on WinUSB when only the AT port was known to be.
 ## 2026-10-04 — Decided: each message by the SIM it came in on
 
 The profiles on the eUICC's slot share part of its storage (AT-COMMANDS §9, question 6): a profile
