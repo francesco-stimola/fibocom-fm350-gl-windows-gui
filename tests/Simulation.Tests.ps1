@@ -426,7 +426,7 @@ Describe 'The simulated modem on USB' {
     It 'says a port another program holds, and an installation that fails or waits for a restart' {
         $device = New-SimulatedDevice -Scenario Unbound
         [void]$device.HeldPorts.Add(6)
-        $device.TryPort('COM26') | Should -Be 5
+        $device.TryPort('COM26') | Should -Be 170
         $device.TryPort('COM23') | Should -Be 0
         $at = (Find-SimulatedModem $device).AtInstanceId
         $device.BindResult = 'Failed'

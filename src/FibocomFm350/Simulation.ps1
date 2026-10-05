@@ -506,12 +506,12 @@ class SimulatedDevice {
         return $records.ToArray()
     }
 
-    # Whether a COM port can be opened, as Test-ComPortFree finds it: held by another program
-    # (ERROR_ACCESS_DENIED), or free.
+    # Whether a COM port can be opened, as Test-UsbFunctionFree finds it: held by another program
+    # (ERROR_BUSY, MediaTek's driver's answer: AT-COMMANDS section 2), or free.
     [int] TryPort([string] $portName) {
         foreach ($interface in $this.HeldPorts) {
             if ($portName -eq "COM$(20 + $interface)") {
-                return 5
+                return 170
             }
         }
         return 0

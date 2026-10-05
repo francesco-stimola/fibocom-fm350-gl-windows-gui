@@ -971,9 +971,10 @@ function Restore-ModemUsbFunction {
         none otherwise -, the app's interface class taken out of the AT port's. A function another
         program holds is left as it is (Test-UsbFunctionFree). Administrator rights; the app must
         have exited, its port closed. A modem not plugged in can't be reached: its functions stay on
-        WinUSB.
+        WinUSB, and are counted. Throws when PnP can't be read.
 
-        Returns Modems (how many are present) and Functions: each with Interface, Name, Role and
+        Returns Modems (how many are present), Absent (the functions on WinUSB of a modem not plugged
+        in, Measure-AbsentWinUsbFunction) and Functions: each with Interface, Name, Role and
         Result - 'Done', 'RestartNeeded', 'InUse', 'Failed' -, Step and Error.
     .EXAMPLE
         Restore-ModemUsbFunction -Confirm:$false
@@ -982,7 +983,8 @@ function Restore-ModemUsbFunction {
     [OutputType([pscustomobject])]
     param()
 
-    $modems = @(Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord))
+    $records = @(Get-ModemPnpRecord -IncludeAbsent -Strict)
+    $modems = @(Resolve-ModemUsbDevice -Device $records)
     $outcomes = foreach ($function in @(Resolve-ModemRestore -Modem $modems)) {
         $entry = [ordered]@{ Interface = $function.Interface; Name = $function.Name; Role = $function.Role; Result = $null; Step = $null; Error = $null }
         if (-not $PSCmdlet.ShouldProcess("USB function $($function.InstanceId)", 'Restore its best driver')) {
@@ -1009,5 +1011,5 @@ function Restore-ModemUsbFunction {
         }
         [pscustomobject]$entry
     }
-    [pscustomobject]@{ Modems = $modems.Count; Functions = [object[]]@($outcomes) }
+    [pscustomobject]@{ Modems = $modems.Count; Absent = (Measure-AbsentWinUsbFunction -Device $records); Functions = [object[]]@($outcomes) }
 }

@@ -1529,7 +1529,7 @@ function Update-WorkerBinding {
         $label = Get-UsbFunctionLabel -Function $function
         try {
             $held = if ($Worker.Simulation) {
-                $function.PortName -and $Worker.Simulation.TryPort($function.PortName) -eq 5
+                $function.PortName -and (Test-Win32Held -Code $Worker.Simulation.TryPort($function.PortName))
             }
             else {
                 -not (Test-UsbFunctionFree -InstanceId $function.InstanceId -PortName $function.PortName -InterfaceGuid @($function.InterfaceGuids | Where-Object { $_ })).Free

@@ -740,9 +740,14 @@ Describe 'Restore-AppUsbFunction' {
         @{ Name = 'all back'; Results = @('Done', 'Done', 'Done'); Lines = @('*back on the driver Windows ranks best*: 3.') }
         @{ Name = 'some later, some left'; Results = @('Done', 'RestartNeeded', 'InUse', 'Failed'); Lines = @('*: 1.', '*next restart of Windows: 1.', '*left on WinUSB*: 2.') }
         @{ Name = 'nothing on WinUSB'; Results = @(); Lines = @() }
+        @{ Name = 'no modem plugged in, nothing on WinUSB'; Modems = 0; Results = @(); Lines = @() }
+        @{ Name = 'a modem not plugged in'; Modems = 0; Absent = 7; Results = @(); Lines = @('*modem not plugged in, left on WinUSB*: 7.') }
+        @{ Name = 'one plugged in, one not'; Absent = 2; Results = @('Done'); Lines = @('*back on the driver Windows ranks best*: 1.', '*modem not plugged in*: 2.') }
     ) {
         $functions = @(foreach ($result in $Results) { [pscustomobject]@{ Result = $result } })
-        $restore = { [pscustomobject]@{ Modems = 1; Functions = $functions } }.GetNewClosure()
+        $modemCount = if ($null -ne $Modems) { $Modems } else { 1 }
+        $absentCount = if ($null -ne $Absent) { $Absent } else { 0 }
+        $restore = { [pscustomobject]@{ Modems = $modemCount; Absent = $absentCount; Functions = $functions } }.GetNewClosure()
         $said = @(InModuleScope FibocomFm350.Installer -Parameters @{ Layout = $script:restoreLayout; Restore = $restore } { param($Layout, $Restore) Restore-AppUsbFunction -Layout $Layout -Restore $Restore })
         $said.Count | Should -Be $Lines.Count
         for ($i = 0; $i -lt $Lines.Count; $i++) {
@@ -757,14 +762,13 @@ Describe 'Restore-AppUsbFunction' {
         @(Get-Module FibocomFm350 | Where-Object ModuleBase -Like "$($script:restoreLayout.InstallFolder)*") | Should -BeNullOrEmpty
     }
 
-    It 'says no modem is plugged in' {
-        $said = InModuleScope FibocomFm350.Installer -Parameters @{ Layout = $script:restoreLayout } { param($Layout) Restore-AppUsbFunction -Layout $Layout -Restore { [pscustomobject]@{ Modems = 0; Functions = @() } } }
-        $said | Should -BeLike 'No modem plugged in*'
-    }
-
-    It 'says a restore that failed, and the uninstallation goes on' {
-        $said = InModuleScope FibocomFm350.Installer -Parameters @{ Layout = $script:restoreLayout } { param($Layout) Restore-AppUsbFunction -Layout $Layout -Restore { throw 'SetupAPI said no' } }
-        $said | Should -BeLike '*(SetupAPI said no)*stay on WinUSB.'
+    It 'says a restore that failed, and the uninstallation goes on: <Name>' -ForEach @(
+        @{ Name = 'SetupAPI'; Message = 'SetupAPI said no' }
+        @{ Name = 'PnP that couldn''t be read'; Message = 'WMI down' }
+    ) {
+        $restore = [scriptblock]::Create("throw '$Message'")
+        $said = InModuleScope FibocomFm350.Installer -Parameters @{ Layout = $script:restoreLayout; Restore = $restore } { param($Layout, $Restore) Restore-AppUsbFunction -Layout $Layout -Restore $Restore }
+        $said | Should -BeLike "*($Message)*stay on WinUSB."
     }
 
     It 'does nothing without the app''s code: an uninstallation run again' {

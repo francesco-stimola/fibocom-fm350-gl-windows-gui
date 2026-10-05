@@ -822,7 +822,9 @@ function Restore-AppUsbFunction {
     # folder, before it goes): the modem's functions the app put on WinUSB given back to the driver
     # Windows ranks best (Restore-ModemUsbFunction) - MediaTek's serial driver where it is in the
     # driver store. -Restore runs it with the module (the tests stand in for it). Returns the lines
-    # to say; a failure is said, and the uninstallation goes on: the functions then stay on WinUSB.
+    # to say - nothing when nothing is on WinUSB; a failure, PnP that couldn't be read included, is
+    # said, and the uninstallation goes on: the functions then stay on WinUSB. So do those of a modem
+    # not plugged in, counted.
     param([object] $Layout, [scriptblock] $Restore = $script:RestoreUsbFunctions)
 
     $manifest = Join-Path -Path $Layout.InstallFolder -ChildPath 'FibocomFm350\FibocomFm350.psd1'
@@ -842,16 +844,18 @@ function Restore-AppUsbFunction {
     catch {
         return Get-SetupText 'Uninstall.UsbFailed' $_.Exception.Message
     }
-    if (-not $outcome -or $outcome.Modems -eq 0) {
-        return Get-SetupText 'Uninstall.UsbNoModem'
+    if (-not $outcome) {
+        return
     }
-    $results = @($outcome.Functions | ForEach-Object { $_.Result })
+    $results = @($outcome.Functions | Where-Object { $_ } | ForEach-Object { $_.Result })
     $back = @($results | Where-Object { $_ -eq 'Done' }).Count
     $later = @($results | Where-Object { $_ -eq 'RestartNeeded' }).Count
     $left = @($results | Where-Object { $_ -notin 'Done', 'RestartNeeded' }).Count
+    $absent = if ($outcome.PSObject.Properties['Absent']) { [int]$outcome.Absent } else { 0 }
     if ($back) { Get-SetupText 'Uninstall.UsbRestored' $back }
     if ($later) { Get-SetupText 'Uninstall.UsbRestart' $later }
     if ($left) { Get-SetupText 'Uninstall.UsbLeft' $left }
+    if ($absent) { Get-SetupText 'Uninstall.UsbAbsent' $absent }
 }
 
 function Uninstall-Fm350App {
@@ -864,7 +868,8 @@ function Uninstall-Fm350App {
         Needs administrator rights. The running app is asked to exit first (Stop-AppInstance):
         monitoring stops, the connection stays as it is - nothing on the modem or its adapter is
         undone but its functions' driver: MediaTek's COM ports come back where its driver is in the
-        driver store. A modem not plugged in keeps its functions on WinUSB. An app that doesn't exit stops the uninstallation before anything changes.
+        driver store. A modem not plugged in keeps its functions on WinUSB. An app that doesn't exit
+        stops the uninstallation before anything changes.
         -RemoveUserData also deletes the settings, the stored SIM PIN and APN password, and the
         logs. Returns one line per step done.
     .EXAMPLE

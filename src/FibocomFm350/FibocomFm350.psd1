@@ -108,6 +108,7 @@
         'New-ModemWorkerLink'
         'New-SimulatedDevice'
         'New-SimulatedModem'
+        'Measure-AbsentWinUsbFunction'
         'Open-MaintenanceWindow'
         'Open-WinUsbAtTransport'
         'Read-QrCode'

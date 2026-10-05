@@ -52,6 +52,6 @@
     'Uninstall.UsbRestored' = 'Funciones del módem devueltas al controlador que Windows considera mejor - el controlador serie de MediaTek, donde está instalado: {0}.'
     'Uninstall.UsbRestart'  = 'Funciones del módem que vuelven a ese controlador en el próximo reinicio de Windows: {0}.'
     'Uninstall.UsbLeft'     = 'Funciones del módem que se quedan en WinUSB - las usa otro programa, o Windows lo rechazó; el Administrador de dispositivos puede darles otro controlador: {0}.'
-    'Uninstall.UsbNoModem'  = 'No hay ningún módem conectado: las funciones que la aplicación pasó a WinUSB se quedan en él; el Administrador de dispositivos puede darles otro controlador.'
+    'Uninstall.UsbAbsent'   = 'Funciones de un módem no conectado que se quedan en WinUSB; una vez conectado, el Administrador de dispositivos puede darles otro controlador: {0}.'
     'Uninstall.UsbFailed'   = 'Las funciones del módem no se pueden devolver a su controlador ({0}): se quedan en WinUSB.'
 }

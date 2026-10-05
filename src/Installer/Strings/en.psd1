@@ -52,6 +52,6 @@
     'Uninstall.UsbRestored' = 'The modem''s functions back on the driver Windows ranks best - MediaTek''s serial driver where it is installed: {0}.'
     'Uninstall.UsbRestart'  = 'The modem''s functions back on that driver at the next restart of Windows: {0}.'
     'Uninstall.UsbLeft'     = 'The modem''s functions left on WinUSB - another program uses them, or Windows refused; Device Manager can give them another driver: {0}.'
-    'Uninstall.UsbNoModem'  = 'No modem plugged in: the functions the app put on WinUSB stay on it; Device Manager can give them another driver.'
+    'Uninstall.UsbAbsent'   = 'The functions of a modem not plugged in, left on WinUSB; once it is plugged in, Device Manager can give them another driver: {0}.'
     'Uninstall.UsbFailed'   = 'The modem''s functions can''t be given back to their driver ({0}): they stay on WinUSB.'
 }

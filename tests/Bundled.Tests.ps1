@@ -40,6 +40,35 @@ Describe 'lpac, as the release zip bundles it' -Skip:(-not $script:bundled) {
         $script:lpac = Join-Path (Expand-BundledFolder -Folder "lpac/$architecture" -Destination $TestDrive) 'lpac.exe'
         $script:testAid = 'A0000005591010FFFFFFFF8900002000'
 
+        # The libraries a PE image imports by name, from its import directory (PE/COFF: data
+        # directory 1; one 20-byte descriptor per library, its name's RVA 12 bytes in).
+        function Get-PeImport {
+            param([byte[]] $Image)
+            $pe = [BitConverter]::ToInt32($Image, 0x3C)
+            $sections = [BitConverter]::ToUInt16($Image, $pe + 6)
+            $optional = $pe + 24
+            $table = $optional + [BitConverter]::ToUInt16($Image, $pe + 20)
+            $directories = if ([BitConverter]::ToUInt16($Image, $optional) -eq 0x20B) { $optional + 112 } else { $optional + 96 }
+            $offset = {
+                param([uint32] $Rva)
+                for ($i = 0; $i -lt $sections; $i++) {
+                    $section = $table + 40 * $i
+                    $start = [BitConverter]::ToUInt32($Image, $section + 12)
+                    $size = [Math]::Max([BitConverter]::ToUInt32($Image, $section + 8), [BitConverter]::ToUInt32($Image, $section + 16))
+                    if ($Rva -ge $start -and $Rva -lt $start + $size) {
+                        return [int]($Rva - $start + [BitConverter]::ToUInt32($Image, $section + 20))
+                    }
+                }
+                throw "RVA $Rva is in no section"
+            }
+            $descriptor = & $offset ([BitConverter]::ToUInt32($Image, $directories + 8))
+            while (($name = [BitConverter]::ToUInt32($Image, $descriptor + 12)) -ne 0) {
+                $start = & $offset $name
+                [System.Text.Encoding]::ASCII.GetString($Image, $start, [Array]::IndexOf($Image, [byte]0, $start) - $start)
+                $descriptor += 20
+            }
+        }
+
         # Runs the bundled lpac for one operation on the simulated eUICC; nothing may reach the
         # network.
         function Invoke-BundledLpac {
@@ -49,7 +78,7 @@ Describe 'lpac, as the release zip bundles it' -Skip:(-not $script:bundled) {
         }
     }
 
-    It 'carries a native build for x64 and one for Arm64' -ForEach @(
+    It 'carries a native build for x64 and one for Arm64, importing nothing but Windows'' own libraries' -ForEach @(
         @{ Architecture = 'x64'; Machine = 0x8664 }
         @{ Architecture = 'arm64'; Machine = 0xAA64 }
     ) {
@@ -66,6 +95,13 @@ Describe 'lpac, as the release zip bundles it' -Skip:(-not $script:bundled) {
         }
         # The PE header's machine: where the header is, at 0x3C; the machine 4 bytes in.
         [BitConverter]::ToUInt16($image, [BitConverter]::ToInt32($image, 0x3C) + 4) | Should -Be $Machine
+        # Not libcurl.dll, which the zip leaves out: the Arm64 build can't be run here to prove it.
+        $imports = @(Get-PeImport -Image $image)
+        $imports | Should -Not -BeNullOrEmpty
+        $imports | Should -Not -Contain 'libcurl.dll'
+        foreach ($library in $imports) {
+            Join-Path ([Environment]::SystemDirectory) $library | Should -Exist -Because "$library is part of Windows"
+        }
     }
 
     BeforeEach {

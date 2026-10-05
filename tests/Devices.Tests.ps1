@@ -18,11 +18,12 @@ BeforeAll {
             [bool] $Present = $true,
             [string] $Parent = 'USB\VID_0E8D&PID_7127\7&00000000&0&1',
             [string[]] $CompatibleIds = @('USB\Class_ff&SubClass_00&Prot_00'),
-            [string[]] $InterfaceGuids
+            [string[]] $InterfaceGuids,
+            [string] $DriverInfPath
         )
         [pscustomobject]@{
             InstanceId = $InstanceId; Present = $Present; ProblemCode = $ProblemCode; Service = $Service; Parent = $Parent
-            CompatibleIds = $CompatibleIds; InterfaceGuids = $InterfaceGuids
+            CompatibleIds = $CompatibleIds; InterfaceGuids = $InterfaceGuids; DriverInfPath = $DriverInfPath
         }
     }
 
@@ -494,23 +495,61 @@ Describe 'Resolve-ModemRestore' {
         $first = 'USB\VID_0E8D&PID_7127\7&00000000&0&1'
         $second = 'USB\VID_0E8D&PID_7127\7&00000000&0&2'
         $modems = @(Resolve-ModemUsbDevice -Device @(
-                ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&1&0006' -Service 'WINUSB' -Parent $first
-                ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&2&0003' -Service 'WINUSB' -Parent $second
-                ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_00\8&00000000&2&0000' -Service 'WINUSB' -Parent $second -CompatibleIds @('USB\Class_ff&SubClass_00&Prot_00')
+                ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&1&0006' -Service 'WINUSB' -Parent $first -DriverInfPath 'winusb.inf'
+                ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&2&0003' -Service 'WINUSB' -Parent $second -DriverInfPath 'winusb.inf'
+                ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_00\8&00000000&2&0000' -Service 'WINUSB' -Parent $second -CompatibleIds @('USB\Class_ff&SubClass_00&Prot_00') -DriverInfPath 'winusb.inf'
             ))
         (Resolve-ModemRestore -Modem $modems).Interface | Should -Be @(6, 3)
     }
 
     It 'leaves a function it couldn''t read' {
-        $record = ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003' -Service 'WINUSB'
+        $record = ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003' -Service 'WINUSB' -DriverInfPath 'winusb.inf'
         $record | Add-Member -NotePropertyName ParametersRead -NotePropertyValue $false
         Resolve-ModemRestore -Modem @(Resolve-ModemUsbDevice -Device @($record)) | Should -BeNullOrEmpty
+    }
+
+    It 'leaves a function on WinUSB from <Inf>: not the app''s to give back' -ForEach @(
+        @{ Inf = 'oem42.inf' }
+        @{ Inf = '' }
+    ) {
+        $record = ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003' -Service 'WINUSB' -DriverInfPath $Inf
+        Resolve-ModemRestore -Modem @(Resolve-ModemUsbDevice -Device @($record)) | Should -BeNullOrEmpty
+    }
+
+    It 'gives back a function on winusb.inf whatever its case' {
+        $record = ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003' -Service 'WINUSB' -DriverInfPath 'WINUSB.INF'
+        (Resolve-ModemRestore -Modem @(Resolve-ModemUsbDevice -Device @($record))).Interface | Should -Be 3
     }
 
     It 'has nothing to give back without a modem' {
         Resolve-ModemRestore -Modem @() | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Measure-AbsentWinUsbFunction' {
+    It 'counts <Count> for <Case>' -ForEach @(
+        @{ Case = 'an absent vendor function on winusb.inf'; Count = 1; Id = 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003'; Present = $false; Service = 'WINUSB'; Inf = 'winusb.inf'; Compat = @('USB\Class_ff&SubClass_00&Prot_00') }
+        @{ Case = 'an absent AT port of the 7126 composition'; Count = 1; Id = 'USB\VID_0E8D&PID_7126&MI_04\8&00000000&0&0004'; Present = $false; Service = 'WINUSB'; Inf = 'winusb.inf'; Compat = @() }
+        @{ Case = 'a present one: given back'; Count = 0; Id = 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003'; Present = $true; Service = 'WINUSB'; Inf = 'winusb.inf'; Compat = @('USB\Class_ff&SubClass_00&Prot_00') }
+        @{ Case = 'the network function'; Count = 0; Id = 'USB\VID_0E8D&PID_7127&MI_00\8&00000000&0&0000'; Present = $false; Service = 'WINUSB'; Inf = 'winusb.inf'; Compat = @('USB\Class_ff&SubClass_00&Prot_00') }
+        @{ Case = 'ADB, which Windows puts on WinUSB'; Count = 0; Id = 'USB\VID_0E8D&PID_7127&MI_05\8&00000000&0&0005'; Present = $false; Service = 'WINUSB'; Inf = 'winusb.inf'; Compat = @('USB\Class_ff&SubClass_42&Prot_01') }
+        @{ Case = 'another tool''s INF'; Count = 0; Id = 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003'; Present = $false; Service = 'WINUSB'; Inf = 'oem42.inf'; Compat = @('USB\Class_ff&SubClass_00&Prot_00') }
+        @{ Case = 'MediaTek''s driver'; Count = 0; Id = 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003'; Present = $false; Service = 'usb2ser_tm'; Inf = 'oem10.inf'; Compat = @('USB\Class_ff&SubClass_00&Prot_00') }
+        @{ Case = 'another MediaTek device'; Count = 0; Id = 'USB\VID_0E8D&PID_2000&MI_03\8&00000000&0&0003'; Present = $false; Service = 'WINUSB'; Inf = 'winusb.inf'; Compat = @('USB\Class_ff&SubClass_00&Prot_00') }
+    ) {
+        $record = ConvertTo-PnpRecord -InstanceId $Id -Present $Present -Service $Service -DriverInfPath $Inf -CompatibleIds $Compat
+        Measure-AbsentWinUsbFunction -Device @($record) | Should -Be $Count
+    }
+
+    It 'counts every absent one, and none without records' {
+        $records = foreach ($interface in '02', '03', '06') {
+            ConvertTo-PnpRecord -InstanceId "USB\VID_0E8D&PID_7127&MI_$interface\8&00000000&0&00$interface" -Present $false -Service 'WINUSB' -DriverInfPath 'winusb.inf'
+        }
+        Measure-AbsentWinUsbFunction -Device @($records) | Should -Be 3
+        Measure-AbsentWinUsbFunction -Device @() | Should -Be 0
+    }
+}
+
 Describe 'Restart-ModemUsbDevice' {
     It 'restarts nothing but an FM350 composite device: <InstanceId>' -ForEach @(
         @{ InstanceId = 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&1&0006' }
@@ -656,6 +695,26 @@ Describe 'Get-ModemPnpRecord' {
         Mock -ModuleName FibocomFm350 Get-PnpDevice { }
         Get-ModemPnpRecord | Should -BeNullOrEmpty
         Should -Invoke -ModuleName FibocomFm350 Get-PnpDeviceProperty -Times 0 -Exactly
+    }
+
+    It 'reads too the devices Windows remembers but that aren''t plugged in, with -IncludeAbsent' {
+        $records = @(Get-ModemPnpRecord -IncludeAbsent)
+        $records.InstanceId | Should -Be @($script:composite, $script:atPortId, $script:networkId, $script:leftoverId)
+        ($records | Where-Object InstanceId -EQ $script:leftoverId).Present | Should -BeFalse
+        ($records | Where-Object InstanceId -EQ $script:atPortId).Present | Should -BeTrue
+    }
+
+    Context 'when PnP can''t be read' {
+        It 'finds nothing, or throws with -Strict' {
+            Mock -ModuleName FibocomFm350 Get-PnpDevice { Write-Error -Message 'WMI down' -Category ResourceUnavailable -ErrorAction SilentlyContinue }
+            Get-ModemPnpRecord | Should -BeNullOrEmpty
+            { Get-ModemPnpRecord -Strict } | Should -Throw '*WMI down*'
+        }
+
+        It 'takes "nothing matched" for no MediaTek device, -Strict too' {
+            Mock -ModuleName FibocomFm350 Get-PnpDevice { Write-Error -Message 'No matching objects' -Category ObjectNotFound -ErrorAction SilentlyContinue }
+            Get-ModemPnpRecord -Strict | Should -BeNullOrEmpty
+        }
     }
 }
 

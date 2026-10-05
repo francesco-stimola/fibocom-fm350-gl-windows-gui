@@ -128,6 +128,24 @@ Describe 'Restore-ModemUsbFunction' {
         $script:restored.InstanceId | Should -Not -Contain 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003'
     }
 
+    It 'reads PnP with the modems not plugged in, strictly, and counts their functions left on WinUSB' {
+        $absent = $script:fixture | Where-Object InstanceId -Like '*&MI_03\*' | Select-Object -First 1 | ForEach-Object { $_.PSObject.Copy() }
+        $absent.InstanceId = 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&9&0003'
+        $absent.Present = $false
+        $script:fixture = @($script:fixture) + $absent
+        $outcome = Restore-ModemUsbFunction -Confirm:$false
+        $outcome.Absent | Should -Be 1
+        $outcome.Functions.Count | Should -Be 7
+        $script:restored.InstanceId | Should -Not -Contain $absent.InstanceId
+        Should -Invoke -ModuleName FibocomFm350 Get-ModemPnpRecord -Times 1 -Exactly -ParameterFilter { $IncludeAbsent -and $Strict }
+    }
+
+    It 'throws, giving nothing back, when PnP can''t be read' {
+        Mock -ModuleName FibocomFm350 Get-ModemPnpRecord { throw [System.InvalidOperationException]::new('WMI down') }
+        { Restore-ModemUsbFunction -Confirm:$false } | Should -Throw '*WMI down*'
+        $script:restored | Should -BeNullOrEmpty
+    }
+
     It 'gives nothing back with -WhatIf' {
         $outcome = Restore-ModemUsbFunction -WhatIf
         $outcome.Functions | Should -BeNullOrEmpty
@@ -138,6 +156,7 @@ Describe 'Restore-ModemUsbFunction' {
         Mock -ModuleName FibocomFm350 Get-ModemPnpRecord { }
         $outcome = Restore-ModemUsbFunction -Confirm:$false
         $outcome.Modems | Should -Be 0
+        $outcome.Absent | Should -Be 0
         $outcome.Functions | Should -BeNullOrEmpty
     }
 

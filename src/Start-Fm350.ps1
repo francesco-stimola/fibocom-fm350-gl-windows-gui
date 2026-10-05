@@ -18,7 +18,7 @@
     returns at once; -Hidden starts it in the tray. -Mode Install and -Mode Uninstall run the
     installer (Installer\Invoke-Fm350Setup.ps1) with administrator rights - one UAC prompt -, wait
     for it and return its exit code. -Mode Install first refuses a Windows the app can't run on:
-    only 64-bit Windows on an x64 processor can (docs/AT-COMMANDS.md section 11.2).
+    only 64-bit Windows on an x64 or an Arm64 processor can (docs/AT-COMMANDS.md section 11.2).
 
     Written for Windows PowerShell 5.1: no syntax or member that PowerShell 7 added.
 .EXAMPLE

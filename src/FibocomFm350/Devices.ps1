@@ -27,8 +27,8 @@ $script:DisabledProblemCode = 22
 function Get-ModemPnpRecord {
     <#
     .SYNOPSIS
-        Reads the PnP records of the present MediaTek USB devices, as Resolve-ModemUsbDevice
-        takes them.
+        Reads the PnP records of the present MediaTek USB devices - with -IncludeAbsent, of all
+        Windows remembers -, as Resolve-ModemUsbDevice takes them.
     .DESCRIPTION
         The thin I/O around Resolve-ModemUsbDevice: Get-PnpDevice for the instance IDs under
         USB\VID_0E8D, then for each device one Get-PnpDeviceProperty call given the device object
@@ -36,21 +36,32 @@ function Get-ModemPnpRecord {
         Parameters: PortName and DeviceInterfaceGUIDs, the same in every Windows language). One
         call per device: given several devices at once, Get-PnpDeviceProperty now and then labels
         one device's properties with another's instance ID. Reads only; needs no administrator
-        rights and never opens a port.
+        rights and never opens a port. -IncludeAbsent reads too the devices Windows remembers but
+        that aren't plugged in (Present $false): the uninstallation's. -Strict throws when PnP can't
+        be read, rather than finding nothing (Get-PnpDevice's own 'nothing matched' is no failure).
 
-        Returns one record per present device: InstanceId, Present, ProblemCode, Service ('' when
-        the device has none; $null when it couldn't be read), Parent, CompatibleIds, PortName (its
-        COM port, $null when it has none) and InterfaceGuids (its DeviceInterfaceGUIDs, $null
-        when none) - ParametersRead $false when those couldn't be read -, and its driver: DriverInfPath (the name its package has in the driver store),
-        DriverVersion, DriverProvider - $null without one.
+        Returns one record per device: InstanceId, Present, ProblemCode, Service ('' when the device
+        has none; $null when it couldn't be read), Parent, CompatibleIds, PortName (its COM port,
+        $null when it has none) and InterfaceGuids (its DeviceInterfaceGUIDs, $null when none) -
+        ParametersRead $false when those couldn't be read -, and its driver: DriverInfPath (the name
+        its package has in the driver store), DriverVersion, DriverProvider - $null without one.
     .EXAMPLE
         Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord)
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
-    param()
+    param(
+        [switch] $IncludeAbsent,
 
-    $devices = @(Get-PnpDevice -InstanceId 'USB\VID_0E8D*' -ErrorAction SilentlyContinue | Where-Object Present)
+        [switch] $Strict
+    )
+
+    $failed = $null
+    $devices = @(Get-PnpDevice -InstanceId 'USB\VID_0E8D*' -ErrorAction SilentlyContinue -ErrorVariable failed | Where-Object { $IncludeAbsent -or $_.Present })
+    $real = @($failed | Where-Object { $_.CategoryInfo.Category -ne [System.Management.Automation.ErrorCategory]::ObjectNotFound })
+    if ($Strict -and $real.Count -gt 0) {
+        throw $real[0].Exception
+    }
     if ($devices.Count -eq 0) {
         return
     }
@@ -75,7 +86,7 @@ function Get-ModemPnpRecord {
         $guids = & $parameter 'DeviceInterfaceGUIDs'
         [pscustomobject]@{
             InstanceId     = [string]$device.InstanceId
-            Present        = $true
+            Present        = [bool]$device.Present
             ProblemCode    = [int]((& $value 'DEVPKEY_Device_ProblemCode') -as [int])
             # '' when read and empty - no driver -, $null when it couldn't be read.
             Service        = if (-not $serviceRead) { $null } elseif ($null -eq $service) { '' } else { [string]$service }
@@ -376,6 +387,9 @@ function Resolve-ModemRestore {
         each read whole. Never the network function, nor a function that is not a vendor one (ADB,
         which Windows puts on WinUSB itself), nor one that couldn't be read.
 
+        Only the functions on Windows' own winusb.inf, the model the app installs: one another tool
+        put on WinUSB with an INF of its own is not the app's to give back.
+
         Returns the functions, the AT ports first, each with InstanceId, Interface, Role, Name and
         InterfaceGuids (to look for a program holding it first).
     .EXAMPLE
@@ -393,6 +407,9 @@ function Resolve-ModemRestore {
         if (-not $item -or -not $item.Vendor -or $item.Role -eq 'Network' -or -not $item.WinUsb) {
             continue
         }
+        if (-not $item.Driver -or -not [string]::Equals([string]$item.Driver.InfPath, $script:WinUsbInfName, 'OrdinalIgnoreCase')) {
+            continue
+        }
         if ($item.PSObject.Properties['Read'] -and -not $item.Read) {
             continue
         }
@@ -402,6 +419,41 @@ function Resolve-ModemRestore {
         [pscustomobject]@{ InstanceId = $item.InstanceId; Interface = $item.Interface; Role = $item.Role; Name = $item.Name; InterfaceGuids = $item.InterfaceGuids }
     }
 }
+
+function Measure-AbsentWinUsbFunction {
+    <#
+    .SYNOPSIS
+        Counts the FM350 vendor functions on Windows' WinUSB that Windows remembers but that aren't
+        plugged in: what the uninstallation can't give back.
+    .DESCRIPTION
+        A pure count over Get-ModemPnpRecord -IncludeAbsent's records: an FM350 instance not present
+        - a modem unplugged, or plugged in elsewhere since, as another instance (AT-COMMANDS section
+        1) -, its function a vendor one (never the network function), on WINUSB from winusb.inf.
+        DiInstallDevice reaches present devices only: such a function keeps WinUSB.
+    .EXAMPLE
+        Measure-AbsentWinUsbFunction -Device @(Get-ModemPnpRecord -IncludeAbsent)
+    #>
+    [CmdletBinding()]
+    [OutputType([int])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]] $Device
+    )
+
+    @(foreach ($record in $Device) {
+            if (-not $record -or $record.Present -or [string]$record.InstanceId -notmatch '^USB\\VID_0E8D&PID_(7126|7127)&MI_([0-9A-F]{2})\\') {
+                continue
+            }
+            $interface = [Convert]::ToInt32($Matches[2], 16)
+            $vendor = $interface -eq $script:AtPortInterfaces[$Matches[1]] -or @(@($record.CompatibleIds) | Where-Object { [string]::Equals([string]$_, $script:VendorFunctionId, 'OrdinalIgnoreCase') }).Count -gt 0
+            if ($interface -ne $script:NetworkInterface -and $vendor -and [string]::Equals([string]$record.Service, 'WINUSB', 'OrdinalIgnoreCase') -and
+                [string]::Equals([string]$record.DriverInfPath, $script:WinUsbInfName, 'OrdinalIgnoreCase')) {
+                $record
+            }
+        }).Count
+}
+
 function Restart-ModemUsbDevice {
     <#
     .SYNOPSIS
