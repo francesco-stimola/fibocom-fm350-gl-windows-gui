@@ -21,7 +21,8 @@ A major version: the modem's AT port is no longer a COM port.
 - The *Driver* tab is replaced by a *USB* tab: each of the modem's ports with its driver, and how
   the app's last change went. Nothing to click: *Check now* tries again what failed.
 - Uninstalling gives the modem's ports back to the driver Windows ranks best — MediaTek's serial
-  driver, where it is installed — with the modem plugged in.
+  driver, where it is installed, none otherwise. A modem not plugged in has its ports removed from
+  Windows, which chooses their driver again when it comes back.
 
 ### Added
 - **Windows on Arm64**: the installer accepts 64-bit Windows on an Arm64 processor, and the release
@@ -31,6 +32,10 @@ A major version: the modem's AT port is no longer a COM port.
 ### Removed
 - The driver intake of 1.x: the link to a third party's copy of MediaTek's driver, the check of a
   downloaded package, and its installation and uninstallation through the app.
+
+### Fixed
+- `uninstall.cmd` ended with exit code 1, saying a path couldn't be found, although the app was
+  uninstalled.
 
 ## [1.2.0] - 2026-10-04
 

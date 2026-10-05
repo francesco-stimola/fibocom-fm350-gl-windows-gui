@@ -4,14 +4,42 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
-## 2026-10-05 — Decided: a modem not plugged in at the uninstallation stays on WinUSB, said
+## 2026-10-05 — M10: the regression session on WinUSB
 
-The uninstallation gives back only the modems plugged in; one that isn't keeps its functions on
-WinUSB, which Windows remembers for that device. Decided by the maintainer: **that stays so** — the
-uninstaller counts those functions and says so, Device Manager being the way out. Rejected:
-removing those devices' entries, so that Windows would choose their driver afresh at the next
-plug-in — a further change to the system, and a device test unplugging the modem from the VM, for a
-rare case —; asking the user to plug the modem in, a question the uninstallation can't wait on.
+The installed 2.0 build on our modem (AT-COMMANDS §1.2), every earlier milestone's device check
+again: installed over 1.x, it put the vendor functions on WinUSB by itself and attached to the
+connection that was up; from no driver at all — MediaTek's package out of the driver store — it
+bound them at its first start and connected; modes and bands written and put back, the messages
+read, the recovery steps R2–R6 taken by its own code, the eSIM's slot switched and its profiles
+listed, the `AT+CMGS` prompt given and cancelled. Learned:
+- **A reset can bring the modem back as another USB instance** (R5), on whatever driver Windows
+  remembers for it, with another network adapter; the app binds it again and configures the
+  adapter from scratch, as designed. A USB restart (R6) brings back the same instance. ARCHITECTURE
+  → *The recovery ladder* said both came back the same: corrected.
+- **A line end can come split between two packets** over WinUSB — CR in one, LF in the next. The
+  channel already carried an unterminated line over; a test now sends `Send-AtMessagePdu` the
+  packets the modem sent.
+- **The uninstallation, with no driver for the functions in the store**: `DiInstallDevice` found
+  none, and the null driver left each function with no service — what a first start then binds;
+  the functions of the instance a reset had left behind were removed (`DiUninstallDevice`).
+- **Found and fixed: `uninstall.cmd` exited 1** — and `cmd` said a path couldn't be found — every
+  time it succeeded, since M7: the folder it runs from is gone when `cmd` looks for the batch file
+  again after its last line. `(goto)` now leaves the batch file first; the exit code is the
+  setup's, a failure still pauses. A test runs the real file with the setup stood in for by a
+  command that deletes its folder.
+
+## 2026-10-05 — Decided: the uninstallation removes the functions of a modem not plugged in
+
+The uninstallation gives back the modems plugged in; one that isn't keeps its functions on WinUSB,
+which Windows remembers for that device — a reset can leave such an instance behind (above).
+Decided by the maintainer: **those functions are removed from Windows**, as Device Manager's
+*Uninstall device* removes a hidden one (`DiUninstallDevice`), so that Windows chooses their driver
+afresh when the modem comes back — MediaTek's where it is in the driver store, none otherwise. Only
+FM350 vendor functions on `winusb.inf`, never the network function nor ADB; never a device plugged
+in, which the C# checks before anything (`CM_Locate_DevNode`). The uninstaller says how many went.
+This replaces the one recorded earlier the same day — leave them on WinUSB and say so —, which
+the second pass's first fix had built. Rejected: asking the user to plug the modem in first, a question
+the uninstallation can't wait on.
 
 ## 2026-10-05 — M10: the second review pass
 
@@ -22,8 +50,8 @@ build) found three, fixed with tests:
   —, came back on WinUSB later, with no app to use it. The functions on WinUSB of the FM350s
   Windows remembers but that aren't plugged in are now counted (`Measure-AbsentWinUsbFunction`)
   and said, with Device Manager as the way out; *no modem plugged in* is no longer said when
-  nothing is on WinUSB at all. Removing those devices' entries, so that Windows chooses afresh at
-  the next plug-in, would be a further system change (decided against: the entry above).
+  nothing is on WinUSB at all. Removing those devices' entries instead was decided later the same
+  day (the entry above).
 - **The uninstallation would give back a WinUSB another tool chose**: every vendor function on
   WinUSB went back to its best driver. Only the functions on Windows' own `winusb.inf` — the model
   the app installs — are given back now; one on an INF of its own is not the app's.

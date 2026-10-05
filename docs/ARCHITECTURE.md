@@ -211,17 +211,20 @@ the process, and the port, alive.
 - **Updating** is the same: extract the new zip, run its `install.cmd`. Running it again from the
   install folder makes the tasks and the shortcut again without copying.
 - **Uninstall** (`uninstall.cmd`, in the zip and in the install folder, or *Uninstall* in
-  Windows' installed apps, which runs it): the running app exits as above, then the tasks and
-  their folder, the shortcut and the install folder are removed, and the app's entry in the list
-  last — until the folder is gone, an uninstallation that failed can run again from there. First,
+  Windows' installed apps, which runs it — from the folder it deletes: it moves its current
+  folder away first, its last line is read whole, and `(goto)` leaves the batch file before it
+  exits, or `cmd` would look for the file once gone and exit 1): the running app exits as above,
+  then the tasks and their folder, the shortcut and the install folder are removed, and the app's
+  entry in the list last — until the folder is gone, an uninstallation that failed can run again from there. First,
   while the app's code is still there, the modem's functions on WinUSB — on Windows' own
   `winusb.inf`, as the app puts them: one another tool put there with an INF of its own is left —
   go back to the driver Windows ranks best (`Restore-ModemUsbFunction`, M10; *USB functions and
   WinUSB*): MediaTek's COM ports come back where its driver is in the driver store. A function
-  another program holds stays on WinUSB, and so do the functions of a modem not plugged in —
-  `DiInstallDevice` reaches present devices only —, counted from the devices Windows remembers;
-  the uninstaller says each. A failure there, PnP that couldn't be read included, is said and stops
-  nothing. Nothing else on the modem or its adapter is undone: the connection stays as it is, as
+  another program holds stays on WinUSB. The functions of a modem not plugged in, which Windows
+  remembers on WinUSB — `DiInstallDevice` reaches present devices only —, are removed from Windows
+  instead (`DiUninstallDevice`; decided 2026-10-05), which chooses their driver afresh when the
+  modem comes back. The uninstaller says each. A failure there, PnP that couldn't be read
+  included, is said and stops nothing. Nothing else on the modem or its adapter is undone: the connection stays as it is, as
   *Exit* leaves it. The uninstaller asks whether to delete the settings, the stored SIM PIN and
   APN password, and the logs too.
 
@@ -545,10 +548,12 @@ step out (`Resolve-RecoveryAction`), proven by a matrix:
   device, checked by its hardware ID, with `pnputil` from the system folder, never through `PATH`
   (invariant 10).
 - **On WinUSB (M10)** the ladder is the same. The AT port's handle is closed before R6 as the COM
-  port was; a reset (R5) or a USB restart (R6) brings the functions back as the same device
-  instances, still on WinUSB, and a lost transport is found again by the next look. A function
-  that comes back as a new instance is put on WinUSB again before its port opens — an intended
-  operation, under H1, whose ladder is empty (*USB functions and WinUSB*).
+  port was; a lost transport is found again by the next look. A USB restart (R6) brings the
+  functions back as the same device instances, still on WinUSB; a reset (R5) may bring the modem
+  back as another instance, on another driver or none, with another network adapter
+  (`AT-COMMANDS.md` §1.2). A function that comes back as a new instance is put on WinUSB again
+  before its port opens — an intended operation, under H1, whose ladder is empty (*USB functions
+  and WinUSB*) —, and the adapter is configured from scratch.
 - Timings decided 2026-10-02.
 
 ### Maintenance windows
@@ -937,8 +942,11 @@ itself. The network function stays on Windows' RNDIS driver, as before.
    function's `DeviceInterfaceGUIDs`, then `DiInstallDevice` with no driver named — the best match
    in the driver store, MediaTek's serial driver when it is there —; with none, a null driver: the
    function as Windows leaves one it found no driver for. The uninstallation does it for every
-   vendor function on `winusb.inf` of every FM350 plugged in, and counts those of the ones that
-   aren't (*Installing and updating*, M10).
+   vendor function on `winusb.inf` of every FM350 plugged in. Those of an FM350 not plugged in,
+   which Windows remembers on WinUSB, it removes from Windows (`Select-AbsentWinUsbFunction`,
+   `Remove-AbsentUsbFunction`: `DiUninstallDevice`), so that their driver is chosen afresh when
+   the modem comes back — never the network function, never ADB, never a device plugged in, which
+   the C# checks with `CM_Locate_DevNode` (*Installing and updating*, M10).
 7. **The USB tab** (decided 2026-10-04): the state, with nothing to click — the app puts the
    functions on WinUSB by itself, and *Check now* tries again what failed: each vendor function
    with its driver (WinUSB, another, none) and its problem code, and the last time the app put

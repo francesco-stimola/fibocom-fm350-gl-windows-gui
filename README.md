@@ -97,7 +97,8 @@ the zip, or from the install folder — and accept the UAC prompt. It removes th
 its Start-menu entry and its place in the list of installed apps, and asks whether to delete your
 settings, the stored SIM PIN and APN password, and the logs too. The connection is left as it is.
 The modem's ports go back to the driver Windows ranks best — MediaTek's serial driver, where it is
-installed —: plug the modem in before uninstalling, or they stay on WinUSB.
+installed, none otherwise. A modem not plugged in has its ports removed from Windows, which
+chooses their driver again when it is plugged in.
 
 ## How it works
 
