@@ -18,11 +18,15 @@ $script:WinUsbInfName = 'winusb.inf'
 $script:WinUsbModelId = 'USB\MS_COMP_WINUSB'
 $script:UsbDeviceClassGuid = '{88BAE032-5A81-49F0-BC3D-A4FF138216D6}'
 
-# Windows' error codes the app tells apart.
+# Windows' error codes the app tells apart. A port another program holds answers an exclusive open
+# with one of HeldErrors: MediaTek's serial driver with ERROR_BUSY, WinUSB with ERROR_ACCESS_DENIED
+# (AT-COMMANDS sections 1.2 and 2).
 $script:Win32Errors = @{
     AccessDenied     = 5
     SharingViolation = 32
+    Busy             = 170
 }
+$script:HeldErrors = @(5, 32, 170)
 
 # How long a driver installation may take before it is given up, in ms: as pnputil's (M6).
 $script:UsbBindingTimeoutMs = 300000
@@ -422,8 +426,8 @@ namespace FibocomFm350
         }
 
         // Opens a COM port or a device interface exclusively and closes it at once, nothing read or
-        // written: 0 when it could be opened, else Windows' error - ERROR_ACCESS_DENIED or
-        // ERROR_SHARING_VIOLATION: another program holds it.
+        // written: 0 when it could be opened, else Windows' error - ERROR_BUSY, ERROR_ACCESS_DENIED
+        // or ERROR_SHARING_VIOLATION: another program holds it.
         public static int TryPath(string path)
         {
             using (SafeFileHandle port = Native.CreateFileW(path, Native.GenericRead | Native.GenericWrite, 0, IntPtr.Zero,
@@ -784,6 +788,13 @@ function Get-WinUsbInterfacePath {
     [FibocomFm350.UsbDevices]::GetInterfacePaths([guid]$InterfaceGuid, $InstanceId)
 }
 
+function Test-Win32Held {
+    # Whether Windows' answer to an exclusive open says another program holds the port: pure.
+    param([int] $Code)
+
+    $Code -in $script:HeldErrors
+}
+
 function Test-UsbFunctionFree {
     <#
     .SYNOPSIS
@@ -814,10 +825,9 @@ function Test-UsbFunctionFree {
         [string[]] $InterfaceGuid = @()
     )
 
-    $heldCodes = $script:Win32Errors['AccessDenied'], $script:Win32Errors['SharingViolation']
     if ($PortName) {
         $code = [FibocomFm350.UsbDevices]::TryComPort($PortName)
-        if ($code -in $heldCodes) {
+        if (Test-Win32Held -Code $code) {
             return [pscustomobject]@{ Free = $false; Held = 'Port'; Error = $code }
         }
     }
@@ -829,7 +839,7 @@ function Test-UsbFunctionFree {
         }
         foreach ($path in @([FibocomFm350.UsbDevices]::GetInterfacePaths($guid, $InstanceId))) {
             $code = [FibocomFm350.UsbDevices]::TryPath($path)
-            if ($code -in $heldCodes) {
+            if (Test-Win32Held -Code $code) {
                 return [pscustomobject]@{ Free = $false; Held = 'Interface'; Error = $code }
             }
         }

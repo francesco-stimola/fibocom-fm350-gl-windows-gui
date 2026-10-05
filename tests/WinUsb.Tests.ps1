@@ -29,6 +29,22 @@ Describe 'Test-UsbFunctionFree' {
     }
 }
 
+Describe 'Telling a port another program holds' {
+    It 'takes Windows'' <Code> to an exclusive open for <Said>' -ForEach @(
+        @{ Code = 170; Said = 'held: MediaTek''s serial driver, its port open elsewhere'; Held = $true }
+        @{ Code = 5; Said = 'held: WinUSB, its interface open elsewhere'; Held = $true }
+        @{ Code = 32; Said = 'held: a sharing violation'; Held = $true }
+        @{ Code = 0; Said = 'free: opened'; Held = $false }
+        @{ Code = 2; Said = 'free: gone meanwhile'; Held = $false }
+        @{ Code = 3; Said = 'free: no such path'; Held = $false }
+    ) {
+        InModuleScope FibocomFm350 -Parameters @{ Code = $Code; Held = $Held } {
+            param($Code, $Held)
+            Test-Win32Held -Code $Code | Should -Be $Held
+        }
+    }
+}
+
 Describe 'Install-WinUsbDriver and Restore-UsbFunctionDriver' {
     It 'never take <InstanceId>' -ForEach @(
         @{ InstanceId = 'USB\VID_0E8D&PID_7127&MI_00\8&00000000&0&0000' }

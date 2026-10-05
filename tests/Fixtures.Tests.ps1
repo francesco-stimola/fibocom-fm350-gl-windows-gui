@@ -75,7 +75,7 @@ BeforeAll {
             }
         }
         foreach ($match in [regex]::Matches($Line, '[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}')) {
-            if ("{$($match.Value)}" -notin $script:fakes.ContainerIds) {
+            if ("{$($match.Value)}" -notin $script:fakes.ContainerIds -and "{$($match.Value)}" -notin $script:fakes.InterfaceClasses) {
                 "GUID '$($match.Value)'"
             }
         }

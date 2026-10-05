@@ -43,4 +43,8 @@
 
     # Windows container IDs.
     ContainerIds = @('{00000000-0000-0000-0000-000000000001}', '{00000000-0000-0000-0000-000000000002}')
+
+    # Device interface classes, which name a kind of interface, never a device: the app's own (M10)
+    # and Android's ADB interface, which Windows' WinUSB model for ADB gives.
+    InterfaceClasses = @('{4FDE9624-2286-4DC0-9D07-601A3922581A}', '{F72FE0D4-CBCB-407d-8814-9ED673D0DD6B}')
 }

@@ -120,6 +120,39 @@ Describe 'Resolve-ModemUsbDevice' {
         }
     }
 
+    Context 'on the captured 7127 modem with its vendor functions on WinUSB, as the app puts them' {
+        BeforeAll {
+            $fixture = Get-Content -LiteralPath "$PSScriptRoot/fixtures/device/pnp.7127.winusb.json" -Raw | ConvertFrom-Json
+            $script:modems = @(Resolve-ModemUsbDevice -Device $fixture.Devices)
+        }
+
+        It 'finds the AT port on MI_06, on WinUSB with the app''s interface class, every function read' {
+            $atPort = $script:modems[0].AtPort
+            $atPort.WinUsb | Should -BeTrue
+            $atPort.State | Should -Be 'Working'
+            $atPort.InterfaceGuids | Should -Be @('{4FDE9624-2286-4DC0-9D07-601A3922581A}')
+            $script:modems[0].Functions.Read | Sort-Object -Unique | Should -Be $true
+        }
+
+        It 'sees every vendor function on WinUSB, ADB on its own class, the network function on RNDIS' {
+            ($script:modems[0].Functions | Where-Object Vendor).WinUsb | Sort-Object -Unique | Should -Be $true
+            ($script:modems[0].Functions | Where-Object Interface -EQ 5).Vendor | Should -BeFalse
+            $script:modems[0].Network.Service | Should -Be 'usbrndis6'
+        }
+
+        It 'keeps the COM port names the serial driver left in the registry, which say nothing of the driver' {
+            ($script:modems[0].Functions | Where-Object Vendor).PortName | Where-Object { $_ } | Should -HaveCount 7
+            (Resolve-ModemPresence -Modem $script:modems).Device | Should -Be 'Present'
+        }
+
+        It 'has nothing to put on WinUSB' {
+            $presence = Resolve-ModemPresence -Modem $script:modems
+            $presence.AtInstanceId | Should -BeLike 'USB\VID_0E8D&PID_7127&MI_06\*'
+            $plan = Resolve-ModemBinding -Function $presence.Functions
+            $plan.Bind | Should -BeNullOrEmpty
+            $plan.Left | Should -BeNullOrEmpty
+        }
+    }
     It 'names no driver for a function without one' {
         $fixture = Get-Content -LiteralPath "$PSScriptRoot/fixtures/device/pnp.7127.nodriver.json" -Raw | ConvertFrom-Json
         (Resolve-ModemUsbDevice -Device $fixture.Devices).AtPort.Driver | Should -BeNullOrEmpty
@@ -166,7 +199,7 @@ Describe 'Resolve-ModemUsbDevice' {
     }
 
     It 'reads the captured records whole' {
-        foreach ($name in 'driver', 'nodriver', 'uninstalled') {
+        foreach ($name in 'driver', 'nodriver', 'uninstalled', 'winusb') {
             $fixture = Get-Content -LiteralPath "$PSScriptRoot/fixtures/device/pnp.7127.$name.json" -Raw | ConvertFrom-Json
             (Resolve-ModemUsbDevice -Device $fixture.Devices).Functions.Read | Sort-Object -Unique | Should -Be $true
         }
