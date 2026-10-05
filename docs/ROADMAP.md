@@ -227,4 +227,5 @@ decided, and record the decision in `DEVLOG.md`.
 ## Ideas (not scheduled)
 
 *None at the moment.* Considered and declined: distribution through the PowerShell Gallery
-(DEVLOG, 2026-09-29).
+(DEVLOG, 2026-09-29); a GNSS position from the modem — absent on its firmware (DEVLOG,
+2026-10-05).

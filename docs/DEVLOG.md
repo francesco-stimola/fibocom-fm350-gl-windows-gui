@@ -4,6 +4,19 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-05 — The modem's other functions: nothing for the app
+
+What could the vendor functions other than the AT port serve? By their names (MediaTek's INF,
+AT-COMMANDS §1) and the manual: the application processor's and the modem's logs and META ports,
+which speak MediaTek's own protocols to MediaTek's own tools; NPT and debug, documented nowhere;
+ADB, a shell on the module's own system — research, not a feature; and GNSS, the one a feature
+could come from: a position, a fix and its satellites in the window. Probed on the device first: the
+GNSS commands are absent on this firmware (`+CME ERROR: 100`), and the GNSS function sends nothing
+and answers no AT command (AT-COMMANDS §1.2, §4). So **no GNSS feature**, declined in the roadmap's
+ideas; the app goes on opening the AT function only, the others on WinUSB with no interface to open
+(M10). A firmware that has the commands would need its own look: a position is a stronger
+identifier than a cell and its TAC, never to be logged.
+
 ## 2026-10-05 — M10: the third review pass
 
 The third review pass (of three: the whole change since `v1.2.0`) found three, fixed with tests:
