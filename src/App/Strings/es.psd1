@@ -4,9 +4,11 @@
 @{
     # Why the connection is where it is (Resolve-ConnectionState's reasons).
     'Reason.NoDevice'              = 'No se ha encontrado ningún módem en USB.'
-    'Reason.NoDriver'              = 'El puerto AT del módem no tiene controlador: la aplicación no puede comunicarse con el módem hasta que se instale.'
     'Reason.DeviceProblem'         = 'Windows informa de un problema con el puerto AT del módem.'
     'Reason.PortInUse'             = 'Otro programa está usando el puerto AT del módem.'
+    'Reason.BindFailed'            = 'No se pudo pasar el puerto AT del módem al controlador WinUSB de Windows: la aplicación lo vuelve a intentar con «Comprobar ahora» o cuando se vuelve a conectar el módem.'
+    'Reason.BindNotElevated'       = 'Pasar el puerto AT del módem al controlador WinUSB de Windows requiere derechos de administrador: inicia la aplicación como administrador.'
+    'Reason.BindRestartNeeded'     = 'El puerto AT del módem pasa al controlador WinUSB de Windows en el próximo reinicio de Windows.'
     'Reason.PortFailed'            = 'No se puede abrir el puerto AT del módem.'
     'Reason.SimUnknown'            = 'Leyendo la SIM.'
     'Reason.NoPin'                 = 'La SIM está esperando su PIN.'
@@ -48,6 +50,7 @@
 
     # What the next step does, while the connection is on its way; and the same after a colon.
     'Action.OpenPort'                = 'Abriendo el puerto AT del módem.'
+    'Action.BindUsb'                 = 'Pasando el puerto AT del módem al controlador WinUSB de Windows.'
     'Action.Initialize'              = 'Esperando a que el módem responda.'
     'Action.EnterPin'                = 'Introduciendo el PIN guardado.'
     'Action.RadioOn'                 = 'Encendiendo la radio.'
@@ -58,6 +61,7 @@
     'Action.ConfigureAdapter'        = 'Configurando el adaptador de red.'
     'Action.ApplyNetworkMode'        = 'Estableciendo el modo de red.'
     'ActionInline.OpenPort'          = 'abriendo el puerto AT del módem.'
+    'ActionInline.BindUsb'           = 'pasando el puerto AT del módem al controlador WinUSB de Windows.'
     'ActionInline.Initialize'        = 'esperando a que el módem responda.'
     'ActionInline.EnterPin'          = 'introduciendo el PIN guardado.'
     'ActionInline.RadioOn'           = 'encendiendo la radio.'
@@ -104,25 +108,6 @@
     'Result.SetNetworkMode.ModeUnsupported' = 'El módem no admite este modo de red: no se ha escrito nada.'
     'Result.SetNetworkMode.NoSupportedBand' = 'El módem no admite ninguna de las bandas elegidas para una de sus RAT: no se ha escrito nada.'
     'Result.SetNetworkMode.Unknown'         = 'No se puede leer el modo de red del módem: no se ha escrito nada.'
-    'Result.CheckDriverPackage.Verified'    = 'Paquete del controlador comprobado: una versión que la aplicación conoce.'
-    'Result.CheckDriverPackage.Signed'      = 'Paquete del controlador comprobado: firmado por Microsoft, una versión que la aplicación no conoce.'
-    'Result.CheckDriverPackage.Refused'     = 'El paquete del controlador no se puede instalar: la pestaña Controlador indica el motivo.'
-    'Result.CheckDriverPackage.NoPackage'   = 'No se ha elegido ningún paquete del controlador.'
-    'Result.CheckDriverPackage.Failed'      = 'No se puede leer el paquete del controlador.'
-    'Result.InstallDriver.Done'             = 'Controlador instalado: la aplicación abre el puerto AT del módem en cuanto Windows lo inicia.'
-    'Result.InstallDriver.RestartNeeded'    = 'Controlador instalado: Windows necesita reiniciarse para terminar.'
-    'Result.InstallDriver.NoDevice'         = 'Controlador añadido a Windows, pero ningún dispositivo lo ha adoptado: se usará cuando se conecte el módem, a menos que Windows dé más prioridad a otro controlador.'
-    'Result.InstallDriver.Unconfirmed'      = 'No instalado: una versión que la aplicación no conoce necesita tu confirmación.'
-    'Result.InstallDriver.NoPackage'        = 'Primero elige un paquete del controlador.'
-    'Result.InstallDriver.DriverWorking'    = 'El puerto AT ya tiene un controlador que funciona: no se ha instalado nada.'
-    'Result.InstallDriver.TimedOut'         = 'Windows no terminó de instalar el controlador a tiempo: se ha detenido.'
-    'Result.InstallDriver.Failed'           = 'Windows no ha instalado el controlador.'
-    'Result.UninstallDriver.Done'           = 'Controlador desinstalado: la aplicación no puede comunicarse con el módem hasta que se vuelva a instalar.'
-    'Result.UninstallDriver.RestartNeeded'  = 'Controlador desinstalado: Windows necesita reiniciarse para terminar.'
-    'Result.UninstallDriver.NoDriver'       = 'El puerto AT no tiene ningún controlador que la aplicación pueda desinstalar.'
-    'Result.UninstallDriver.TrialOn'        = 'No desinstalado: hay un modo de red en prueba, y solo el puerto AT puede volver a escribir el anterior.'
-    'Result.UninstallDriver.TimedOut'       = 'Windows no terminó de desinstalar el controlador a tiempo: se ha detenido.'
-    'Result.UninstallDriver.Failed'         = 'Windows no ha desinstalado el controlador.'
     'Result.NotElevated'                    = 'Eso necesita permisos de administrador.'
     'Result.Refused'                        = 'No disponible mientras la aplicación solo observa.'
     'Result.NoModem'                        = 'El módem no está conectado.'
@@ -184,7 +169,6 @@
     'Blocker.StorePin'      = 'Guardar PIN'
     'Blocker.EnableAdapter' = 'Habilitar adaptador'
     'Blocker.Unlock'        = 'Desbloquear...'
-    'Blocker.InstallDriver' = 'Instalar el controlador...'
     'Blocker.OpenSettings'  = 'Abrir la configuración'
     'Blocker.ObserveOnly'   = 'La aplicación solo observa: no cambia nada.'
     'Blocker.NeedsAdmin'    = 'Para habilitarlo se necesitan permisos de administrador.'
@@ -257,34 +241,31 @@
     'Rule.Bands'               = 'debe ser una lista de números de banda sin repetir, de {0} a {1}'
     'Rule.Gigabytes'           = 'debe ser un número de gigabytes de {0} a {1}, 0 para ninguno'
 
-    # The Driver tab.
-    'DriverProblem.NoInf'        = 'no contiene ningún controlador (no hay archivo INF)'
-    'DriverProblem.NotForModem'  = 'ninguno de sus controladores está destinado al puerto AT de este módem'
-    'DriverProblem.NoCatalog'    = 'su controlador no tiene catálogo de firmas'
-    'DriverProblem.NotWhql'      = 'su catálogo no está firmado por Microsoft (WHQL)'
-    'DriverProblem.NotInCatalog' = 'su archivo INF no es el que avala su catálogo: se ha modificado o está dañado'
-    'DriverProblem.NotTrusted'   = 'no se puede verificar su firma'
-    'Driver.Present'             = 'El puerto AT del módem tiene su controlador.'
-    'Driver.PresentWhat'         = 'El puerto AT del módem tiene su controlador: {0}.'
-    'Driver.NoDriver'            = 'El puerto AT del módem no tiene controlador: la aplicación no puede comunicarse con el módem.'
-    'Driver.Problem'             = 'Windows informa de un problema con el puerto AT del módem: volver a instalar su controlador puede solucionarlo.'
-    'Driver.Absent'              = 'No hay ningún módem en USB. Un controlador instalado ahora se usará en cuanto se conecte el módem.'
-    'Driver.NotLooked'           = 'Aún no se ha examinado el puerto AT del módem.'
-    'Driver.Source'              = 'La aplicación no incluye el controlador del módem: no tiene licencia para redistribuirlo. Descarga una copia y luego elígela aquí: la aplicación comprueba que Microsoft la firmó (WHQL) para este módem, y nunca ejecuta ningún programa que contenga.'
-    'Driver.SourceCopy'          = 'La aplicación no incluye el controlador del módem: no tiene licencia para redistribuirlo. Un tercero, {1}, publica una copia del controlador de MediaTek, {0}, como {2}. Descárgala y luego elígela aquí: la aplicación comprueba que Microsoft la firmó (WHQL) para este módem, y nunca ejecuta ningún programa que contenga.'
-    'Driver.Checking'            = 'Comprobando el paquete del controlador...'
-    'Driver.Installing'          = 'Instalando el controlador: Windows puede tardar un minuto.'
-    'Driver.Uninstalling'        = 'Desinstalando el controlador...'
-    'Driver.Verified'            = '{0}: {1}, una versión que la aplicación conoce, firmada por Microsoft (WHQL) para este módem.'
-    'Driver.Signed'              = '{0}: {1}, firmado por Microsoft (WHQL) para este módem, pero no es una versión que la aplicación conozca: pregunta antes de instalarlo.'
-    'Driver.Refused'             = 'No se puede instalar {0}: {1}.'
-    'Driver.ObserveOnly'         = 'La aplicación solo observa: no cambia nada.'
-    'Driver.NeedsAdmin'          = 'Para instalar o desinstalar un controlador se necesitan permisos de administrador: ejecuta la aplicación como administrador.'
-    'Driver.Trial'               = 'Hay un modo de red en prueba: el controlador se podrá desinstalar cuando termine la prueba.'
-    'Driver.Install'             = 'Instalar'
-    'Driver.InstallConfirm'      = 'Instalar...'
-    'Driver.ChooseTitle'         = 'Elegir el paquete del controlador descargado'
-    'Driver.FileKind'            = 'Paquete del controlador'
+    # The USB tab.
+    'Usb.Present'                 = 'El puerto AT del módem está en el controlador WinUSB de Windows: no hay ningún controlador que instalar.'
+    'Usb.Unbound'                 = 'El puerto AT del módem aún no está en el controlador WinUSB de Windows: la aplicación lo pasa.'
+    'Usb.NotLooked'               = 'Las funciones del módem aún no se han examinado.'
+    'Usb.FunctionName'            = '{0} (MI_{1})'
+    'Usb.FunctionLine'            = '{0}: {1}'
+    'Usb.Function.MdAt'           = 'Puerto AT'
+    'Usb.Function.MdMeta'         = 'Puerto META del módem'
+    'Usb.Function.ApMeta'         = 'Puerto META AP'
+    'Usb.Function.ApLog'          = 'Puerto de registro AP'
+    'Usb.Function.ApGnss'         = 'Puerto GNSS'
+    'Usb.Function.Npt'            = 'Puerto NPT'
+    'Usb.Function.Debug'          = 'Puerto de depuración'
+    'Usb.Function.Other'          = 'Función'
+    'Usb.OnWinUsb'                = 'WinUSB'
+    'Usb.OtherDriver'             = 'otro controlador'
+    'Usb.NoDriver'                = 'ningún controlador'
+    'Usb.ProblemCode'             = '{0}, código de problema {1}'
+    'Usb.LastChange'              = 'Último cambio a las {0}:'
+    'Usb.Bound'                   = '{0}: ahora en WinUSB.'
+    'Usb.Held'                    = '{0}: se deja en su controlador, otro programa tiene su puerto.'
+    'Usb.Failed'                  = '{0}: no se pudo pasar a WinUSB ({1}).'
+    'Usb.RestartNeeded'           = '{0}: en WinUSB en el próximo reinicio de Windows.'
+    'Usb.ObserveOnly'             = 'La aplicación solo observa: no pasa ninguna función a WinUSB.'
+    'Usb.NeedsAdmin'              = 'Pasar las funciones del módem a WinUSB requiere derechos de administrador: inicia la aplicación como administrador.'
 
     # The window: the connection, its notes, the signal, the footer.
     'Window.Restarting'      = 'La supervisión se detuvo y se está reiniciando. La conexión no se toca.'
@@ -294,7 +275,7 @@
     'Window.ObserveOnly'     = 'La aplicación solo observa: no cambia nada en el módem ni en el sistema.'
     'Window.SettingsPending' = 'La conexión de datos está activa con otra configuración: la nueva se aplica en la próxima conexión.'
     'Window.SettingsFile'    = 'Archivo de configuración: {0}'
-    'Window.Modems'          = 'Se han encontrado {0} módems: la aplicación usa el de {1}.'
+    'Window.Modems'          = 'Se han encontrado {0} módems: la aplicación usa uno, siempre el mismo.'
     'Window.Recovered'       = 'Conexión recuperada a las {0}: {1}'
     'Window.NrAvailable'     = '{0}, 5G disponible'
     'Window.NothingMeasured' = 'Sin mediciones.'
@@ -308,7 +289,7 @@
     'Carrier.Primary'        = 'Primaria'
     'Carrier.Active'         = 'Activa'
     'Carrier.Inactive'       = 'Inactiva'
-    'Footer.Port'            = 'Puerto AT {0}'
+    'Footer.Port'            = 'Puerto AT en {0}'
     'Footer.PortClosed'      = 'Puerto AT cerrado'
     'Footer.Updated'         = 'actualizado a las {0}'
     'Footer.PathChecked'     = 'ruta de datos comprobada a las {0}'
@@ -331,20 +312,6 @@ Después, el módem se reinicia.
 ¿Quitar el PIN de la SIM?
 
 Esto cambia la tarjeta SIM, no la aplicación: la SIM ya no pedirá su PIN, ni en este módem ni en ningún teléfono. Un PIN incorrecto gasta uno de sus intentos.
-'@
-    'Confirm.UnknownDriverTitle'   = 'Instalar una versión desconocida del controlador'
-    'Confirm.UnknownDriver'        = @'
-¿Instalar una versión del controlador que la aplicación no conoce?
-
-Microsoft firmó este paquete (WHQL) para el puerto AT del módem, así que Windows lo acepta; pero no es una versión que la aplicación conozca.
-
-Windows lo instala en todos los dispositivos para los que sirva.
-'@
-    'Confirm.UninstallDriverTitle' = 'Desinstalar el controlador'
-    'Confirm.UninstallDriver'      = @'
-¿Desinstalar el controlador del puerto AT del módem?
-
-Windows lo quita de los puertos serie del módem y de su almacén de controladores. La conexión de datos sigue activa, pero la aplicación no puede comunicarse con el módem ni vigilar la conexión hasta que se vuelva a instalar el controlador.
 '@
 
     # The window's fixed texts (MainWindow.xaml).
@@ -392,11 +359,7 @@ Windows lo quita de los puertos serie del módem y de su almacén de controlador
     'Xaml.Updates'           = 'Actualizaciones'
     'Xaml.UpdateCheck'       = 'Buscar una versión más reciente una vez en cada inicio'
     'Xaml.Save'              = 'Guardar'
-    'Xaml.DriverTab'         = 'Controlador'
-    'Xaml.OpenPage'          = 'Abrir la página de descarga'
-    'Xaml.ChoosePackage'     = 'Elegir el paquete descargado...'
-    'Xaml.Install'           = 'Instalar'
-    'Xaml.UninstallDriver'   = 'Desinstalar el controlador...'
+    'Xaml.UsbTab'            = 'USB'
 
     # Starting the app at sign-in, in the connection tab.
     'Xaml.Startup'                    = 'Inicio'

@@ -14,7 +14,9 @@ Describe 'Resolve-HealthCheck' {
     It '<State> (<Reason>) -> <Check>, blocked <Blocked>' -ForEach @(
         @{ State = 'Online'; Reason = $null; Blocked = $false; Check = $null }
         @{ State = 'NoDevice'; Reason = 'NoDevice'; Blocked = $true; Check = 'H1' }
-        @{ State = 'NoDevice'; Reason = 'NoDriver'; Blocked = $true; Check = 'H1' }
+        @{ State = 'NoDevice'; Reason = 'BindFailed'; Blocked = $true; Check = 'H1' }
+        @{ State = 'NoDevice'; Reason = 'BindNotElevated'; Blocked = $true; Check = 'H1' }
+        @{ State = 'NoDevice'; Reason = 'BindRestartNeeded'; Blocked = $true; Check = 'H1' }
         @{ State = 'NoDevice'; Reason = 'DeviceProblem'; Blocked = $true; Check = 'H1' }
         @{ State = 'NoDevice'; Reason = 'PortFailed'; Blocked = $false; Check = 'H2' }
         @{ State = 'NoDevice'; Reason = $null; Blocked = $false; Check = 'H2' }
@@ -34,6 +36,15 @@ Describe 'Resolve-HealthCheck' {
         @{ State = 'DataActive'; Reason = 'DataPathFailed'; Blocked = $false; Check = 'H7' }
     ) {
         $health = Resolve-HealthCheck -State $State -Reason $Reason -Blocked:$Blocked
+        $health.Check | Should -Be $Check
+        $health.Blocked | Should -Be $Blocked
+    }
+
+    It 'takes an AT port the worker is about to put on WinUSB for H1 - no ladder -, one held by another program for H2, blocked: <Reason>' -ForEach @(
+        @{ Reason = $null; Check = 'H1'; Blocked = $false }
+        @{ Reason = 'PortInUse'; Check = 'H2'; Blocked = $true }
+    ) {
+        $health = Resolve-HealthCheck -State NoDevice -Reason $Reason -Action BindUsb
         $health.Check | Should -Be $Check
         $health.Blocked | Should -Be $Blocked
     }

@@ -397,21 +397,13 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem x:Name="DriverTab" Header="[[Xaml.DriverTab]]">
+            <TabItem x:Name="UsbTab" Header="[[Xaml.UsbTab]]">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="10">
-                        <TextBlock x:Name="DriverStateText" TextWrapping="Wrap"/>
-                        <TextBlock x:Name="DriverSourceText" TextWrapping="Wrap" Margin="0,10,0,0" Foreground="#606060"/>
-                        <WrapPanel Margin="0,10,0,0">
-                            <Button x:Name="OpenDriverPageButton" Content="[[Xaml.OpenPage]]" Margin="0,0,8,4" Padding="10,2"/>
-                            <Button x:Name="ChooseDriverButton" Content="[[Xaml.ChoosePackage]]" Margin="0,0,0,4" Padding="10,2"/>
-                        </WrapPanel>
-                        <TextBlock x:Name="DriverPackageText" TextWrapping="Wrap" Margin="0,8,0,0"/>
-                        <WrapPanel Margin="0,8,0,0">
-                            <Button x:Name="InstallDriverButton" Content="[[Xaml.Install]]" Margin="0,0,8,4" Padding="16,2"/>
-                            <Button x:Name="UninstallDriverButton" Content="[[Xaml.UninstallDriver]]" Margin="0,0,0,4" Padding="10,2"/>
-                        </WrapPanel>
-                        <TextBlock x:Name="DriverNoteText" TextWrapping="Wrap" Margin="0,8,0,0" Foreground="#606060" Visibility="Collapsed"/>
+                        <TextBlock x:Name="UsbStateText" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="UsbFunctionsText" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                        <TextBlock x:Name="UsbBindingText" TextWrapping="Wrap" Margin="0,10,0,0" Visibility="Collapsed"/>
+                        <TextBlock x:Name="UsbNoteText" TextWrapping="Wrap" Margin="0,8,0,0" Foreground="#606060" Visibility="Collapsed"/>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>

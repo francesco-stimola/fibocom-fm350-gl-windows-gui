@@ -427,8 +427,26 @@ class SimulatedDevice {
     [string] $Scenario
     [object] $Modem
     [object] $Adapter
-    # How PnP sees the modem: 'Present', 'Absent' or 'NoDriver'.
+    # How PnP sees the modem: 'Present' (its vendor functions on WinUSB, as the app puts them),
+    # 'Unbound' (on MediaTek's driver: the app puts them on WinUSB) or 'Absent'.
     [string] $Presence = 'Present'
+    # The app's interface class, which a bound AT port carries.
+    [string] $InterfaceGuid
+    # The interfaces on WinUSB.
+    [System.Collections.Generic.HashSet[int]] $Bound = [System.Collections.Generic.HashSet[int]]::new()
+    # The interfaces whose COM port another program holds: the app leaves them on their driver.
+    [System.Collections.Generic.HashSet[int]] $HeldPorts = [System.Collections.Generic.HashSet[int]]::new()
+    # What putting a function on WinUSB does: 'Done', 'Failed', or 'RestartNeeded' (Windows
+    # finishes it at the next restart).
+    [string] $BindResult = 'Done'
+    # How many functions were put on WinUSB, and given back to their best driver.
+    [int] $Binds = 0
+    [int] $Restores = 0
+    # A modem back from a reset comes back as a new device instance, on MediaTek's driver (a
+    # re-enumeration, AT-COMMANDS section 1): the app puts it on WinUSB again.
+    [bool] $NewInstanceOnReturn = $false
+    # Its instance: the tail of its devices' instance IDs.
+    [int] $Instance = 1
     # How long the modem stays off USB once it vanished (a restart).
     [int] $AwayMs = 5000
     # Probe rounds lost once the address is usable: a path still settling.
@@ -440,46 +458,94 @@ class SimulatedDevice {
     [object] $LogonTask = $null
     hidden [long] $LostAt = 0
 
-    # The modem as PnP would report it, shaped as Resolve-ModemPresence's result. A modem that
-    # vanished is away for AwayMs, then back on the same port.
-    [object] Find() {
-        $device = $this.Presence
-        if ($device -eq 'Present' -and $this.Modem.Lost) {
+    # The modem's functions as PnP would report them, shaped as Get-ModemPnpRecord's: none while
+    # it is off USB - it vanished, for AwayMs; then it is back, on the same port, or as a new
+    # instance on MediaTek's driver.
+    [object[]] PnpRecords() {
+        if ($this.Presence -eq 'Absent') {
+            return @()
+        }
+        if ($this.Modem.Lost) {
             $now = [Environment]::TickCount64
             if ($this.LostAt -eq 0) {
                 $this.LostAt = $now
             }
             if ($now - $this.LostAt -lt $this.AwayMs) {
-                $device = 'Absent'
+                return @()
             }
-            else {
-                $this.LostAt = 0
-                $this.Modem.Reappear($this.Modem.PortName)
+            $this.LostAt = 0
+            if ($this.NewInstanceOnReturn) {
+                $this.Instance++
+                $this.Bound.Clear()
+                $this.Presence = 'Unbound'
             }
+            $this.Modem.Reappear($this.Modem.PortName)
         }
-        return [pscustomobject]@{
-            Device            = $device
-            InstanceId        = if ($device -eq 'Present') { 'USB\VID_0E8D&PID_7127\SIMULATED' } else { $null }
-            PortName          = if ($device -eq 'Present') { $this.Modem.PortName } else { $null }
-            AdapterInstanceId = $null
-            Modems            = if ($device -eq 'Absent') { 0 } else { 1 }
-            ProductId         = if ($device -eq 'Absent') { $null } else { '7127' }
-            Driver            = if ($device -eq 'Present') { [pscustomobject]@{ InfPath = 'oem0.inf'; Version = '3.22.43.1'; Provider = 'MediaTek' } } else { $null }
+        $parent = "USB\VID_0E8D&PID_7127\SIMULATED$($this.Instance)"
+        $records = [System.Collections.Generic.List[object]]::new()
+        $records.Add([pscustomobject]@{
+                InstanceId = "USB\VID_0E8D&PID_7127&MI_00\SIMULATED$($this.Instance)&0000"; Present = $true; ProblemCode = 0; Service = 'usbrndis6'; Parent = $parent
+                CompatibleIds = @('USB\Class_e0&SubClass_01&Prot_03'); PortName = $null; InterfaceGuids = $null
+            })
+        $records.Add([pscustomobject]@{
+                InstanceId = "USB\VID_0E8D&PID_7127&MI_05\SIMULATED$($this.Instance)&0005"; Present = $true; ProblemCode = 0; Service = 'WINUSB'; Parent = $parent
+                CompatibleIds = @('USB\Class_ff&SubClass_42&Prot_01'); PortName = $null; InterfaceGuids = $null
+            })
+        # Composition 7127's vendor serial functions (AT-COMMANDS section 1).
+        foreach ($interface in @(2, 3, 4, 6, 7, 8, 9)) {
+            $onWinUsb = $this.Bound.Contains($interface)
+            $records.Add([pscustomobject]@{
+                    InstanceId     = "USB\VID_0E8D&PID_7127&MI_0$interface\SIMULATED$($this.Instance)&000$interface"; Present = $true; ProblemCode = 0
+                    Service        = if ($onWinUsb) { 'WINUSB' } else { 'usb2ser_tm' }
+                    Parent         = $parent
+                    CompatibleIds  = @('USB\Class_ff&SubClass_00&Prot_00')
+                    PortName       = if ($onWinUsb) { $null } else { "COM$(20 + $interface)" }
+                    InterfaceGuids = if ($onWinUsb -and $interface -eq 6) { @($this.InterfaceGuid) } else { $null }
+                })
         }
+        return $records.ToArray()
     }
 
-    # Windows installs the AT port's driver (pnputil): a modem on USB without one has it at once.
-    [void] InstallDriver() {
-        if ($this.Presence -eq 'NoDriver') {
+    # Whether a COM port can be opened, as Test-ComPortFree finds it: held by another program
+    # (ERROR_ACCESS_DENIED), or free.
+    [int] TryPort([string] $portName) {
+        foreach ($interface in $this.HeldPorts) {
+            if ($portName -eq "COM$(20 + $interface)") {
+                return 5
+            }
+        }
+        return 0
+    }
+
+    # A function put on WinUSB, shaped as Install-WinUsbDriver's result.
+    [object] Bind([string] $instanceId) {
+        $interface = [Convert]::ToInt32(($instanceId -replace '^.*&MI_([0-9A-F]{2})\\.*$', '$1'), 16)
+        switch ($this.BindResult) {
+            'Failed' {
+                return [pscustomobject]@{ Done = $false; NeedReboot = $false; Step = 'Install'; Error = 0xE0000203 }
+            }
+            'RestartNeeded' {
+                return [pscustomobject]@{ Done = $true; NeedReboot = $true; Step = 'Install'; Error = 0 }
+            }
+        }
+        [void]$this.Bound.Add($interface)
+        $this.Binds++
+        if ($interface -eq 6) {
             $this.Presence = 'Present'
         }
+        return [pscustomobject]@{ Done = $true; NeedReboot = $false; Step = 'Install'; Error = 0 }
     }
 
-    # Windows removes the AT port's driver: the port is gone until it is installed again.
-    [void] UninstallDriver() {
-        if ($this.Presence -eq 'Present') {
-            $this.Presence = 'NoDriver'
+    # A function given back to its best driver, MediaTek's, shaped as Restore-UsbFunctionDriver's
+    # result.
+    [object] Restore([string] $instanceId) {
+        $interface = [Convert]::ToInt32(($instanceId -replace '^.*&MI_([0-9A-F]{2})\\.*$', '$1'), 16)
+        [void]$this.Bound.Remove($interface)
+        $this.Restores++
+        if ($interface -eq 6) {
+            $this.Presence = 'Unbound'
         }
+        return [pscustomobject]@{ Done = $true; NeedReboot = $false; Step = 'Best'; Error = 0 }
     }
 
     # The modem's AT port, for a new channel.
@@ -542,8 +608,9 @@ function New-SimulatedDevice {
         - PinRequired: the SIM waits for its PIN, 1234; 0000 is refused.
         - FccLocked: locked by a laptop's maker; the unlock restarts it, online.
         - AdapterDisabled: the modem's adapter disabled by the user.
-        - NoDevice, NoDriver: no modem on USB; its AT port without a driver, until the driver is
-          installed (InstallDriver(): online then). Any scenario's driver can be uninstalled.
+        - NoDevice: no modem on USB.
+        - Unbound: its vendor functions on MediaTek's driver, as before the app: the app puts them
+          on WinUSB (Bind()), then goes online.
         - Settling: as Connect, and the new address is not usable for two probes, then one round
           is lost: a path that settles, which is no failure.
         - DataPathDown: online, the path proven once, then no traffic gets through until the
@@ -570,10 +637,11 @@ function New-SimulatedDevice {
         (StartLpac).
 
         Returns an object with Scenario, Modem (New-SimulatedModem's), Adapter, Presence, and
-        the methods the worker calls: Find() (the modem as PnP would report it), Open() (its
-        port, for a new channel), Probe() (a data-path round), Restart() (its USB device),
-        InstallDriver() and UninstallDriver() (the AT port's driver, as pnputil would), and
-        StartLpac() (lpac for one operation on the eUICC: SimulatedLpac).
+        the methods the worker calls: PnpRecords() (its functions as PnP would report them),
+        TryPort() (a COM port held or free), Bind() and Restore() (a function put on WinUSB, or given
+        back to MediaTek's driver), Open() (its port, for a new channel), Probe() (a data-path
+        round), Restart() (its USB device), and StartLpac() (lpac for one operation on the eUICC:
+        SimulatedLpac).
     .EXAMPLE
         Invoke-ModemWorker -Link $link -Simulation (New-SimulatedDevice -Scenario PinRequired)
     #>
@@ -582,7 +650,7 @@ function New-SimulatedDevice {
     [CmdletBinding()]
     [OutputType([object])]
     param(
-        [ValidateSet('Online', 'Connect', 'ApnNeeded', 'PinRequired', 'FccLocked', 'AdapterDisabled', 'NoDevice', 'NoDriver',
+        [ValidateSet('Online', 'Connect', 'ApnNeeded', 'PinRequired', 'FccLocked', 'AdapterDisabled', 'NoDevice', 'Unbound',
             'Settling', 'DataPathDown', 'IcmpDropped', 'RegistrationLost', 'ModemHung', 'Unrecoverable', 'LteOnlyMode', 'NrOnlyMode', 'Standalone',
             'EsimEmpty', 'Esim')]
         [string] $Scenario = 'Online',
@@ -720,6 +788,12 @@ function New-SimulatedDevice {
     $device.Modem = $modem
     $device.Adapter = $adapter
     $device.Presence = & $setting 'Presence' 'Present'
+    $device.InterfaceGuid = $script:AppInterfaceGuid
+    if ($device.Presence -eq 'Present') {
+        foreach ($interface in 2, 3, 4, 6, 7, 8, 9) {
+            [void]$device.Bound.Add($interface)
+        }
+    }
     $device.LostRounds = & $setting 'LostRounds' 0
     $device.PassedRounds = & $setting 'PassedRounds' 0
     $device

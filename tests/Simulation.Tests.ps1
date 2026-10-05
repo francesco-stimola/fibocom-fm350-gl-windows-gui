@@ -10,6 +10,12 @@ BeforeAll {
     Import-Module "$PSScriptRoot/../src/FibocomFm350/FibocomFm350.psd1" -Force
     $script:data = Import-PowerShellDataFile -Path "$PSScriptRoot/../src/FibocomFm350/Data/Simulation.psd1"
 
+    # The simulated modem as the worker finds it: its PnP records, through the same pure functions.
+    function Find-SimulatedModem {
+        param([object] $Device)
+        Resolve-ModemPresence -Modem @(Resolve-ModemUsbDevice -Device @($Device.PnpRecords()))
+    }
+
     # The ValidateSet of a script's -Scenario parameter.
     function Get-ScriptScenario {
         param([string] $Path)
@@ -35,7 +41,7 @@ Describe 'New-SimulatedDevice' {
         $device = New-SimulatedDevice -Scenario $_
         $device.Scenario | Should -Be $_
         $device.Modem.PortName | Should -Be 'SIMULATED'
-        $device.Find().Device | Should -BeIn 'Present', 'Absent', 'NoDriver'
+        (Find-SimulatedModem $device).Device | Should -BeIn 'Present', 'Absent', 'Unbound'
     }
 
     It 'answers the commands of a connect pass and of the recovery steps from its base answers' {
@@ -76,7 +82,7 @@ Describe 'New-SimulatedDevice' {
         $device.AwayMs = 0
         $device.Modem.Messaging.Notices = @('2', '1', '0', '0', '0')
         $device.Restart()
-        $device.Find().Device | Should -Be 'Present'
+        (Find-SimulatedModem $device).Device | Should -Be 'Present'
 
         $device.Modem.Messaging.Notices | Should -Be @('0', '0', '0', '0', '0')
         $device.Modem.Messaging.Stored.Count | Should -Be 4
@@ -202,9 +208,9 @@ Describe 'The simulated modem and the recovery steps' {
         $answers = & $script:send $device 'AT+CFUN=15', 'AT'
         $answers[0].Status | Should -Be 'OK'
         $answers[1].Status | Should -Be 'PortLost'
-        $device.Find().Device | Should -Be 'Absent'
+        (Find-SimulatedModem $device).Device | Should -Be 'Absent'
         $device.AwayMs = 0
-        $device.Find().Device | Should -Be 'Present'
+        (Find-SimulatedModem $device).Device | Should -Be 'Present'
         $device.Probe('192.0.2.10').Result | Should -Be 'Passed'
     }
 
@@ -215,7 +221,7 @@ Describe 'The simulated modem and the recovery steps' {
         $answer.EchoSeen | Should -BeFalse
         $device.AwayMs = 0
         $device.Restart()
-        $device.Find().Device | Should -Be 'Present'
+        (Find-SimulatedModem $device).Device | Should -Be 'Present'
         (& $script:send $device 'AT').Status | Should -Be 'OK'
     }
 
@@ -224,17 +230,17 @@ Describe 'The simulated modem and the recovery steps' {
         $device.AwayMs = 0
         $answers = & $script:send $device 'AT+COPS=2', 'AT+COPS=0', 'AT+CFUN=4', 'AT+CFUN=1', 'AT+CFUN=15', 'AT'
         @($answers.Status) | Should -Be @('OK', 'OK', 'OK', 'OK', 'OK', 'PortLost')
-        [void]$device.Find()
+        [void](Find-SimulatedModem $device)
         $answer = & $script:send $device 'AT+CEREG?;+C5GREG?'
         ($answer.Lines | ConvertFrom-AtRegistration -ReadAnswer | Where-Object Domain -EQ 'EPS').State | Should -Be 'Denied'
     }
 
     It 'gives the composite device''s instance ID while present' {
         $device = New-SimulatedDevice
-        $device.Find().InstanceId | Should -Be 'USB\VID_0E8D&PID_7127\SIMULATED'
+        (Find-SimulatedModem $device).InstanceId | Should -Be 'USB\VID_0E8D&PID_7127\SIMULATED1'
         $device.AwayMs = 60000
         $device.Restart()
-        $device.Find().InstanceId | Should -BeNullOrEmpty
+        (Find-SimulatedModem $device).InstanceId | Should -BeNullOrEmpty
     }
 }
 
@@ -328,7 +334,7 @@ Describe 'The simulated network mode' {
         $answers = & $script:converse $device 'AT+GTACT=14,6,6', 'AT+CFUN=15', 'AT'
         $answers[1].Status | Should -Be 'OK'
         $answers[2].Status | Should -Be 'PortLost'
-        [void]$device.Find()
+        [void](Find-SimulatedModem $device)
         $answers = & $script:converse $device 'AT+GTACT?', 'AT+CEREG?;+C5GREG?', 'AT+GTCCINFO?;+GTCAINFO?'
         $answers[0].Lines[0] | Should -BeLike '+GTACT: 14,6,6,*'
         & $script:registered $answers[1] | Should -BeFalse -Because 'NR alone finds no network here, after a reset too'
@@ -347,11 +353,11 @@ Describe 'The simulated modem on USB' {
         $device = New-SimulatedDevice
         $device.AwayMs = 60000
         $device.Modem.Vanish()
-        $device.Find().Device | Should -Be 'Absent'
+        (Find-SimulatedModem $device).Device | Should -Be 'Absent'
         $device.AwayMs = 0
-        $presence = $device.Find()
+        $presence = (Find-SimulatedModem $device)
         $presence.Device | Should -Be 'Present'
-        $presence.PortName | Should -Be 'SIMULATED'
+        $presence.AtInstanceId | Should -Be 'USB\VID_0E8D&PID_7127&MI_06\SIMULATED1&0006'
         $device.Modem.Lost | Should -BeFalse
     }
 
@@ -381,7 +387,7 @@ Describe 'The simulated modem on USB' {
             Close-AtChannel -Channel $channel
         }
         $device.AwayMs = 0
-        [void]$device.Find()
+        [void](Find-SimulatedModem $device)
         $channel = New-AtChannel -Transport $device.Open()
         try {
             $lock = ConvertFrom-AtFccLock -Lines (Invoke-AtCommand -Channel $channel -Command 'AT+GTFCCLOCKMODE?;+GTFCCLOCKSTATE?;+GTFCCEFFSTATUS?' -TimeoutMs 3000).Lines
@@ -392,25 +398,57 @@ Describe 'The simulated modem on USB' {
         }
     }
 
-    It 'has its AT port''s driver installed and uninstalled, as pnputil would (NoDriver)' {
-        $device = New-SimulatedDevice -Scenario NoDriver
-        $presence = $device.Find()
-        $presence.Device | Should -Be 'NoDriver'
-        $presence.ProductId | Should -Be '7127'
-        $presence.Driver | Should -BeNullOrEmpty
-        $device.InstallDriver()
-        $presence = $device.Find()
+    It 'has its vendor functions on WinUSB, the AT port with the app''s interface class' {
+        $presence = Find-SimulatedModem (New-SimulatedDevice)
         $presence.Device | Should -Be 'Present'
-        $presence.Driver.InfPath | Should -Be 'oem0.inf'
-        $presence.Driver.Version | Should -Be '3.22.43.1'
-        $device.UninstallDriver()
-        $device.Find().Device | Should -Be 'NoDriver'
+        ($presence.Functions | Where-Object WinUsb).Interface | Should -Be @(2, 3, 4, 5, 6, 7, 8, 9)
+        ($presence.Functions | Where-Object Role -EQ 'Network').Service | Should -Be 'usbrndis6'
+        (Resolve-ModemBinding -Function $presence.Functions).Bind | Should -BeNullOrEmpty
     }
 
-    It 'gets no driver without a modem on USB (NoDevice)' {
+    It 'has them on MediaTek''s driver until the app puts them on WinUSB, as Device Manager would (Unbound)' {
+        $device = New-SimulatedDevice -Scenario Unbound
+        $presence = Find-SimulatedModem $device
+        $presence.Device | Should -Be 'Unbound'
+        $plan = Resolve-ModemBinding -Function $presence.Functions
+        $plan.Bind.Interface | Should -Be @(6, 2, 3, 4, 7, 8, 9)
+        $plan.Bind[0].PortName | Should -Be 'COM26'
+        $device.TryPort('COM26') | Should -Be 0
+        foreach ($function in $plan.Bind) {
+            $device.Bind($function.InstanceId).Done | Should -BeTrue
+        }
+        $device.Binds | Should -Be 7
+        (Find-SimulatedModem $device).Device | Should -Be 'Present'
+        $device.Restore($plan.Bind[0].InstanceId).Step | Should -Be 'Best'
+        (Find-SimulatedModem $device).Device | Should -Be 'Unbound'
+    }
+
+    It 'says a port another program holds, and an installation that fails or waits for a restart' {
+        $device = New-SimulatedDevice -Scenario Unbound
+        [void]$device.HeldPorts.Add(6)
+        $device.TryPort('COM26') | Should -Be 5
+        $device.TryPort('COM23') | Should -Be 0
+        $at = (Find-SimulatedModem $device).AtInstanceId
+        $device.BindResult = 'Failed'
+        $device.Bind($at).Done | Should -BeFalse
+        $device.BindResult = 'RestartNeeded'
+        $device.Bind($at).NeedReboot | Should -BeTrue
+        (Find-SimulatedModem $device).Device | Should -Be 'Unbound'
+    }
+
+    It 'comes back from a reset as a new instance on MediaTek''s driver, when asked to' {
+        $device = New-SimulatedDevice
+        $device.NewInstanceOnReturn = $true
+        $device.AwayMs = 0
+        $device.Restart()
+        $presence = Find-SimulatedModem $device
+        $presence.Device | Should -Be 'Unbound'
+        $presence.InstanceId | Should -Be 'USB\VID_0E8D&PID_7127\SIMULATED2'
+    }
+    It 'has no function without a modem on USB (NoDevice)' {
         $device = New-SimulatedDevice -Scenario NoDevice
-        $device.InstallDriver()
-        $presence = $device.Find()
+        $device.PnpRecords() | Should -BeNullOrEmpty
+        $presence = (Find-SimulatedModem $device)
         $presence.Device | Should -Be 'Absent'
         $presence.ProductId | Should -BeNullOrEmpty
     }

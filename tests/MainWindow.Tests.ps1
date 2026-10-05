@@ -31,7 +31,7 @@ BeforeAll {
     }
 
     $script:views = @{}
-    foreach ($scenario in 'Online', 'ApnNeeded', 'PinRequired', 'FccLocked', 'AdapterDisabled', 'NoDevice', 'NoDriver') {
+    foreach ($scenario in 'Online', 'ApnNeeded', 'PinRequired', 'FccLocked', 'AdapterDisabled', 'NoDevice', 'Unbound') {
         $script:views[$scenario] = Get-ScenarioView -Scenario $scenario
     }
 }
@@ -45,11 +45,10 @@ Describe 'The main window' {
         $script:sent = [System.Collections.Generic.List[object]]::new()
         $script:answer = $false
         $script:asked = 0
-        $script:chosen = $null
         $script:opened = [System.Collections.Generic.List[string]]::new()
         # Send gives back the command's Id, as the app's does.
         $script:window = New-MainWindow -Send { param($kind, $parameter) $script:sent.Add([pscustomobject]@{ Kind = $kind; Parameter = $parameter }); "id-$($script:sent.Count)" } `
-            -Ask { $script:asked++; $script:answer } -Choose { $script:chosen } -Open { param($url) $script:opened.Add($url) }
+            -Ask { $script:asked++; $script:answer } -Open { param($url) $script:opened.Add($url) }
         $script:controls = $script:window.Controls
     }
 
@@ -84,7 +83,7 @@ Describe 'The main window' {
         $script:left | Should -BeNullOrEmpty -Because 'a window''s properties are taken off before it closes'
     }
 
-    It 'scrolls the <_> tab when the window is too small for it' -ForEach @('ConnectionTab', 'DriverTab', 'SimTab', 'DataTab', 'EsimTab') {
+    It 'scrolls the <_> tab when the window is too small for it' -ForEach @('ConnectionTab', 'UsbTab', 'SimTab', 'DataTab', 'EsimTab') {
         $tab = $script:window.Window.FindName($_)
         $tab.Content | Should -BeOfType ([System.Windows.Controls.ScrollViewer])
         $tab.Content.VerticalScrollBarVisibility | Should -Be 'Auto'
@@ -103,7 +102,7 @@ Describe 'The main window' {
         $script:controls.CheckNowButton.Margin.Left | Should -BeGreaterThan 0
     }
 
-    It 'shows the view of the <_> scenario' -ForEach @('Online', 'ApnNeeded', 'PinRequired', 'FccLocked', 'AdapterDisabled', 'NoDevice', 'NoDriver') {
+    It 'shows the view of the <_> scenario' -ForEach @('Online', 'ApnNeeded', 'PinRequired', 'FccLocked', 'AdapterDisabled', 'NoDevice', 'Unbound') {
         $view = $script:views[$_]
         Update-MainWindow -View $view
         $script:controls.TitleText.Text | Should -Be $view.Title
@@ -206,76 +205,17 @@ Describe 'The main window' {
         $script:sent.Kind | Should -Be @('UnlockFcc')
     }
 
-    It 'opens the Driver tab from the blocker when the AT port has no driver' {
-        Update-MainWindow -View $script:views['NoDriver']
-        $script:controls.BlockerButton.Content | Should -Be 'Install the driver...'
-        Invoke-Click $script:controls.BlockerButton
-        $script:controls.Tabs.SelectedItem | Should -Be $script:controls.DriverTab
-        $script:sent | Should -BeNullOrEmpty
-    }
-
-    It 'shows the Driver tab: where a copy is, the package chosen, what can be done' {
-        Update-MainWindow -View $script:views['NoDriver']
-        $script:controls.DriverStateText.Text | Should -Be $script:views['NoDriver'].Driver.StateText
-        $script:controls.DriverSourceText.Text | Should -BeLike '*third party*'
-        $script:controls.OpenDriverPageButton.IsEnabled | Should -BeTrue
-        $script:controls.ChooseDriverButton.IsEnabled | Should -BeTrue
-        $script:controls.InstallDriverButton.IsEnabled | Should -BeFalse
-        $script:controls.UninstallDriverButton.IsEnabled | Should -BeFalse
-        $script:controls.DriverPackageText.Visibility | Should -Be 'Collapsed'
+    It 'shows the USB tab: each vendor function and its driver, the last change, nothing to click' {
         Update-MainWindow -View $script:views['Online']
-        $script:controls.UninstallDriverButton.IsEnabled | Should -BeTrue
+        $script:controls.UsbStateText.Text | Should -Be $script:views['Online'].Usb.StateText
+        $script:controls.UsbFunctionsText.Text -split "?
+" | Should -Be $script:views['Online'].Usb.Functions
+        $script:controls.UsbBindingText.Visibility | Should -Be 'Collapsed'
+        $script:controls.UsbNoteText.Visibility | Should -Be 'Collapsed'
+        Update-MainWindow -View $script:views['Unbound']
+        $script:controls.UsbBindingText.Text | Should -BeLike 'Last change at *AT port (MI_06): put on WinUSB.*'
+        $script:controls.UsbBindingText.Visibility | Should -Be 'Visible'
     }
-
-    It 'opens the page where the known copy is published' {
-        Update-MainWindow -View $script:views['NoDriver']
-        Invoke-Click $script:controls.OpenDriverPageButton
-        $script:opened | Should -Be @($script:views['NoDriver'].Driver.PageUrl)
-        $script:opened[0] | Should -BeLike 'https://github.com/*/blob/*'
-    }
-
-    It 'sends the package the user chose to be checked, and nothing when they choose none' {
-        Update-MainWindow -View $script:views['NoDriver']
-        Invoke-Click $script:controls.ChooseDriverButton
-        $script:sent | Should -BeNullOrEmpty
-        $script:chosen = 'C:\Users\Example\Downloads\driver.zip'
-        Invoke-Click $script:controls.ChooseDriverButton
-        $script:sent.Kind | Should -Be @('CheckDriverPackage')
-        $script:sent[0].Parameter.Path | Should -Be 'C:\Users\Example\Downloads\driver.zip'
-    }
-
-    It 'installs a version the app knows at once, and one it doesn''t only after the user accepted it' {
-        $view = $script:views['NoDriver'] | Select-Object -Property *
-        $view.Driver = $view.Driver | Select-Object -Property *
-        $view.Driver.CanInstall = $true
-        Update-MainWindow -View $view
-        Invoke-Click $script:controls.InstallDriverButton
-        $script:asked | Should -Be 0
-        $script:sent[0].Kind | Should -Be 'InstallDriver'
-        $script:sent[0].Parameter.ContainsKey('AcceptUnknown') | Should -BeFalse
-
-        $script:sent.Clear()
-        $view.Driver.ConfirmInstall = $true
-        Update-MainWindow -View $view
-        $script:controls.InstallDriverButton.Content | Should -Be 'Install...'
-        Invoke-Click $script:controls.InstallDriverButton
-        $script:asked | Should -Be 1
-        $script:sent | Should -BeNullOrEmpty
-        $script:answer = $true
-        Invoke-Click $script:controls.InstallDriverButton
-        $script:sent[0].Parameter.AcceptUnknown | Should -BeTrue
-    }
-
-    It 'uninstalls the driver only after the user confirmed it' {
-        Update-MainWindow -View $script:views['Online']
-        Invoke-Click $script:controls.UninstallDriverButton
-        $script:asked | Should -Be 1
-        $script:sent | Should -BeNullOrEmpty
-        $script:answer = $true
-        Invoke-Click $script:controls.UninstallDriverButton
-        $script:sent.Kind | Should -Be @('UninstallDriver')
-    }
-
     It 'enables the adapter when asked' {
         Update-MainWindow -View $script:views['AdapterDisabled']
         Invoke-Click $script:controls.BlockerButton

@@ -15,7 +15,7 @@
         'Exit-AppInstance'
         'Export-AppIcon'
         'Get-AppText'
-        'Get-DriverView'
+        'Get-UsbView'
         'Get-EsimView'
         'Get-GuiResourceCount'
         'Get-MessagesView'

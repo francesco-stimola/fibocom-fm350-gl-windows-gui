@@ -24,7 +24,10 @@ function Resolve-ConnectionState {
         first missing step. Facts not observed are $null.
 
         -Observation carries:
-        - Device: 'Present', 'Absent', 'NoDriver' or 'Problem' (the AT port, from PnP).
+        - Device: 'Present', 'Absent', 'Unbound' or 'Problem' (the AT port, from PnP:
+          Resolve-ModemPresence). Binding: why an AT port not on WinUSB stays so - 'InUse'
+          (another program holds its COM port), 'Failed', 'NotElevated', 'RestartNeeded' -, or
+          $null when the worker is about to put it there.
         - PortOpen, Responsive: the AT port is open; the modem answers on it. PortError: why it
           couldn't be opened - 'InUse' (another program holds it) or 'Failed'.
         - Sim: Resolve-SimPinAction's decision.
@@ -55,7 +58,8 @@ function Resolve-ConnectionState {
           'Online'.
         - Action: the next step - 'OpenPort', 'Initialize', 'EnterPin', 'RadioOn',
           'AutoRegister', 'ApplyNetworkMode', 'DefineContext', 'ActivateContext',
-          'DeactivateContext', 'ConfigureAdapter' - or 'None'. The network mode the settings ask
+          'DeactivateContext', 'ConfigureAdapter', 'BindUsb' (the AT port to put on WinUSB) - or
+          'None'. The network mode the settings ask
           is written once the SIM is ready and the radio on, before the context's steps - it
           registers the modem again - and on a connection that is up too: the state stays the
           one the facts support.
@@ -123,7 +127,21 @@ function Resolve-ConnectionState {
 
     $device = & $fact 'Device'
     if ($device -ne 'Present') {
-        $reason = switch ($device) { 'NoDriver' { 'NoDriver' } 'Problem' { 'DeviceProblem' } default { 'NoDevice' } }
+        if ($device -eq 'Unbound') {
+            # The worker puts the AT port on WinUSB when it finds it: what stops it is said.
+            switch (& $fact 'Binding') {
+                'InUse' { return & $outcome 'NoDevice' 'BindUsb' 'PortInUse' $false }
+                'Failed' { return & $outcome 'NoDevice' 'None' 'BindFailed' $true }
+                'NotElevated' { return & $outcome 'NoDevice' 'None' 'BindNotElevated' $true }
+                'RestartNeeded' { return & $outcome 'NoDevice' 'None' 'BindRestartNeeded' $true }
+                default { return & $outcome 'NoDevice' 'BindUsb' $null $false }
+            }
+        }
+        if ($device -eq 'Problem' -and (& $fact 'Binding') -eq 'RestartNeeded') {
+            # A driver Windows finishes at the next restart can show as a problem meanwhile.
+            return & $outcome 'NoDevice' 'None' 'BindRestartNeeded' $true
+        }
+        $reason = switch ($device) { 'Problem' { 'DeviceProblem' } default { 'NoDevice' } }
         return & $outcome 'NoDevice' 'None' $reason $true
     }
     if ((& $fact 'PortOpen') -ne $true) {

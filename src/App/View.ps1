@@ -278,7 +278,7 @@ function ConvertTo-TrayText {
 
 function Resolve-AppBlocker {
     # What the user can do about what blocks the connection, if anything: Kind - 'Apn',
-    # 'ApnPassword', 'Pin', 'EnableAdapter', 'Unlock', 'Driver' (the Driver tab), 'Esim' (the eSIM
+    # 'ApnPassword', 'Pin', 'EnableAdapter', 'Unlock', 'Esim' (the eSIM
     # tab), 'Settings' (the Connection tab) or $null for a message alone - Message, ActionText,
     # and Enabled ($false when the app can't do it now).
     param([object] $Snapshot)
@@ -300,7 +300,6 @@ function Resolve-AppBlocker {
         { $_ -in 'NoPin', 'PinForOtherSim', 'PinUnconfirmed' } { 'Pin', 'Blocker.StorePin' }
         'AdapterDisabled' { 'EnableAdapter', 'Blocker.EnableAdapter' }
         'FccLocked' { 'Unlock', 'Blocker.Unlock' }
-        'NoDriver' { 'Driver', 'Blocker.InstallDriver' }
         'NoProfile' { 'Esim', 'Blocker.OpenEsim' }
         { $_ -like 'Doh*' } { 'Settings', 'Blocker.OpenSettings' }
         default { $null, $null }
@@ -653,107 +652,84 @@ function ConvertTo-SettingIssueText {
     Get-AppText 'Setting.Rejected' $Issue.Setting (Get-AppText "Rule.$($Issue.Rule)" -Arguments $values)
 }
 
-function Get-DriverView {
+function Get-UsbFunctionText {
+    # A function of the modem as the USB tab names it: what it is, and its interface - 'AT port
+    # (MI_06)'.
+    param([object] $Function)
+
+    $name = if ($Function.Name -and (Test-AppText "Usb.Function.$($Function.Name)")) { Get-AppText "Usb.Function.$($Function.Name)" } else { Get-AppText 'Usb.Function.Other' }
+    Get-AppText 'Usb.FunctionName' $name ([int]$Function.Interface).ToString('X2', [cultureinfo]::InvariantCulture)
+}
+
+function Get-UsbView {
     <#
     .SYNOPSIS
-        The window's Driver tab, from the snapshot.
+        The window's USB tab, from the snapshot.
     .DESCRIPTION
-        A pure function of the snapshot, the worker's state and -Known (Get-KnownDriverPackage's
-        packages). Returns StateText (the AT port and its driver), SourceText and PageUrl (that
-        the app doesn't come with the driver, and where a third party publishes a copy of a
-        version it knows), PackageText (the package the user chose and what its check found, or
-        the driver command under way), Note (why the buttons are off), CanChoose, CanInstall,
-        ConfirmInstall (the package is no version the app knows: the user must accept it first)
-        and CanUninstall.
+        A pure function of the snapshot (decided 2026-10-04: the state, no buttons - the app puts
+        the functions on WinUSB by itself, and Check now tries again). Returns StateText (where the
+        modem's vendor functions are: on Windows' WinUSB, not yet, a problem, no modem), Functions
+        (a line per vendor function: what it is, its interface and its driver), BindingText (the
+        last time the app put functions on WinUSB: when, and how it went for each) and Note (the
+        app only observes, or has no administrator rights: it puts none there).
     .EXAMPLE
-        Get-DriverView -Snapshot $snapshot -Known (Get-KnownDriverPackage)
+        Get-UsbView -Snapshot $snapshot
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
         [AllowNull()]
-        [object] $Snapshot,
-
-        [ValidateSet('Running', 'Restarting', 'NotResponding')]
-        [string] $Worker = 'Running',
-
-        [AllowEmptyCollection()]
-        [object[]] $Known = @()
+        [object] $Snapshot
     )
 
-    $driver = if ($Snapshot -and $Snapshot.PSObject.Properties['Driver']) { $Snapshot.Driver } else { $null }
-    $device = if ($driver) { $driver.Device } else { $null }
+    $usb = Get-SnapshotValue -Snapshot $Snapshot -Name 'Usb'
+    $device = if ($usb) { $usb.Device } else { $null }
     $stateText = switch ($device) {
-        'Present' {
-            $what = @($driver.Provider, $driver.Version, $(if ($driver.Inf) { "($($driver.Inf))" }) | Where-Object { $_ }) -join ' '
-            if ($what) { Get-AppText 'Driver.PresentWhat' $what } else { Get-AppText 'Driver.Present' }
+        'Present' { Get-AppText 'Usb.Present' }
+        'Unbound' { Get-AppText 'Usb.Unbound' }
+        'Problem' { Get-AppText 'Reason.DeviceProblem' }
+        'Absent' { Get-AppText 'Reason.NoDevice' }
+        default { Get-AppText 'Usb.NotLooked' }
+    }
+    $functions = @(if ($usb) { $usb.Functions | Where-Object { $_ } })
+    $lines = foreach ($function in $functions) {
+        $driver = switch ($function.Driver) {
+            'WinUsb' { Get-AppText 'Usb.OnWinUsb' }
+            'None' { Get-AppText 'Usb.NoDriver' }
+            default { Get-AppText 'Usb.OtherDriver' }
         }
-        'NoDriver' { Get-AppText 'Driver.NoDriver' }
-        'Problem' { Get-AppText 'Driver.Problem' }
-        'Absent' { Get-AppText 'Driver.Absent' }
-        default { Get-AppText 'Driver.NotLooked' }
-    }
-
-    $copy = @($Known | Where-Object { $_.Copy }) | Select-Object -First 1
-    $sourceText = if ($copy) {
-        Get-AppText 'Driver.SourceCopy' "$($copy.Name) $($copy.Version)" $copy.Copy.Publisher $copy.Copy.File
-    }
-    else {
-        Get-AppText 'Driver.Source'
-    }
-
-    $package = if ($driver) { $driver.Package } else { $null }
-    $verdict = if ($package) { $package.Verdict } else { $null }
-    $operation = if ($driver) { $driver.Operation } else { $null }
-    $packageText = switch ($operation) {
-        'CheckDriverPackage' { Get-AppText 'Driver.Checking' }
-        'InstallDriver' { Get-AppText 'Driver.Installing' }
-        'UninstallDriver' { Get-AppText 'Driver.Uninstalling' }
-        default {
-            if ($verdict) {
-                $what = if ($verdict.Known) { "$($verdict.Known.Name) $($verdict.Known.Version)" } else { @($verdict.Provider, $verdict.Version | Where-Object { $_ }) -join ' ' }
-                switch ($verdict.Verdict) {
-                    'Verified' { Get-AppText 'Driver.Verified' $package.Name $what }
-                    'Signed' { Get-AppText 'Driver.Signed' $package.Name $what }
-                    default {
-                        $why = @($verdict.Problems | ForEach-Object { if (Test-AppText "DriverProblem.$_") { Get-AppText "DriverProblem.$_" } else { $_ } })
-                        Get-AppText 'Driver.Refused' $package.Name ($why -join '; ')
-                    }
-                }
-            }
-            else {
-                $null
-            }
+        if ($function.ProblemCode) {
+            $driver = Get-AppText 'Usb.ProblemCode' $driver $function.ProblemCode
         }
+        Get-AppText 'Usb.FunctionLine' (Get-UsbFunctionText -Function $function) $driver
     }
-
-    $note = $null
-    $usable = [bool]($Snapshot -and $Worker -eq 'Running' -and -not $operation)
-    if ($Snapshot -and $Snapshot.ObserveOnly) {
-        $usable = $false
-        $note = Get-AppText 'Driver.ObserveOnly'
+    $binding = if ($usb) { $usb.Binding } else { $null }
+    $bindingText = if ($binding -and @($binding.Functions).Count -gt 0) {
+        $said = [System.Collections.Generic.List[string]]::new()
+        $said.Add((Get-AppText 'Usb.LastChange' (Format-ClockTime -Time $binding.Time)))
+        foreach ($outcome in @($binding.Functions)) {
+            $name = Get-UsbFunctionText -Function $outcome
+            $said.Add($(switch ($outcome.Result) {
+                        'Done' { Get-AppText 'Usb.Bound' $name }
+                        'InUse' { Get-AppText 'Usb.Held' $name }
+                        'RestartNeeded' { Get-AppText 'Usb.RestartNeeded' $name }
+                        default { Get-AppText 'Usb.Failed' $name (@($outcome.Step, $outcome.Error | Where-Object { $_ }) -join ', ') }
+                    }))
+        }
+        $said -join [Environment]::NewLine
     }
-    elseif ($Snapshot -and -not $Snapshot.Elevated) {
-        $usable = $false
-        $note = Get-AppText 'Driver.NeedsAdmin'
+    $offWinUsb = @($functions | Where-Object Driver -NE 'WinUsb').Count -gt 0 -or $device -eq 'Unbound'
+    $note = if ($Snapshot -and $Snapshot.ObserveOnly) {
+        Get-AppText 'Usb.ObserveOnly'
     }
-    $installable = $verdict -and $verdict.Verdict -in 'Verified', 'Signed'
-    # A mode on trial is written back through the AT port: the driver stays until it ends.
-    $mode = Get-SnapshotNetworkMode -Snapshot $Snapshot
-    $trial = [bool]($mode -and $mode.Trial)
-    if ($usable -and $trial -and $device -eq 'Present') {
-        $note = Get-AppText 'Driver.Trial'
+    elseif ($Snapshot -and -not $Snapshot.Elevated -and $offWinUsb) {
+        Get-AppText 'Usb.NeedsAdmin'
     }
     [pscustomobject]@{
-        StateText      = $stateText
-        SourceText     = $sourceText
-        PageUrl        = if ($copy) { $copy.Copy.Page } else { $null }
-        PackageText    = $packageText
-        Note           = $note
-        CanChoose      = $usable
-        CanInstall     = [bool]($usable -and $installable -and $device -ne 'Present')
-        ConfirmInstall = [bool]($verdict -and $verdict.Verdict -eq 'Signed')
-        CanUninstall   = [bool]($usable -and -not $trial -and $device -eq 'Present' -and $driver.Inf -match '^oem\d+\.inf$')
+        StateText   = $stateText
+        Functions   = [string[]]@($lines)
+        BindingText = $bindingText
+        Note        = $note
     }
 }
 
@@ -1183,7 +1159,7 @@ function ConvertTo-WindowView {
         'NotResponding'). Returns Tone, Title, Detail, Note, SimInUse, Technology, Operator,
         Signal (lines), Cells and Carriers (rows of text), Blocker (Resolve-AppBlocker's), Sim (the
         SIM tab), Esim (the eSIM tab, Get-EsimView's), NetworkMode (the network tab,
-        Get-NetworkModeView's), Driver (the Driver tab, Get-DriverView's), Messages (the Messages
+        Get-NetworkModeView's), Usb (the USB tab, Get-UsbView's), Messages (the Messages
         tab, Get-MessagesView's), Usage (the Data tab, Get-UsageView's), Settings,
         ApnPasswordStored, SimToken, ApnSimText and ApnEditable (whose APN settings these are:
         the SIM in use's, changed only while one is identified), Dns and Startup (the
@@ -1215,7 +1191,7 @@ function ConvertTo-WindowView {
         if ($Snapshot.SettingsPending) { $notes.Add((Get-AppText 'Window.SettingsPending')) }
         $issues = @(Get-SnapshotSettingIssue -Snapshot $Snapshot)
         if ($issues.Count -gt 0) { $notes.Add((Get-AppText 'Window.SettingsFile' (@($issues | ForEach-Object { ConvertTo-SettingIssueText -Issue $_ }) -join ' '))) }
-        if ($Snapshot.Modems -gt 1) { $notes.Add((Get-AppText 'Window.Modems' $Snapshot.Modems $Snapshot.PortName)) }
+        if ($Snapshot.Modems -gt 1) { $notes.Add((Get-AppText 'Window.Modems' $Snapshot.Modems)) }
         # The step that brought the connection back, until health has held long enough.
         $recovery = Get-SnapshotRecovery -Snapshot $Snapshot
         if ($recovery -and $recovery.Status -eq 'Healthy' -and $recovery.Step -and $recovery.StepTime -and (Test-AppText "StepInline.$($recovery.Step)")) {
@@ -1307,7 +1283,7 @@ function ConvertTo-WindowView {
         Sim               = if ($Snapshot) { Get-SimView -Snapshot $Snapshot } else { $null }
         Esim              = $esim
         NetworkMode       = Get-NetworkModeView -Snapshot $Snapshot
-        Driver            = Get-DriverView -Snapshot $Snapshot -Worker $Worker -Known @(Get-KnownDriverPackage)
+        Usb               = Get-UsbView -Snapshot $Snapshot
         Messages          = Get-MessagesView -Snapshot $Snapshot
         Usage             = Get-UsageView -Snapshot $Snapshot
         Settings          = if ($Snapshot) { $Snapshot.Settings } else { $null }

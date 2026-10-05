@@ -4,9 +4,11 @@
 @{
     # Why the connection is where it is (Resolve-ConnectionState's reasons).
     'Reason.NoDevice'              = 'Nessun modem trovato su USB.'
-    'Reason.NoDriver'              = 'La porta AT del modem non ha un driver: l''app non può comunicare con il modem finché non viene installato.'
     'Reason.DeviceProblem'         = 'Windows segnala un problema con la porta AT del modem.'
     'Reason.PortInUse'             = 'Un altro programma sta usando la porta AT del modem.'
+    'Reason.BindFailed'            = 'Non è stato possibile passare la porta AT del modem al driver WinUSB di Windows: l''app riprova con "Verifica ora", o quando il modem viene ricollegato.'
+    'Reason.BindNotElevated'       = 'Per passare la porta AT del modem al driver WinUSB di Windows servono i diritti di amministratore: avvia l''app come amministratore.'
+    'Reason.BindRestartNeeded'     = 'La porta AT del modem passa al driver WinUSB di Windows al prossimo riavvio di Windows.'
     'Reason.PortFailed'            = 'Impossibile aprire la porta AT del modem.'
     'Reason.SimUnknown'            = 'Lettura della SIM in corso.'
     'Reason.NoPin'                 = 'La SIM attende il PIN.'
@@ -48,6 +50,7 @@
 
     # What the next step does, while the connection is on its way; and the same after a colon.
     'Action.OpenPort'                = 'Apertura della porta AT del modem.'
+    'Action.BindUsb'                 = 'Passaggio della porta AT del modem al driver WinUSB di Windows.'
     'Action.Initialize'              = 'In attesa della risposta del modem.'
     'Action.EnterPin'                = 'Inserimento del PIN memorizzato.'
     'Action.RadioOn'                 = 'Accensione della radio.'
@@ -58,6 +61,7 @@
     'Action.ConfigureAdapter'        = 'Configurazione dell''adattatore di rete.'
     'Action.ApplyNetworkMode'        = 'Impostazione della modalità di rete.'
     'ActionInline.OpenPort'          = 'apertura della porta AT del modem.'
+    'ActionInline.BindUsb'           = 'passaggio della porta AT del modem al driver WinUSB di Windows.'
     'ActionInline.Initialize'        = 'in attesa della risposta del modem.'
     'ActionInline.EnterPin'          = 'inserimento del PIN memorizzato.'
     'ActionInline.RadioOn'           = 'accensione della radio.'
@@ -104,25 +108,6 @@
     'Result.SetNetworkMode.ModeUnsupported' = 'Il modem non supporta questa modalità di rete: non è stato scritto nulla.'
     'Result.SetNetworkMode.NoSupportedBand' = 'Il modem non supporta nessuna delle bande scelte per una delle sue RAT: non è stato scritto nulla.'
     'Result.SetNetworkMode.Unknown'         = 'Impossibile leggere la modalità di rete del modem: non è stato scritto nulla.'
-    'Result.CheckDriverPackage.Verified'    = 'Pacchetto del driver verificato: una versione che l''app conosce.'
-    'Result.CheckDriverPackage.Signed'      = 'Pacchetto del driver verificato: firmato da Microsoft, una versione che l''app non conosce.'
-    'Result.CheckDriverPackage.Refused'     = 'Impossibile installare il pacchetto del driver: la scheda Driver spiega il motivo.'
-    'Result.CheckDriverPackage.NoPackage'   = 'Nessun pacchetto del driver scelto.'
-    'Result.CheckDriverPackage.Failed'      = 'Impossibile leggere il pacchetto del driver.'
-    'Result.InstallDriver.Done'             = 'Driver installato: l''app apre la porta AT del modem non appena Windows la avvia.'
-    'Result.InstallDriver.RestartNeeded'    = 'Driver installato: per completare, Windows deve essere riavviato.'
-    'Result.InstallDriver.NoDevice'         = 'Driver aggiunto a Windows, ma nessun dispositivo lo usa: viene usato quando il modem viene collegato, a meno che Windows non dia la precedenza a un altro driver.'
-    'Result.InstallDriver.Unconfirmed'      = 'Non installato: una versione che l''app non conosce richiede la tua conferma.'
-    'Result.InstallDriver.NoPackage'        = 'Scegli prima un pacchetto del driver.'
-    'Result.InstallDriver.DriverWorking'    = 'La porta AT ha già un driver funzionante: non è stato installato nulla.'
-    'Result.InstallDriver.TimedOut'         = 'Windows non ha completato in tempo l''installazione del driver: è stata interrotta.'
-    'Result.InstallDriver.Failed'           = 'Windows non ha installato il driver.'
-    'Result.UninstallDriver.Done'           = 'Driver disinstallato: l''app non può comunicare con il modem finché non viene installato di nuovo.'
-    'Result.UninstallDriver.RestartNeeded'  = 'Driver disinstallato: per completare, Windows deve essere riavviato.'
-    'Result.UninstallDriver.NoDriver'       = 'La porta AT non ha un driver che l''app possa disinstallare.'
-    'Result.UninstallDriver.TrialOn'        = 'Non disinstallato: una modalità di rete è in prova, e solo tramite la porta AT si può riscrivere quella precedente.'
-    'Result.UninstallDriver.TimedOut'       = 'Windows non ha completato in tempo la disinstallazione del driver: è stata interrotta.'
-    'Result.UninstallDriver.Failed'         = 'Windows non ha disinstallato il driver.'
     'Result.NotElevated'                    = 'Questa operazione richiede i diritti di amministratore.'
     'Result.Refused'                        = 'Non disponibile mentre l''app osserva soltanto.'
     'Result.NoModem'                        = 'Il modem non è collegato.'
@@ -184,7 +169,6 @@
     'Blocker.StorePin'      = 'Memorizza PIN'
     'Blocker.EnableAdapter' = 'Abilita adattatore'
     'Blocker.Unlock'        = 'Sblocca...'
-    'Blocker.InstallDriver' = 'Installa il driver...'
     'Blocker.OpenSettings'  = 'Apri le impostazioni'
     'Blocker.ObserveOnly'   = 'L''app osserva soltanto: non modifica nulla.'
     'Blocker.NeedsAdmin'    = 'Per abilitarlo servono i diritti di amministratore.'
@@ -257,34 +241,31 @@
     'Rule.Bands'               = 'deve essere un elenco di numeri di banda distinti da {0} a {1}'
     'Rule.Gigabytes'           = 'deve essere un numero di gigabyte da {0} a {1}, 0 per nessuna'
 
-    # The Driver tab.
-    'DriverProblem.NoInf'        = 'non contiene alcun driver (nessun file INF)'
-    'DriverProblem.NotForModem'  = 'nessuno dei suoi driver è destinato alla porta AT di questo modem'
-    'DriverProblem.NoCatalog'    = 'il suo driver non ha un catalogo di firma'
-    'DriverProblem.NotWhql'      = 'il suo catalogo non è firmato da Microsoft (WHQL)'
-    'DriverProblem.NotInCatalog' = 'il suo file INF non è quello garantito dal suo catalogo: è stato modificato o è danneggiato'
-    'DriverProblem.NotTrusted'   = 'la sua firma non può essere verificata'
-    'Driver.Present'             = 'La porta AT del modem ha il suo driver.'
-    'Driver.PresentWhat'         = 'La porta AT del modem ha il suo driver: {0}.'
-    'Driver.NoDriver'            = 'La porta AT del modem non ha un driver: l''app non può comunicare con il modem.'
-    'Driver.Problem'             = 'Windows segnala un problema con la porta AT del modem: reinstallarne il driver potrebbe risolverlo.'
-    'Driver.Absent'              = 'Nessun modem su USB. Un driver installato ora viene usato non appena il modem viene collegato.'
-    'Driver.NotLooked'           = 'La porta AT del modem non è stata ancora esaminata.'
-    'Driver.Source'              = 'L''app non include il driver del modem: non ha la licenza per ridistribuirlo. Scaricane una copia, poi sceglila qui: l''app verifica che Microsoft l''abbia firmata (WHQL) per questo modem e non esegue mai programmi in essa contenuti.'
-    'Driver.SourceCopy'          = 'L''app non include il driver del modem: non ha la licenza per ridistribuirlo. Una copia del driver di MediaTek, {0}, è pubblicata da terzi, {1}, come {2}. Scaricala, poi sceglila qui: l''app verifica che Microsoft l''abbia firmata (WHQL) per questo modem e non esegue mai programmi in essa contenuti.'
-    'Driver.Checking'            = 'Verifica del pacchetto del driver...'
-    'Driver.Installing'          = 'Installazione del driver: Windows potrebbe impiegare un minuto.'
-    'Driver.Uninstalling'        = 'Disinstallazione del driver...'
-    'Driver.Verified'            = '{0}: {1}, una versione che l''app conosce, firmata da Microsoft (WHQL) per questo modem.'
-    'Driver.Signed'              = '{0}: {1}, firmato da Microsoft (WHQL) per questo modem, ma non è una versione che l''app conosce: l''app chiede conferma prima di installarlo.'
-    'Driver.Refused'             = 'Impossibile installare {0}: {1}.'
-    'Driver.ObserveOnly'         = 'L''app osserva soltanto: non modifica nulla.'
-    'Driver.NeedsAdmin'          = 'Per installare o disinstallare un driver servono i diritti di amministratore: avvia l''app come amministratore.'
-    'Driver.Trial'               = 'Una modalità di rete è in prova: il driver si potrà disinstallare al termine della prova.'
-    'Driver.Install'             = 'Installa'
-    'Driver.InstallConfirm'      = 'Installa...'
-    'Driver.ChooseTitle'         = 'Scegli il pacchetto del driver scaricato'
-    'Driver.FileKind'            = 'Pacchetto del driver'
+    # The USB tab.
+    'Usb.Present'                 = 'La porta AT del modem è sul driver WinUSB di Windows: non c''è nessun driver da installare.'
+    'Usb.Unbound'                 = 'La porta AT del modem non è ancora sul driver WinUSB di Windows: la passa l''app.'
+    'Usb.NotLooked'               = 'Le funzioni del modem non sono ancora state controllate.'
+    'Usb.FunctionName'            = '{0} (MI_{1})'
+    'Usb.FunctionLine'            = '{0}: {1}'
+    'Usb.Function.MdAt'           = 'Porta AT'
+    'Usb.Function.MdMeta'         = 'Porta META del modem'
+    'Usb.Function.ApMeta'         = 'Porta META AP'
+    'Usb.Function.ApLog'          = 'Porta log AP'
+    'Usb.Function.ApGnss'         = 'Porta GNSS'
+    'Usb.Function.Npt'            = 'Porta NPT'
+    'Usb.Function.Debug'          = 'Porta di debug'
+    'Usb.Function.Other'          = 'Funzione'
+    'Usb.OnWinUsb'                = 'WinUSB'
+    'Usb.OtherDriver'             = 'un altro driver'
+    'Usb.NoDriver'                = 'nessun driver'
+    'Usb.ProblemCode'             = '{0}, codice di problema {1}'
+    'Usb.LastChange'              = 'Ultimo passaggio alle {0}:'
+    'Usb.Bound'                   = '{0}: passata a WinUSB.'
+    'Usb.Held'                    = '{0}: lasciata sul suo driver, un altro programma ne tiene la porta.'
+    'Usb.Failed'                  = '{0}: non passata a WinUSB ({1}).'
+    'Usb.RestartNeeded'           = '{0}: su WinUSB al prossimo riavvio di Windows.'
+    'Usb.ObserveOnly'             = 'L''app osserva soltanto: non passa nessuna funzione a WinUSB.'
+    'Usb.NeedsAdmin'              = 'Per passare le funzioni del modem a WinUSB servono i diritti di amministratore: avvia l''app come amministratore.'
 
     # The window: the connection, its notes, the signal, the footer.
     'Window.Restarting'      = 'Il monitoraggio si è fermato e si sta riavviando. La connessione non viene toccata.'
@@ -294,7 +275,7 @@
     'Window.ObserveOnly'     = 'L''app osserva soltanto: non modifica nulla sul modem o sul sistema.'
     'Window.SettingsPending' = 'La connessione dati è attiva con altre impostazioni: le nuove si applicano alla prossima connessione.'
     'Window.SettingsFile'    = 'File delle impostazioni: {0}'
-    'Window.Modems'          = 'Trovati {0} modem: l''app usa quello su {1}.'
+    'Window.Modems'          = 'Trovati {0} modem: l''app ne usa uno, sempre lo stesso.'
     'Window.Recovered'       = 'Ripristino riuscito alle {0}: {1}'
     'Window.NrAvailable'     = '{0}, 5G disponibile'
     'Window.NothingMeasured' = 'Nessun valore misurato.'
@@ -308,7 +289,7 @@
     'Carrier.Primary'        = 'Primaria'
     'Carrier.Active'         = 'Attiva'
     'Carrier.Inactive'       = 'Inattiva'
-    'Footer.Port'            = 'Porta AT {0}'
+    'Footer.Port'            = 'Porta AT su {0}'
     'Footer.PortClosed'      = 'Porta AT chiusa'
     'Footer.Updated'         = 'aggiornato alle {0}'
     'Footer.PathChecked'     = 'percorso dati verificato alle {0}'
@@ -331,20 +312,6 @@ Al termine il modem si riavvia.
 Rimuovere il PIN dalla SIM?
 
 Questa operazione modifica la scheda SIM, non l'app: la SIM non chiederà più il PIN, né in questo modem né in alcun telefono. Un PIN errato consuma uno dei tentativi.
-'@
-    'Confirm.UnknownDriverTitle'   = 'Installa una versione sconosciuta del driver'
-    'Confirm.UnknownDriver'        = @'
-Installare una versione del driver che l'app non conosce?
-
-Microsoft ha firmato questo pacchetto (WHQL) per la porta AT del modem, quindi Windows lo accetta; ma non è una versione che l'app conosce.
-
-Windows lo installa per ogni dispositivo compatibile.
-'@
-    'Confirm.UninstallDriverTitle' = 'Disinstalla il driver'
-    'Confirm.UninstallDriver'      = @'
-Disinstallare il driver della porta AT del modem?
-
-Windows lo rimuove dalle porte seriali del modem e dal proprio archivio driver. La connessione dati resta attiva, ma l'app non può comunicare con il modem, né controllare la connessione, finché il driver non viene installato di nuovo.
 '@
 
     # The window's fixed texts (MainWindow.xaml).
@@ -392,11 +359,7 @@ Windows lo rimuove dalle porte seriali del modem e dal proprio archivio driver. 
     'Xaml.Updates'           = 'Aggiornamenti'
     'Xaml.UpdateCheck'       = 'Cerca una nuova versione una volta a ogni avvio'
     'Xaml.Save'              = 'Salva'
-    'Xaml.DriverTab'         = 'Driver'
-    'Xaml.OpenPage'          = 'Apri la pagina di download'
-    'Xaml.ChoosePackage'     = 'Scegli il pacchetto scaricato...'
-    'Xaml.Install'           = 'Installa'
-    'Xaml.UninstallDriver'   = 'Disinstalla il driver...'
+    'Xaml.UsbTab'            = 'USB'
 
     # Starting the app at sign-in, in the connection tab.
     'Xaml.Startup'                    = 'Avvio'

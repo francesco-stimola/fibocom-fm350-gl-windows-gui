@@ -44,7 +44,12 @@ Describe 'Resolve-ConnectionState' {
         # The device and its port.
         @{ Name = 'no modem'; Change = @{ Device = 'Absent' }; State = 'NoDevice'; Action = 'None'; Reason = 'NoDevice'; Blocked = $true }
         @{ Name = 'nothing known about the device'; Change = @{ Device = $null }; State = 'NoDevice'; Action = 'None'; Reason = 'NoDevice'; Blocked = $true }
-        @{ Name = 'AT port without its driver'; Change = @{ Device = 'NoDriver' }; State = 'NoDevice'; Action = 'None'; Reason = 'NoDriver'; Blocked = $true }
+        @{ Name = 'AT port not on WinUSB yet: put there'; Change = @{ Device = 'Unbound' }; State = 'NoDevice'; Action = 'BindUsb'; Reason = $null; Blocked = $false }
+        @{ Name = 'AT port''s COM port held by another program'; Change = @{ Device = 'Unbound'; Binding = 'InUse' }; State = 'NoDevice'; Action = 'BindUsb'; Reason = 'PortInUse'; Blocked = $false }
+        @{ Name = 'AT port failed to go on WinUSB'; Change = @{ Device = 'Unbound'; Binding = 'Failed' }; State = 'NoDevice'; Action = 'None'; Reason = 'BindFailed'; Blocked = $true }
+        @{ Name = 'AT port not on WinUSB, no administrator rights'; Change = @{ Device = 'Unbound'; Binding = 'NotElevated' }; State = 'NoDevice'; Action = 'None'; Reason = 'BindNotElevated'; Blocked = $true }
+        @{ Name = 'AT port on WinUSB at the next restart'; Change = @{ Device = 'Unbound'; Binding = 'RestartNeeded' }; State = 'NoDevice'; Action = 'None'; Reason = 'BindRestartNeeded'; Blocked = $true }
+        @{ Name = 'AT port waiting for the restart, shown as a problem'; Change = @{ Device = 'Problem'; Binding = 'RestartNeeded' }; State = 'NoDevice'; Action = 'None'; Reason = 'BindRestartNeeded'; Blocked = $true }
         @{ Name = 'AT port with a problem'; Change = @{ Device = 'Problem' }; State = 'NoDevice'; Action = 'None'; Reason = 'DeviceProblem'; Blocked = $true }
         @{ Name = 'port not open'; Change = @{ PortOpen = $false }; State = 'NoDevice'; Action = 'OpenPort'; Reason = $null; Blocked = $false }
         @{ Name = 'port held by another program'; Change = @{ PortOpen = $false; PortError = 'InUse' }; State = 'NoDevice'; Action = 'OpenPort'; Reason = 'PortInUse'; Blocked = $false }

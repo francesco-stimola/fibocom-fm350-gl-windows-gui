@@ -216,7 +216,6 @@ Describe 'Invoke-ModemWorkerCycle' {
             @{ Scenario = 'FccLocked'; State = 'SimReady'; Reason = 'FccLocked' }
             @{ Scenario = 'AdapterDisabled'; State = 'DataActive'; Reason = 'AdapterDisabled' }
             @{ Scenario = 'NoDevice'; State = 'NoDevice'; Reason = 'NoDevice' }
-            @{ Scenario = 'NoDriver'; State = 'NoDevice'; Reason = 'NoDriver' }
         ) {
             $device = New-SimulatedDevice -Scenario $Scenario
             $worker = Get-TestWorker -Device $device
@@ -423,7 +422,7 @@ Describe 'Invoke-ModemWorkerCycle' {
             Invoke-ModemWorkerCycle -Worker $worker
             $script:link['Snapshot'].State | Should -Be 'Online'
             Get-WriteCommand -Modem $device.Modem | Should -Be @('AT+GTFCCLOCKMODE=0', 'AT+GTFCCLOCKSTATE=0', 'AT+GTFCCEFFSTATUS=0,0', 'AT+CFUN=1,1')
-            @(Get-TestLog) -match 'AT port SIMULATED lost' | Should -Not -BeNullOrEmpty
+            @(Get-TestLog) -match 'AT port \(SIMULATED\) lost' | Should -Not -BeNullOrEmpty
         }
 
         It 'enables the adapter the user disabled, only when asked' {
@@ -1811,13 +1810,31 @@ Describe 'Messages on the simulated modem' {
 
 Describe 'The worker and the AT port' {
     BeforeAll {
-        # The PnP records of one modem, its AT port on -PortName; -Instance tells the device
-        # instances apart (a re-enumeration makes new ones).
+        $script:guid = '{4FDE9624-2286-4DC0-9D07-601A3922581A}'
+        # The PnP records of one modem: its AT port on WinUSB with the app's interface class, or on
+        # MediaTek's driver with a COM port (-Unbound); a GNSS function on MediaTek's driver
+        # (-Gnss); -Instance tells the device instances apart (a re-enumeration makes new ones).
         function Get-TestRecord {
-            param([string] $PortName, [int] $Instance = 1)
+            param([int] $Instance = 1, [switch] $Unbound, [switch] $Gnss, [switch] $NoNetwork)
             $parent = "USB\VID_0E8D&PID_7127\7&00000000&0&$Instance"
-            [pscustomobject]@{ InstanceId = "USB\VID_0E8D&PID_7127&MI_06\8&00000000&$Instance&0006"; Present = $true; ProblemCode = 0; Service = 'usb2ser'; Parent = $parent; PortName = $PortName }
-            [pscustomobject]@{ InstanceId = "USB\VID_0E8D&PID_7127&MI_00\8&00000000&$Instance&0000"; Present = $true; ProblemCode = 0; Service = 'usbrndis6'; Parent = $parent; PortName = $null }
+            $vendor = @('USB\Class_ff&SubClass_00&Prot_00')
+            [pscustomobject]@{
+                InstanceId = "USB\VID_0E8D&PID_7127&MI_06\8&00000000&$Instance&0006"; Present = $true; ProblemCode = 0; Parent = $parent; CompatibleIds = $vendor
+                Service = if ($Unbound) { 'usb2ser_tm' } else { 'WINUSB' }; PortName = if ($Unbound) { 'COM14' } else { $null }
+                InterfaceGuids = if ($Unbound) { $null } else { @($script:guid) }
+            }
+            if ($Gnss) {
+                [pscustomobject]@{
+                    InstanceId = "USB\VID_0E8D&PID_7127&MI_03\8&00000000&$Instance&0003"; Present = $true; ProblemCode = 0; Parent = $parent; CompatibleIds = $vendor
+                    Service = 'usb2ser_tm'; PortName = 'COM11'; InterfaceGuids = $null
+                }
+            }
+            if (-not $NoNetwork) {
+                [pscustomobject]@{
+                    InstanceId = "USB\VID_0E8D&PID_7127&MI_00\8&00000000&$Instance&0000"; Present = $true; ProblemCode = 0; Service = 'usbrndis6'; Parent = $parent
+                    CompatibleIds = @('USB\Class_e0&SubClass_01&Prot_03'); PortName = $null; InterfaceGuids = $null
+                }
+            }
         }
         $script:configured = (New-SimulatedDevice -Scenario Online).Adapter.Read()
     }
@@ -1825,10 +1842,34 @@ Describe 'The worker and the AT port' {
     BeforeEach {
         $script:folder = Join-Path $TestDrive ([guid]::NewGuid())
         $script:now = 100000
-        $script:records = @(Get-TestRecord -PortName 'COM14')
-        $script:modems = @{ COM14 = (New-SimulatedDevice -Scenario Online -PortName 'COM14').Modem; COM15 = (New-SimulatedDevice -Scenario Online -PortName 'COM15').Modem }
+        $script:records = @(Get-TestRecord)
+        $script:modems = @{ 1 = (New-SimulatedDevice -Scenario Online -PortName 'WinUSB').Modem; 2 = (New-SimulatedDevice -Scenario Online -PortName 'WinUSB').Modem }
+        $script:installs = [System.Collections.Generic.List[object]]::new()
+        $script:install = { [pscustomobject]@{ Done = $true; NeedReboot = $false; Step = 'Install'; Error = 0 } }
+        $script:free = $true
         Mock -ModuleName FibocomFm350 Get-ModemPnpRecord { $script:records }
-        Mock -ModuleName FibocomFm350 Open-SerialAtTransport { $script:modems[$PortName] }
+        # The interface is there only for a function on WinUSB, as Windows would have it.
+        Mock -ModuleName FibocomFm350 Get-WinUsbInterfacePath {
+            if (@($script:records | Where-Object { $_.InstanceId -eq $InstanceId -and $_.Service -eq 'WINUSB' }).Count -gt 0) {
+                "\\?\usb#vid_0e8d&pid_7127&mi_06#$($InstanceId -replace '^.*\\', '')#{4fde9624-2286-4dc0-9d07-601a3922581a}"
+            }
+        }
+        Mock -ModuleName FibocomFm350 Open-WinUsbAtTransport { $script:modems[[int]($InterfacePath -replace '^.*#8&00000000&(\d)&.*$', '$1')] }
+        Mock -ModuleName FibocomFm350 Test-UsbFunctionFree { [pscustomobject]@{ Free = $script:free; Held = $(if ($script:free) { $null } else { 'Port' }); Error = $(if ($script:free) { 0 } else { 5 }) } }
+        # Never the real installation: each one recorded, its outcome from $script:install, and the
+        # records then as Windows would show them.
+        Mock -ModuleName FibocomFm350 Install-WinUsbDriver {
+            $script:installs.Add([pscustomobject]@{ InstanceId = $InstanceId; InterfaceGuid = $InterfaceGuid; Beat = [bool]$Beat })
+            $result = & $script:install
+            if ($result.Done -and -not $result.NeedReboot) {
+                foreach ($record in $script:records | Where-Object InstanceId -EQ $InstanceId) {
+                    $record.Service = 'WINUSB'
+                    $record.PortName = $null
+                    if ($InterfaceGuid) { $record.InterfaceGuids = @($InterfaceGuid) }
+                }
+            }
+            $result
+        }
         Mock -ModuleName FibocomFm350 Get-ModemAdapterState { $script:configured }
         Mock -ModuleName FibocomFm350 Get-ModemAdapterCounter { }
         Mock -ModuleName FibocomFm350 Test-AppElevation { $true }
@@ -1836,29 +1877,203 @@ Describe 'The worker and the AT port' {
         $script:worker = New-ModemWorker -Link $script:link -DataFolder $script:folder -Clock { $script:now }
     }
 
-    It 'finds the modem again by PnP after a re-enumeration, under another COM number' {
+    It 'opens the AT port on WinUSB, by its interface, and names no COM port' {
         Invoke-ModemWorkerCycle -Worker $script:worker
-        $script:link['Snapshot'].PortName | Should -Be 'COM14'
-        $script:link['Snapshot'].State | Should -Be 'Online'
+        $snapshot = $script:link['Snapshot']
+        $snapshot.State | Should -Be 'Online'
+        $snapshot.PortName | Should -Be 'WinUSB'
+        $snapshot.Usb.Device | Should -Be 'Present'
+        Should -Invoke -ModuleName FibocomFm350 Get-WinUsbInterfacePath -Times 1 -Exactly -ParameterFilter { $InstanceId -eq 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&1&0006' }
+        $script:installs | Should -BeNullOrEmpty
+        @(Get-TestLog | Where-Object { $_ -match 'COM\d' }) | Should -BeNullOrEmpty
+    }
 
-        # Back as a new device instance, its AT port on COM15: the next status read finds the
-        # port lost.
-        $script:modems['COM14'].Vanish()
-        $script:records = @(Get-TestRecord -PortName 'COM15' -Instance 2)
+    It 'finds the modem again by PnP after a re-enumeration, as a new device instance' {
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        # Back as a new device instance: the next status read finds the port lost.
+        $script:modems[1].Vanish()
+        $script:records = @(Get-TestRecord -Instance 2)
         $script:now += 5000
         Invoke-ModemWorkerCycle -Worker $script:worker
         Invoke-ModemWorkerCycle -Worker $script:worker
         $snapshot = $script:link['Snapshot']
-        $snapshot.PortName | Should -Be 'COM15'
         $snapshot.State | Should -Be 'Online'
-        Should -Invoke -ModuleName FibocomFm350 Open-SerialAtTransport -Times 1 -Exactly -ParameterFilter { $PortName -eq 'COM15' }
+        Should -Invoke -ModuleName FibocomFm350 Open-WinUsbAtTransport -Times 1 -Exactly -ParameterFilter { $InterfacePath -like '*#8&00000000&2&0006#*' }
         Should -Invoke -ModuleName FibocomFm350 Get-ModemAdapterState -ParameterFilter { $InstanceId -eq 'USB\VID_0E8D&PID_7127&MI_00\8&00000000&2&0000' }
-        $script:modems['COM14'].Closed | Should -BeTrue -Because 'the lost port is released'
-        Get-WriteCommand -Modem $script:modems['COM15'] | Should -BeNullOrEmpty
+        $script:modems[1].Closed | Should -BeTrue -Because 'the lost port is released'
+        Get-WriteCommand -Modem $script:modems[2] | Should -BeNullOrEmpty
+    }
+
+    It 'puts a new instance back on MediaTek''s driver on WinUSB, the AT port first with its interface class, then opens it' {
+        $script:records = @(Get-TestRecord -Unbound -Gnss)
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs.InstanceId | Should -Be @('USB\VID_0E8D&PID_7127&MI_06\8&00000000&1&0006', 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&1&0003')
+        $script:installs.InterfaceGuid | Should -Be @($script:guid, $null)
+        $script:installs.Beat | Should -Be @($true, $true) -Because 'the heartbeat beats while Windows installs'
+        Should -Invoke -ModuleName FibocomFm350 Test-UsbFunctionFree -ParameterFilter { $PortName -eq 'COM14' -and $InstanceId -like '*&MI_06\*' }
+        $snapshot = $script:link['Snapshot']
+        $snapshot.State | Should -Be 'Online'
+        $snapshot.Usb.Binding.Functions.Result | Should -Be @('Done', 'Done')
+        $snapshot.Recovery.History.MaintenanceUntil | Should -BeGreaterThan $script:now -Because 'a port just started may stay silent: nothing escalates'
+        @(Get-TestLog | Where-Object { $_ -match 'USB function MI_06 MdAt: on WinUSB \(OtherDriver\)' }).Count | Should -Be 1
+        @(Get-TestLog | Where-Object { $_ -match 'COM\d' }) | Should -BeNullOrEmpty
+    }
+
+    It 'leaves the AT port on its driver while another program holds its COM port, and looks again at each scan' {
+        $script:records = @(Get-TestRecord -Unbound)
+        $script:free = $false
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $snapshot = $script:link['Snapshot']
+        $snapshot.State | Should -Be 'NoDevice'
+        $snapshot.Reason | Should -Be 'PortInUse'
+        $snapshot.Usb.Binding.Functions.Result | Should -Be @('InUse')
+        $script:installs | Should -BeNullOrEmpty
+        $script:now += 5000
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs | Should -BeNullOrEmpty
+        $script:free = $true
+        $script:now += 5000
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs.Count | Should -Be 1
+        $script:link['Snapshot'].State | Should -Be 'Online'
+        @(Get-TestLog | Where-Object { $_ -match 'another program holds its port' }).Count | Should -Be 1 -Because 'it is logged once'
+    }
+
+    It 'tries a failed installation once per instance, out of the app''s reach meanwhile, again when the user checks now' {
+        $script:records = @(Get-TestRecord -Unbound)
+        $script:install = { [pscustomobject]@{ Done = $false; NeedReboot = $false; Step = 'Install'; Error = [int]0xE0000203 } }
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $snapshot = $script:link['Snapshot']
+        $snapshot.Reason | Should -Be 'BindFailed'
+        $snapshot.Blocked | Should -BeTrue
+        $snapshot.Recovery.Status | Should -Be 'Blocked'
+        $snapshot.Usb.Binding.Functions[0].Error | Should -Be '0xE0000203'
+        $script:now += 5000
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs.Count | Should -Be 1
+        $script:link['Snapshot'].Reason | Should -Be 'BindFailed'
+
+        $script:install = { [pscustomobject]@{ Done = $true; NeedReboot = $false; Step = 'Install'; Error = 0 } }
+        [void](Send-ModemCommand -Link $script:link -Kind ConnectNow)
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs.Count | Should -Be 2
+        $script:link['Snapshot'].State | Should -Be 'Online'
+    }
+
+    It 'tries again a new instance of a function whose installation failed' {
+        $script:records = @(Get-TestRecord -Unbound)
+        $script:install = { [pscustomobject]@{ Done = $false; NeedReboot = $false; Step = 'Install'; Error = 5 } }
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:records = @(Get-TestRecord -Unbound -Instance 2)
+        $script:now += 5000
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs.InstanceId | Should -Be @('USB\VID_0E8D&PID_7127&MI_06\8&00000000&1&0006', 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&2&0006')
+    }
+
+    It 'says a function goes on WinUSB at the next restart of Windows, and doesn''t try it again' {
+        $script:records = @(Get-TestRecord -Unbound)
+        $script:install = { [pscustomobject]@{ Done = $true; NeedReboot = $true; Step = 'Install'; Error = 0 } }
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:link['Snapshot'].Reason | Should -Be 'BindRestartNeeded'
+        # Until Windows restarts, PnP may show the function on WinUSB with a problem.
+        $script:records[0].Service = 'WINUSB'
+        $script:records[0].ProblemCode = 14
+        $script:now += 5000
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs.Count | Should -Be 1
+        $script:link['Snapshot'].Reason | Should -Be 'BindRestartNeeded'
+    }
+
+    It 'changes no driver without administrator rights, and says so' {
+        Mock -ModuleName FibocomFm350 Test-AppElevation { $false }
+        $script:worker = New-ModemWorker -Link $script:link -DataFolder $script:folder -Clock { $script:now }
+        $script:records = @(Get-TestRecord -Unbound)
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:link['Snapshot'].Reason | Should -Be 'BindNotElevated'
+        $script:link['Snapshot'].Blocked | Should -BeTrue
+        $script:installs | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName FibocomFm350 Test-UsbFunctionFree -Times 0 -Exactly
+    }
+
+    It 'changes no driver while it only observes, and says which step it withholds' {
+        $script:worker = New-ModemWorker -Link $script:link -DataFolder $script:folder -Clock { $script:now } -ObserveOnly
+        $script:records = @(Get-TestRecord -Unbound)
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $snapshot = $script:link['Snapshot']
+        $snapshot.Action | Should -Be 'BindUsb'
+        $snapshot.Reason | Should -BeNullOrEmpty
+        $snapshot.Recovery.Check | Should -Be 'H1' -Because 'an AT port not on WinUSB yet is no silent port: no step for it'
+        $script:installs | Should -BeNullOrEmpty
+    }
+
+    It 'puts the modem''s other functions on WinUSB when the user checks now, the port left open' {
+        $script:records = @(Get-TestRecord -Gnss)
+        $script:install = { [pscustomobject]@{ Done = $false; NeedReboot = $false; Step = 'Install'; Error = 31 } }
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:link['Snapshot'].State | Should -Be 'Online' -Because 'a function the app never opens failing is no failure of the connection'
+        $script:installs.InstanceId | Should -Be @('USB\VID_0E8D&PID_7127&MI_03\8&00000000&1&0003')
+        $script:now += 30000
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs.Count | Should -Be 1
+        $script:install = { [pscustomobject]@{ Done = $true; NeedReboot = $false; Step = 'Install'; Error = 0 } }
+        [void](Send-ModemCommand -Link $script:link -Kind ConnectNow)
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs.Count | Should -Be 2
+        $script:modems[1].Closed | Should -BeFalse
+        Should -Invoke -ModuleName FibocomFm350 Open-WinUsbAtTransport -Times 1 -Exactly
+        $script:link['Snapshot'].Usb.Functions.Driver | Should -Be @('WinUsb', 'WinUsb')
+    }
+
+    It 'never gives the port it holds open another driver, whatever a PnP read says of it: <Name>' -ForEach @(
+        @{ Name = 'its service unread'; Service = $null; ParametersRead = $true }
+        @{ Name = 'its registry parameters unread'; Service = 'WINUSB'; ParametersRead = $false }
+        @{ Name = 'read as on another driver'; Service = 'usb2ser_tm'; ParametersRead = $true }
+    ) {
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:link['Snapshot'].State | Should -Be 'Online'
+        $script:records[0].Service = $Service
+        $script:records[0] | Add-Member -NotePropertyName ParametersRead -NotePropertyValue $ParametersRead -Force
+        if (-not $ParametersRead) { $script:records[0].InterfaceGuids = $null }
+        [void](Send-ModemCommand -Link $script:link -Kind ConnectNow)
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs | Should -BeNullOrEmpty
+        $script:modems[1].Closed | Should -BeFalse
+        $script:link['Snapshot'].State | Should -Be 'Online'
+    }
+
+    It 'never puts on WinUSB a function it couldn''t read at a scan: left to the next look' {
+        $script:records = @(Get-TestRecord -Unbound)
+        $script:records[0].Service = $null
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs | Should -BeNullOrEmpty
+        $script:records = @(Get-TestRecord -Unbound)
+        $script:now += 5000
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs.Count | Should -Be 1
+    }
+
+    It 'leaves the AT port on WinUSB under another program''s class while that program holds its interface' {
+        $script:records = @(Get-TestRecord)
+        $script:records[0].InterfaceGuids = @('{11111111-2222-3333-4444-555555555555}')
+        Mock -ModuleName FibocomFm350 Test-UsbFunctionFree { [pscustomobject]@{ Free = $false; Held = 'Interface'; Error = 32 } }
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs | Should -BeNullOrEmpty
+        $script:link['Snapshot'].Reason | Should -Be 'PortInUse'
+        Should -Invoke -ModuleName FibocomFm350 Test-UsbFunctionFree -ParameterFilter { $InterfaceGuid -contains '{11111111-2222-3333-4444-555555555555}' }
+    }
+
+    It 'leaves a function whose ports can''t be looked at, the cycle going on, and logs no port' {
+        $script:records = @(Get-TestRecord -Gnss)
+        Mock -ModuleName FibocomFm350 Test-UsbFunctionFree { throw [System.ArgumentException]::new('COM11 is odd') }
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:link['Snapshot'].State | Should -Be 'Online'
+        $script:link['Snapshot'].Usb.Binding.Functions[0].Step | Should -Be 'Check'
+        $script:installs | Should -BeNullOrEmpty
+        @(Get-TestLog | Where-Object { $_ -match 'COM\d' }) | Should -BeNullOrEmpty
     }
 
     It 'says when another program holds the AT port, and tries again at the next scan' {
-        Mock -ModuleName FibocomFm350 Open-SerialAtTransport { throw [System.UnauthorizedAccessException]::new("Access to the port '$PortName' is denied.") }
+        Mock -ModuleName FibocomFm350 Open-WinUsbAtTransport { throw [System.ComponentModel.Win32Exception]::new(5) }
         Invoke-ModemWorkerCycle -Worker $script:worker
         $snapshot = $script:link['Snapshot']
         $snapshot.State | Should -Be 'NoDevice'
@@ -1867,12 +2082,12 @@ Describe 'The worker and the AT port' {
         $script:worker.WaitMs | Should -Be 5000
         $script:now += 5000
         Invoke-ModemWorkerCycle -Worker $script:worker
-        Should -Invoke -ModuleName FibocomFm350 Open-SerialAtTransport -Times 2 -Exactly
+        Should -Invoke -ModuleName FibocomFm350 Open-WinUsbAtTransport -Times 2 -Exactly
         @(Get-TestLog | Where-Object { $_ -match "can't be opened" }).Count | Should -Be 1 -Because 'the same failure is logged once'
     }
 
     It 'reads data usage while another program holds the AT port' {
-        Mock -ModuleName FibocomFm350 Open-SerialAtTransport { throw [System.UnauthorizedAccessException]::new("Access to the port '$PortName' is denied.") }
+        Mock -ModuleName FibocomFm350 Open-WinUsbAtTransport { throw [System.ComponentModel.Win32Exception]::new(5) }
         Mock -ModuleName FibocomFm350 Get-ModemAdapterCounter { [pscustomobject]@{ Interface = 'x'; Received = [uint64]10; Sent = [uint64]1; Time = [DateTimeOffset]::Now } }
         Invoke-ModemWorkerCycle -Worker $script:worker
 
@@ -1883,15 +2098,15 @@ Describe 'The worker and the AT port' {
 
     It 'finds the network adapter a PnP read missed, without closing the port' {
         # The network function missed at the look that opened the port.
-        $script:records = @(Get-TestRecord -PortName 'COM14' | Where-Object PortName)
+        $script:records = @(Get-TestRecord -NoNetwork)
         Invoke-ModemWorkerCycle -Worker $script:worker
         $script:link['Snapshot'].Reason | Should -Be 'NoAdapter'
-        $script:records = @(Get-TestRecord -PortName 'COM14')
+        $script:records = @(Get-TestRecord)
         $script:now += 5000
         Invoke-ModemWorkerCycle -Worker $script:worker
         $script:link['Snapshot'].State | Should -Be 'Online'
-        Should -Invoke -ModuleName FibocomFm350 Open-SerialAtTransport -Times 1 -Exactly
-        $script:modems['COM14'].Closed | Should -BeFalse
+        Should -Invoke -ModuleName FibocomFm350 Open-WinUsbAtTransport -Times 1 -Exactly
+        $script:modems[1].Closed | Should -BeFalse
     }
 
     It 'looks for the modem again only at the scan interval' {
@@ -1906,273 +2121,45 @@ Describe 'The worker and the AT port' {
     }
 }
 
-Describe 'The AT port''s driver' {
-    BeforeAll {
-        # What Get-DriverPackageFact reads in a package: by default the known one, signed for WHQL
-        # and vouched for by its catalog; -Change replaces some of its facts.
-        function Get-TestFact {
-            param([hashtable] $Change = @{})
-            $known = @(Get-KnownDriverPackage)[0]
-            $files = @{}
-            foreach ($key in $known.Files.Keys) { $files[$key] = $known.Files[$key] }
-            $fact = [pscustomobject]@{
-                Path         = 'driver/usb2ser_tm.inf'
-                Inf          = [pscustomobject]@{ Class = 'Ports'; Provider = 'MediaTek'; Version = '3.22.43.1'; Date = '10/18/2022'; CatalogFile = 'usb2ser_tm.cat'; HardwareIds = [string[]]@('USB\VID_0E8D&PID_7127&MI_06') }
-                Catalog      = $true
-                Signer       = [pscustomobject]@{ Subject = 'CN=Microsoft Windows Hardware Compatibility Publisher, O=Microsoft Corporation'; KeyUsages = [string[]]@('1.3.6.1.4.1.311.10.3.5') }
-                CatalogCheck = 0
-                Files        = $files
-            }
-            foreach ($key in $Change.Keys) { $fact.$key = $Change[$key] }
-            $fact
-        }
-
-        # The copies of driver packages the worker keeps in its folder.
-        function Get-TestCopy {
-            @(Get-ChildItem -Path (Join-Path $script:folder 'driver-staging') -Directory -ErrorAction SilentlyContinue)
-        }
-    }
-
-    BeforeEach {
-        $script:folder = Join-Path $TestDrive ([guid]::NewGuid())
-        $script:now = 100000
-        # A package as the user downloads it: a zip with an installer the app never runs.
-        $content = Join-Path $TestDrive ([guid]::NewGuid())
-        New-Item -ItemType Directory -Path (Join-Path $content 'driver') -Force | Out-Null
-        Set-Content -LiteralPath (Join-Path $content 'driver/usb2ser_tm.inf') -Value '[Version]'
-        Set-Content -LiteralPath (Join-Path $content 'setup.exe') -Value 'MZ'
-        $script:zip = Join-Path $TestDrive "$([guid]::NewGuid()).zip"
-        Compress-Archive -Path (Join-Path $content '*') -DestinationPath $script:zip
-        $script:fact = Get-TestFact
-        Mock -ModuleName FibocomFm350 Get-DriverPackageFact { $script:fact }
-        # Never the real pnputil here: a test runner may have administrator rights.
-        Mock -ModuleName FibocomFm350 Invoke-Pnputil { throw 'pnputil must not run in the tests.' }
-    }
-
-    Context 'on the simulated modem' {
-        It 'checks the package where it copied it, installs it, and the modem comes online' {
-            $device = New-SimulatedDevice -Scenario NoDriver
-            $worker = Get-TestWorker -Device $device
+Describe 'The worker on the simulated modem not on WinUSB (Unbound)' {
+    It 'puts its functions on WinUSB and goes online, as on a real one' {
+        $device = New-SimulatedDevice -Scenario Unbound
+        $link = New-ModemWorkerLink
+        $worker = New-ModemWorker -Link $link -Simulation $device -DataFolder (Join-Path $TestDrive ([guid]::NewGuid()))
+        try {
             Invoke-ModemWorkerCycle -Worker $worker
-            $script:link['Snapshot'].Reason | Should -Be 'NoDriver'
-            $script:link['Snapshot'].Driver.Device | Should -Be 'NoDriver'
-
-            (Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip }).Result | Should -Be 'Verified'
-            $package = $script:link['Snapshot'].Driver.Package
-            $package.Name | Should -Be (Split-Path $script:zip -Leaf)
-            $package.Verdict.Known.Version | Should -Be '3.22.43.1'
-            $copies = Get-TestCopy
-            $copies.Count | Should -Be 1
-            Test-Path -LiteralPath (Join-Path $copies[0].FullName 'driver/usb2ser_tm.inf') | Should -BeTrue
-            $script:copy = $copies[0].FullName
-            Should -Invoke -ModuleName FibocomFm350 Get-DriverPackageFact -Times 1 -Exactly -ParameterFilter { $Folder -eq $script:copy -and $Beat }
-
-            (Invoke-TestCommand -Worker $worker -Kind InstallDriver).Result | Should -Be 'Done'
-            $worker.Recovery.MaintenanceUntil | Should -Be ($script:now + 300000) -Because 'the new port may stay silent for minutes'
-            (Get-TestCopy).Count | Should -Be 0
-            $script:link['Snapshot'].Driver.Package | Should -BeNullOrEmpty
-            Invoke-TestCycle -Worker $worker -Until { param($s) $s.State -eq 'Online' } -Max 5 | Out-Null
-            $snapshot = $script:link['Snapshot']
-            $snapshot.State | Should -Be 'Online'
-            $snapshot.Driver.Device | Should -Be 'Present'
-            $snapshot.Driver.Inf | Should -Be 'oem0.inf'
+            $device.Binds | Should -Be 7
+            $link['Snapshot'].State | Should -Be 'Online'
+            $link['Snapshot'].Usb.Device | Should -Be 'Present'
         }
-
-        It 'publishes the command under way before it runs' {
-            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario NoDriver)
-            Mock -ModuleName FibocomFm350 Get-DriverPackageFact { $script:during = $script:link['Snapshot'].Driver.Operation; $script:fact }
-            Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip } | Out-Null
-            $script:during | Should -Be 'CheckDriverPackage'
-            $script:link['Snapshot'].Driver.Operation | Should -BeNullOrEmpty
-        }
-
-        It 'installs a version it doesn''t know only once the user accepted it' {
-            $device = New-SimulatedDevice -Scenario NoDriver
-            $worker = Get-TestWorker -Device $device
-            $script:fact = Get-TestFact -Change @{ Files = @{ 'usb2ser_tm.inf' = 'ab' * 32 } }
-            (Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip }).Result | Should -Be 'Signed'
-            (Invoke-TestCommand -Worker $worker -Kind InstallDriver).Result | Should -Be 'Unconfirmed'
-            $device.Presence | Should -Be 'NoDriver'
-            (Get-TestCopy).Count | Should -Be 1 -Because 'the package is kept for the user''s answer'
-            (Invoke-TestCommand -Worker $worker -Kind InstallDriver -Parameter @{ AcceptUnknown = $true }).Result | Should -Be 'Done'
-            $device.Presence | Should -Be 'Present'
-        }
-
-        It 'deletes a refused package at once, says why, and installs nothing' {
-            $device = New-SimulatedDevice -Scenario NoDriver
-            $worker = Get-TestWorker -Device $device
-            $script:fact = Get-TestFact -Change @{ Signer = [pscustomobject]@{ Subject = 'CN=Example'; KeyUsages = [string[]]@() } }
-            (Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip }).Result | Should -Be 'Refused'
-            (Get-TestCopy).Count | Should -Be 0
-            $script:link['Snapshot'].Driver.Package.Verdict.Problems | Should -Be @('NotWhql')
-            (Invoke-TestCommand -Worker $worker -Kind InstallDriver -Parameter @{ AcceptUnknown = $true }).Result | Should -Be 'NoPackage'
-            $device.Presence | Should -Be 'NoDriver'
-        }
-
-        It 'fails on a package it can''t read, and keeps nothing of it' {
-            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario NoDriver)
-            $exe = Join-Path $TestDrive 'setup.exe'
-            Set-Content -LiteralPath $exe -Value 'MZ'
-            $result = Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $exe }
-            $result.Result | Should -Be 'Failed'
-            $result.Detail | Should -BeLike '*a zip, or the INF*'
-            (Get-TestCopy).Count | Should -Be 0
-        }
-
-        It 'never installs over an AT port that works' {
-            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario Online)
-            Invoke-ModemWorkerCycle -Worker $worker
-            Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip } | Out-Null
-            (Invoke-TestCommand -Worker $worker -Kind InstallDriver).Result | Should -Be 'DriverWorking'
-        }
-
-        It 'uninstalls the driver: the port closed first, the connection left as it is, nothing escalated' {
-            $device = New-SimulatedDevice -Scenario Online
-            $worker = Get-TestWorker -Device $device
-            Invoke-ModemWorkerCycle -Worker $worker
-            $adapter = $device.Adapter.Read()
-            (Invoke-TestCommand -Worker $worker -Kind UninstallDriver).Result | Should -Be 'Done'
-            $device.Presence | Should -Be 'NoDriver'
-            $device.Modem.Closed | Should -BeTrue
-            $trace = Invoke-TestCycle -Worker $worker -Max 20
-            $trace[-1].Reason | Should -Be 'NoDriver'
-            $trace[-1].Recovery | Should -Be 'Blocked'
-            Get-RecoveryCommand -Modem $device.Modem | Should -BeNullOrEmpty
-            ($device.Adapter.Read() | ConvertTo-Json) | Should -Be ($adapter | ConvertTo-Json)
-        }
-
-        It 'keeps the driver while a network mode is on trial: only the AT port can write it back' {
-            $device = New-SimulatedDevice -Scenario Online
-            $worker = Get-TestWorker -Device $device
-            Invoke-ModemWorkerCycle -Worker $worker
-            (Invoke-TestCommand -Worker $worker -Kind SetNetworkMode -Parameter @{ NetworkMode = 'LteOnly' }).Result | Should -Be 'Applied'
-            (Invoke-TestCommand -Worker $worker -Kind UninstallDriver).Result | Should -Be 'TrialOn'
-            $device.Presence | Should -Be 'Present'
-            $device.Modem.Closed | Should -BeFalse
-        }
-
-        It 'never logs the folder of a package it can''t read: it may hold the user''s name' {
-            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario NoDriver)
-            $missing = Join-Path $TestDrive 'Users\Example.Person\Downloads\missing.zip'
-            $result = Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $missing }
-            $result.Result | Should -Be 'Failed'
-            $result.Detail | Should -BeLike '*missing.zip*'
-            $result.Detail | Should -Not -BeLike '*Example.Person*'
-            @(Get-TestLog | Where-Object { $_ -like '*Example.Person*' }).Count | Should -Be 0
-        }
-
-        It 'tries again to delete a copy it couldn''t, and logs it once' {
-            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario NoDriver)
-            Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip } | Out-Null
-            $held = [System.IO.File]::Open((Join-Path (Get-TestCopy)[0].FullName 'driver/usb2ser_tm.inf'), 'Open', 'Read', 'None')
-            try {
-                (Invoke-TestCommand -Worker $worker -Kind InstallDriver).Result | Should -Be 'Done'
-                Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip } | Out-Null
-                (Get-TestCopy).Count | Should -Be 2 -Because 'the held copy stays, beside the new one'
-            }
-            finally {
-                $held.Dispose()
-            }
-            @(Get-TestLog | Where-Object { $_ -like "*can't be deleted yet*" }).Count | Should -Be 1
+        finally {
             Close-ModemWorker -Worker $worker
-            (Get-TestCopy).Count | Should -Be 0
-        }
-
-        It 'refuses every driver command while it only observes, and copies nothing' {
-            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario NoDriver) -Extra @{ ObserveOnly = $true }
-            foreach ($kind in 'CheckDriverPackage', 'InstallDriver', 'UninstallDriver') {
-                (Invoke-TestCommand -Worker $worker -Kind $kind -Parameter @{ Path = $script:zip }).Result | Should -Be 'Refused'
-            }
-            (Get-TestCopy).Count | Should -Be 0
-        }
-
-        It 'refuses them without administrator rights' {
-            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario NoDriver)
-            $worker.Elevated = $false
-            foreach ($kind in 'CheckDriverPackage', 'InstallDriver', 'UninstallDriver') {
-                (Invoke-TestCommand -Worker $worker -Kind $kind -Parameter @{ Path = $script:zip }).Result | Should -Be 'NotElevated'
-            }
-        }
-
-        It 'deletes the copy it kept when it ends' {
-            $worker = Get-TestWorker -Device (New-SimulatedDevice -Scenario NoDriver)
-            Invoke-TestCommand -Worker $worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip } | Out-Null
-            (Get-TestCopy).Count | Should -Be 1
-            Close-ModemWorker -Worker $worker
-            (Get-TestCopy).Count | Should -Be 0
+            Close-ModemWorkerLink -Link $link
         }
     }
 
-    Context 'with pnputil' {
-        BeforeEach {
-            # One modem, its AT port as -Driver says: none, or a package published as -Inf.
-            function Get-TestRecord {
-                param([switch] $Driver, [string] $Inf = 'oem24.inf')
-                $parent = 'USB\VID_0E8D&PID_7127\7&00000000&0&1'
-                [pscustomobject]@{
-                    InstanceId = 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&1&0006'; Present = $true; Parent = $parent
-                    ProblemCode = if ($Driver) { 0 } else { 28 }; Service = if ($Driver) { 'usb2ser_tm' } else { $null }; PortName = if ($Driver) { 'COM14' } else { $null }
-                    DriverInfPath = if ($Driver) { $Inf } else { $null }; DriverVersion = if ($Driver) { '3.22.43.1' } else { $null }; DriverProvider = if ($Driver) { 'MediaTek' } else { $null }
-                }
-                [pscustomobject]@{ InstanceId = 'USB\VID_0E8D&PID_7127&MI_00\8&00000000&1&0000'; Present = $true; ProblemCode = 0; Service = 'usbrndis6'; Parent = $parent; PortName = $null }
-            }
-            $script:records = @(Get-TestRecord)
-            $script:modem = (New-SimulatedDevice -Scenario Online -PortName 'COM14').Modem
-            $script:pnputil = [pscustomobject]@{ Result = 'Done'; ExitCode = 0 }
-            Mock -ModuleName FibocomFm350 Get-ModemPnpRecord { $script:records }
-            Mock -ModuleName FibocomFm350 Open-SerialAtTransport { $script:modem }
-            Mock -ModuleName FibocomFm350 Get-ModemAdapterState { (New-SimulatedDevice -Scenario Online).Adapter.Read() }
-            Mock -ModuleName FibocomFm350 Get-ModemAdapterCounter { }
-            Mock -ModuleName FibocomFm350 Test-AppElevation { $true }
-            # pnputil working: the heartbeat as it beats meanwhile.
-            Mock -ModuleName FibocomFm350 Install-ModemDriver { $script:link['Heartbeat'] = 0; if ($Beat) { & $Beat }; $script:beaten = $script:link['Heartbeat']; $script:pnputil }
-            # Windows removes the driver: the AT port is left without one.
-            Mock -ModuleName FibocomFm350 Uninstall-ModemDriver { $script:records = @(Get-TestRecord); $script:pnputil }
-            $script:link = New-ModemWorkerLink
-            $script:worker = New-ModemWorker -Link $script:link -DataFolder $script:folder -Clock { $script:now }
+    It 'puts a modem back from a reset as a new instance on WinUSB again: an intended operation, nothing escalated' {
+        $device = New-SimulatedDevice
+        $device.NewInstanceOnReturn = $true
+        $device.AwayMs = 0
+        $link = New-ModemWorkerLink
+        $worker = New-ModemWorker -Link $link -Simulation $device -DataFolder (Join-Path $TestDrive ([guid]::NewGuid()))
+        try {
+            Invoke-ModemWorkerCycle -Worker $worker
+            $link['Snapshot'].State | Should -Be 'Online'
+            $device.Restart()
+            # A pass finds the port lost; the next look finds the modem back, as a new instance.
+            [void](Send-ModemCommand -Link $link -Kind ConnectNow)
+            Invoke-ModemWorkerCycle -Worker $worker
+            Invoke-ModemWorkerCycle -Worker $worker
+            $device.Instance | Should -Be 2
+            $device.Binds | Should -Be 7
+            $link['Snapshot'].State | Should -Be 'Online'
+            $link['Snapshot'].Recovery.History.Step | Should -BeNullOrEmpty -Because 'no recovery step was taken'
         }
-
-        It 'installs from the folder it checked, its heartbeat beating meanwhile' {
-            Invoke-ModemWorkerCycle -Worker $script:worker
-            $script:link['Snapshot'].Reason | Should -Be 'NoDriver'
-            Invoke-TestCommand -Worker $script:worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip } | Out-Null
-            $script:copy = (Get-TestCopy)[0].FullName
-            (Invoke-TestCommand -Worker $script:worker -Kind InstallDriver).Result | Should -Be 'Done'
-            Should -Invoke -ModuleName FibocomFm350 Install-ModemDriver -Times 1 -Exactly -ParameterFilter { $InfPath -eq (Join-Path $script:copy 'driver\usb2ser_tm.inf') }
-            $script:beaten | Should -BeGreaterThan 0
-            # Windows starts the port: the next look finds it, and opens it.
-            $script:records = @(Get-TestRecord -Driver)
-            $script:now += 5000
-            Invoke-ModemWorkerCycle -Worker $script:worker
-            $script:link['Snapshot'].PortName | Should -Be 'COM14'
-            $script:link['Snapshot'].Driver.Inf | Should -Be 'oem24.inf'
-        }
-
-        It 'says pnputil''s exit code when Windows refuses the package' {
-            Invoke-ModemWorkerCycle -Worker $script:worker
-            Invoke-TestCommand -Worker $script:worker -Kind CheckDriverPackage -Parameter @{ Path = $script:zip } | Out-Null
-            $script:pnputil = [pscustomobject]@{ Result = 'Failed'; ExitCode = 5 }
-            $result = Invoke-TestCommand -Worker $script:worker -Kind InstallDriver
-            $result.Result | Should -Be 'Failed'
-            $result.Detail | Should -Be 'pnputil exit code 5'
-            (Get-TestCopy).Count | Should -Be 0
-        }
-
-        It 'uninstalls the package the AT port reports, its port closed first' {
-            $script:records = @(Get-TestRecord -Driver)
-            Invoke-ModemWorkerCycle -Worker $script:worker
-            $script:link['Snapshot'].State | Should -Be 'Online'
-            (Invoke-TestCommand -Worker $script:worker -Kind UninstallDriver).Result | Should -Be 'Done'
-            Should -Invoke -ModuleName FibocomFm350 Uninstall-ModemDriver -Times 1 -Exactly -ParameterFilter { $PublishedName -eq 'oem24.inf' -and $Beat }
-            $script:modem.Closed | Should -BeTrue
-        }
-
-        It 'uninstalls nothing but a package Windows published as an oem-numbered INF' {
-            $script:records = @(Get-TestRecord -Driver -Inf 'usbser.inf')
-            Invoke-ModemWorkerCycle -Worker $script:worker
-            (Invoke-TestCommand -Worker $script:worker -Kind UninstallDriver).Result | Should -Be 'NoDriver'
-            Should -Invoke -ModuleName FibocomFm350 Uninstall-ModemDriver -Times 0 -Exactly
-            $script:modem.Closed | Should -BeFalse
+        finally {
+            Close-ModemWorker -Worker $worker
+            Close-ModemWorkerLink -Link $link
         }
     }
 }
@@ -2221,10 +2208,10 @@ Describe 'Invoke-ModemWorker' {
             # PnP busy at the first look: built here, so that its methods run in this runspace.
             $simulated = $using:device
             $flaky = [pscustomobject]@{ Scenario = 'Online'; Adapter = $simulated.Adapter; Device = $simulated; Looks = 0 }
-            $flaky | Add-Member -MemberType ScriptMethod -Name Find -Value {
+            $flaky | Add-Member -MemberType ScriptMethod -Name PnpRecords -Value {
                 $this.Looks++
                 if ($this.Looks -eq 1) { throw 'PnP is busy.' }
-                $this.Device.Find()
+                $this.Device.PnpRecords()
             }
             $flaky | Add-Member -MemberType ScriptMethod -Name Open -Value { $this.Device.Open() }
             Invoke-ModemWorker -Link $using:link -Simulation $flaky -DataFolder $using:folder
@@ -2237,7 +2224,7 @@ Describe 'Invoke-ModemWorker' {
             $link['Snapshot'].State | Should -Be 'Online'
             $log = @(Get-ChildItem (Join-Path $folder 'logs') | Get-Content)
             $failed = @($log -match 'ERROR\s+Cycle failed \(1 in a row\): .*PnP is busy')[0]
-            $opened = @($log -match 'AT port SIMULATED open')[0]
+            $opened = @($log -match 'AT port open \(SIMULATED\)')[0]
             $failed | Should -Not -BeNullOrEmpty
             # The look that failed is the one run again, a second later - not at the next scan.
             $at = { param($line) [DateTimeOffset]::Parse($line.Substring(0, 29), [cultureinfo]::InvariantCulture) }
@@ -2258,7 +2245,7 @@ Describe 'Invoke-ModemWorker' {
         $job = Start-ThreadJob -ScriptBlock {
             Import-Module $using:modulePath
             $broken = [pscustomobject]@{ Scenario = 'Online' }
-            $broken | Add-Member -MemberType ScriptMethod -Name Find -Value { throw 'PnP is broken.' }
+            $broken | Add-Member -MemberType ScriptMethod -Name PnpRecords -Value { throw 'PnP is broken.' }
             Invoke-ModemWorker -Link $using:link -Simulation $broken -DataFolder $using:folder
         }
         try {

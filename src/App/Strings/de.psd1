@@ -4,9 +4,11 @@
 @{
     # Why the connection is where it is (Resolve-ConnectionState's reasons).
     'Reason.NoDevice'              = 'Kein Modem über USB gefunden.'
-    'Reason.NoDriver'              = 'Der AT-Port des Modems hat keinen Treiber: Die App kann erst mit dem Modem kommunizieren, wenn er installiert ist.'
     'Reason.DeviceProblem'         = 'Windows meldet ein Problem mit dem AT-Port des Modems.'
     'Reason.PortInUse'             = 'Ein anderes Programm verwendet den AT-Port des Modems.'
+    'Reason.BindFailed'            = 'Der AT-Port des Modems konnte nicht auf den WinUSB-Treiber von Windows umgestellt werden: Die App versucht es erneut mit „Jetzt prüfen“ oder wenn das Modem neu angeschlossen wird.'
+    'Reason.BindNotElevated'       = 'Um den AT-Port des Modems auf den WinUSB-Treiber von Windows umzustellen, sind Administratorrechte nötig: Starten Sie die App als Administrator.'
+    'Reason.BindRestartNeeded'     = 'Der AT-Port des Modems wird beim nächsten Neustart von Windows auf den WinUSB-Treiber von Windows umgestellt.'
     'Reason.PortFailed'            = 'Der AT-Port des Modems kann nicht geöffnet werden.'
     'Reason.SimUnknown'            = 'Die SIM wird gelesen.'
     'Reason.NoPin'                 = 'Die SIM wartet auf ihre PIN.'
@@ -48,6 +50,7 @@
 
     # What the next step does, while the connection is on its way; and the same after a colon.
     'Action.OpenPort'                = 'Der AT-Port des Modems wird geöffnet.'
+    'Action.BindUsb'                 = 'Der AT-Port des Modems wird auf den WinUSB-Treiber von Windows umgestellt.'
     'Action.Initialize'              = 'Warten auf die Antwort des Modems.'
     'Action.EnterPin'                = 'Die gespeicherte PIN wird eingegeben.'
     'Action.RadioOn'                 = 'Das Funkteil wird eingeschaltet.'
@@ -58,6 +61,7 @@
     'Action.ConfigureAdapter'        = 'Der Netzwerkadapter wird konfiguriert.'
     'Action.ApplyNetworkMode'        = 'Der Netzmodus wird festgelegt.'
     'ActionInline.OpenPort'          = 'Öffnen des AT-Ports des Modems.'
+    'ActionInline.BindUsb'           = 'Umstellen des AT-Ports des Modems auf den WinUSB-Treiber von Windows.'
     'ActionInline.Initialize'        = 'Warten auf die Antwort des Modems.'
     'ActionInline.EnterPin'          = 'Eingabe der gespeicherten PIN.'
     'ActionInline.RadioOn'           = 'Einschalten des Funkteils.'
@@ -104,25 +108,6 @@
     'Result.SetNetworkMode.ModeUnsupported' = 'Das Modem unterstützt diesen Netzmodus nicht: Es wurde nichts geschrieben.'
     'Result.SetNetworkMode.NoSupportedBand' = 'Das Modem unterstützt keines der Bänder, die für eine seiner RATs gewählt wurden: Es wurde nichts geschrieben.'
     'Result.SetNetworkMode.Unknown'         = 'Der Netzmodus des Modems kann nicht gelesen werden: Es wurde nichts geschrieben.'
-    'Result.CheckDriverPackage.Verified'    = 'Treiberpaket geprüft: eine Version, die die App kennt.'
-    'Result.CheckDriverPackage.Signed'      = 'Treiberpaket geprüft: von Microsoft signiert, eine Version, die die App nicht kennt.'
-    'Result.CheckDriverPackage.Refused'     = 'Das Treiberpaket kann nicht installiert werden: Der Grund steht auf der Registerkarte „Treiber“.'
-    'Result.CheckDriverPackage.NoPackage'   = 'Es wurde kein Treiberpaket ausgewählt.'
-    'Result.CheckDriverPackage.Failed'      = 'Das Treiberpaket kann nicht gelesen werden.'
-    'Result.InstallDriver.Done'             = 'Treiber installiert: Die App öffnet den AT-Port des Modems, sobald Windows ihn startet.'
-    'Result.InstallDriver.RestartNeeded'    = 'Treiber installiert: Windows muss zum Abschluss neu gestartet werden.'
-    'Result.InstallDriver.NoDevice'         = 'Treiber zu Windows hinzugefügt, aber kein Gerät hat ihn übernommen: Er wird verwendet, wenn das Modem angeschlossen wird, sofern Windows keinen anderen Treiber höher einstuft.'
-    'Result.InstallDriver.Unconfirmed'      = 'Nicht installiert: Eine Version, die die App nicht kennt, erfordert Ihre Bestätigung.'
-    'Result.InstallDriver.NoPackage'        = 'Wählen Sie zuerst ein Treiberpaket aus.'
-    'Result.InstallDriver.DriverWorking'    = 'Der AT-Port hat bereits einen funktionierenden Treiber: Es wurde nichts installiert.'
-    'Result.InstallDriver.TimedOut'         = 'Windows hat die Installation des Treibers nicht rechtzeitig abgeschlossen: Der Vorgang wurde abgebrochen.'
-    'Result.InstallDriver.Failed'           = 'Windows hat den Treiber nicht installiert.'
-    'Result.UninstallDriver.Done'           = 'Treiber deinstalliert: Die App kann erst wieder mit dem Modem kommunizieren, wenn er erneut installiert ist.'
-    'Result.UninstallDriver.RestartNeeded'  = 'Treiber deinstalliert: Windows muss zum Abschluss neu gestartet werden.'
-    'Result.UninstallDriver.NoDriver'       = 'Der AT-Port hat keinen Treiber, den die App deinstallieren kann.'
-    'Result.UninstallDriver.TrialOn'        = 'Nicht deinstalliert: Ein Netzmodus wird gerade getestet, und nur über den AT-Port kann er zurückgeschrieben werden.'
-    'Result.UninstallDriver.TimedOut'       = 'Windows hat die Deinstallation des Treibers nicht rechtzeitig abgeschlossen: Der Vorgang wurde abgebrochen.'
-    'Result.UninstallDriver.Failed'         = 'Windows hat den Treiber nicht deinstalliert.'
     'Result.NotElevated'                    = 'Dafür sind Administratorrechte erforderlich.'
     'Result.Refused'                        = 'Nicht verfügbar, solange die App nur beobachtet.'
     'Result.NoModem'                        = 'Das Modem ist nicht angeschlossen.'
@@ -184,7 +169,6 @@
     'Blocker.StorePin'      = 'PIN speichern'
     'Blocker.EnableAdapter' = 'Adapter aktivieren'
     'Blocker.Unlock'        = 'Entsperren...'
-    'Blocker.InstallDriver' = 'Treiber installieren...'
     'Blocker.OpenSettings'  = 'Einstellungen öffnen'
     'Blocker.ObserveOnly'   = 'Die App beobachtet nur und ändert nichts.'
     'Blocker.NeedsAdmin'    = 'Zum Aktivieren sind Administratorrechte erforderlich.'
@@ -257,34 +241,31 @@
     'Rule.Bands'               = 'muss eine Liste verschiedener Bandnummern von {0} bis {1} sein'
     'Rule.Gigabytes'           = 'muss eine Zahl von Gigabyte von {0} bis {1} sein, 0 für keine'
 
-    # The Driver tab.
-    'DriverProblem.NoInf'        = 'es enthält keinen Treiber (keine INF-Datei)'
-    'DriverProblem.NotForModem'  = 'keiner seiner Treiber ist für den AT-Port dieses Modems bestimmt'
-    'DriverProblem.NoCatalog'    = 'sein Treiber hat keinen Signaturkatalog'
-    'DriverProblem.NotWhql'      = 'sein Katalog ist nicht von Microsoft signiert (WHQL)'
-    'DriverProblem.NotInCatalog' = 'seine INF-Datei ist nicht die, für die sein Katalog bürgt - sie wurde geändert oder ist beschädigt'
-    'DriverProblem.NotTrusted'   = 'seine Signatur kann nicht überprüft werden'
-    'Driver.Present'             = 'Der AT-Port des Modems hat seinen Treiber.'
-    'Driver.PresentWhat'         = 'Der AT-Port des Modems hat seinen Treiber: {0}.'
-    'Driver.NoDriver'            = 'Der AT-Port des Modems hat keinen Treiber: Die App kann nicht mit dem Modem kommunizieren.'
-    'Driver.Problem'             = 'Windows meldet ein Problem mit dem AT-Port des Modems: Eine erneute Installation seines Treibers kann es beheben.'
-    'Driver.Absent'              = 'Kein Modem über USB. Ein jetzt installierter Treiber wird verwendet, sobald das Modem angeschlossen wird.'
-    'Driver.NotLooked'           = 'Der AT-Port des Modems wurde noch nicht geprüft.'
-    'Driver.Source'              = 'Die App enthält den Treiber des Modems nicht, da sie keine Lizenz zu seiner Weitergabe hat. Laden Sie eine Kopie herunter, und wählen Sie sie hier aus: Die App prüft, ob Microsoft sie für dieses Modem signiert hat (WHQL), und führt nie ein Programm daraus aus.'
-    'Driver.SourceCopy'          = 'Die App enthält den Treiber des Modems nicht, da sie keine Lizenz zu seiner Weitergabe hat. Eine Kopie des MediaTek-Treibers {0} wird von einem Dritten, {1}, als {2} veröffentlicht. Laden Sie sie herunter, und wählen Sie sie hier aus: Die App prüft, ob Microsoft sie für dieses Modem signiert hat (WHQL), und führt nie ein Programm daraus aus.'
-    'Driver.Checking'            = 'Das Treiberpaket wird geprüft...'
-    'Driver.Installing'          = 'Der Treiber wird installiert: Windows kann dafür eine Minute brauchen.'
-    'Driver.Uninstalling'        = 'Der Treiber wird deinstalliert...'
-    'Driver.Verified'            = '{0}: {1}, eine Version, die die App kennt, von Microsoft (WHQL) für dieses Modem signiert.'
-    'Driver.Signed'              = '{0}: {1}, von Microsoft (WHQL) für dieses Modem signiert, aber keine Version, die die App kennt: Die App fragt vor der Installation nach.'
-    'Driver.Refused'             = '{0} kann nicht installiert werden: {1}.'
-    'Driver.ObserveOnly'         = 'Die App beobachtet nur und ändert nichts.'
-    'Driver.NeedsAdmin'          = 'Zum Installieren oder Deinstallieren eines Treibers sind Administratorrechte erforderlich: Starten Sie die App als Administrator.'
-    'Driver.Trial'               = 'Ein Netzmodus wird gerade getestet: Der Treiber kann deinstalliert werden, sobald der Test beendet ist.'
-    'Driver.Install'             = 'Installieren'
-    'Driver.InstallConfirm'      = 'Installieren...'
-    'Driver.ChooseTitle'         = 'Heruntergeladenes Treiberpaket auswählen'
-    'Driver.FileKind'            = 'Treiberpaket'
+    # The USB tab.
+    'Usb.Present'                 = 'Der AT-Port des Modems verwendet den WinUSB-Treiber von Windows: Es ist kein Treiber zu installieren.'
+    'Usb.Unbound'                 = 'Der AT-Port des Modems verwendet noch nicht den WinUSB-Treiber von Windows: Die App stellt ihn um.'
+    'Usb.NotLooked'               = 'Die Funktionen des Modems wurden noch nicht geprüft.'
+    'Usb.FunctionName'            = '{0} (MI_{1})'
+    'Usb.FunctionLine'            = '{0}: {1}'
+    'Usb.Function.MdAt'           = 'AT-Port'
+    'Usb.Function.MdMeta'         = 'META-Port des Modems'
+    'Usb.Function.ApMeta'         = 'AP-META-Port'
+    'Usb.Function.ApLog'          = 'AP-Log-Port'
+    'Usb.Function.ApGnss'         = 'GNSS-Port'
+    'Usb.Function.Npt'            = 'NPT-Port'
+    'Usb.Function.Debug'          = 'Debug-Port'
+    'Usb.Function.Other'          = 'Funktion'
+    'Usb.OnWinUsb'                = 'WinUSB'
+    'Usb.OtherDriver'             = 'ein anderer Treiber'
+    'Usb.NoDriver'                = 'kein Treiber'
+    'Usb.ProblemCode'             = '{0}, Problemcode {1}'
+    'Usb.LastChange'              = 'Letzte Umstellung um {0}:'
+    'Usb.Bound'                   = '{0}: auf WinUSB umgestellt.'
+    'Usb.Held'                    = '{0}: beim bisherigen Treiber belassen, ein anderes Programm hält den Port.'
+    'Usb.Failed'                  = '{0}: nicht auf WinUSB umgestellt ({1}).'
+    'Usb.RestartNeeded'           = '{0}: auf WinUSB beim nächsten Neustart von Windows.'
+    'Usb.ObserveOnly'             = 'Die App beobachtet nur: Sie stellt keine Funktion auf WinUSB um.'
+    'Usb.NeedsAdmin'              = 'Um die Funktionen des Modems auf WinUSB umzustellen, sind Administratorrechte nötig: Starten Sie die App als Administrator.'
 
     # The window: the connection, its notes, the signal, the footer.
     'Window.Restarting'      = 'Die Überwachung wurde beendet und wird neu gestartet. Die Verbindung bleibt unberührt.'
@@ -294,7 +275,7 @@
     'Window.ObserveOnly'     = 'Die App beobachtet nur und ändert nichts am Modem oder am System.'
     'Window.SettingsPending' = 'Die Datenverbindung besteht mit anderen Einstellungen: Die neuen gelten ab der nächsten Verbindung.'
     'Window.SettingsFile'    = 'Einstellungsdatei: {0}'
-    'Window.Modems'          = '{0} Modems gefunden: Die App verwendet das Modem an {1}.'
+    'Window.Modems'          = '{0} Modems gefunden: Die App verwendet eines davon, immer dasselbe.'
     'Window.Recovered'       = 'Um {0} wiederhergestellt: {1}'
     'Window.NrAvailable'     = '{0}, 5G verfügbar'
     'Window.NothingMeasured' = 'Keine Messwerte.'
@@ -308,7 +289,7 @@
     'Carrier.Primary'        = 'Primär'
     'Carrier.Active'         = 'Aktiv'
     'Carrier.Inactive'       = 'Inaktiv'
-    'Footer.Port'            = 'AT-Port {0}'
+    'Footer.Port'            = 'AT-Port über {0}'
     'Footer.PortClosed'      = 'AT-Port geschlossen'
     'Footer.Updated'         = 'aktualisiert um {0}'
     'Footer.PathChecked'     = 'Datenpfad um {0} geprüft'
@@ -331,20 +312,6 @@ Das Modem wird anschließend neu gestartet.
 PIN von der SIM entfernen?
 
 Dies ändert die SIM-Karte, nicht die App: Die SIM fragt nicht mehr nach ihrer PIN, weder in diesem Modem noch in einem Telefon. Eine falsche PIN verbraucht einen ihrer Versuche.
-'@
-    'Confirm.UnknownDriverTitle'   = 'Unbekannte Treiberversion installieren'
-    'Confirm.UnknownDriver'        = @'
-Eine Treiberversion installieren, die die App nicht kennt?
-
-Microsoft hat dieses Paket (WHQL) für den AT-Port des Modems signiert, daher akzeptiert Windows es; es ist aber keine Version, die die App kennt.
-
-Windows installiert es für jedes Gerät, zu dem es passt.
-'@
-    'Confirm.UninstallDriverTitle' = 'Treiber deinstallieren'
-    'Confirm.UninstallDriver'      = @'
-Den Treiber für den AT-Port des Modems deinstallieren?
-
-Windows entfernt ihn von den seriellen Ports des Modems und aus dem Treiberspeicher. Die Datenverbindung bleibt bestehen, aber die App kann weder mit dem Modem kommunizieren noch die Verbindung überwachen, bis der Treiber erneut installiert ist.
 '@
 
     # The window's fixed texts (MainWindow.xaml).
@@ -392,11 +359,7 @@ Windows entfernt ihn von den seriellen Ports des Modems und aus dem Treiberspeic
     'Xaml.Updates'           = 'Updates'
     'Xaml.UpdateCheck'       = 'Bei jedem Start einmal nach einer neueren Version suchen'
     'Xaml.Save'              = 'Speichern'
-    'Xaml.DriverTab'         = 'Treiber'
-    'Xaml.OpenPage'          = 'Downloadseite öffnen'
-    'Xaml.ChoosePackage'     = 'Heruntergeladenes Paket auswählen...'
-    'Xaml.Install'           = 'Installieren'
-    'Xaml.UninstallDriver'   = 'Treiber deinstallieren...'
+    'Xaml.UsbTab'            = 'USB'
 
     # Starting the app at sign-in, in the connection tab.
     'Xaml.Startup'                    = 'Autostart'

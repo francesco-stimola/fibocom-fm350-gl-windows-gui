@@ -146,7 +146,8 @@
     #   address) or 'Disabled' (fresh, and disabled by the user). DadChecks: probes that find an
     #   address just set still being checked by Windows. LostRounds: probe rounds lost after it.
     #   PassedRounds: probe rounds that pass before a path that is down shows it.
-    # - Presence: how PnP sees the modem - 'Present', 'Absent' or 'NoDriver'.
+    # - Presence: how PnP sees the modem - 'Present' (its functions on WinUSB), 'Absent' or
+    #   'Unbound' (on MediaTek's driver: the app puts them on WinUSB).
     # - NetworkMode: what differs from the base network mode (above), or the network around it.
     # - Messages: the messages on its SIM instead of the base ones (above).
     # The SIM slots (AT-COMMANDS section 8): slot 0 the physical SIM in use, slot 1 an eUICC holding
@@ -244,8 +245,8 @@
         }
 
         # The modem on USB, its AT port without a driver.
-        NoDriver         = @{
-            Presence = 'NoDriver'
+        Unbound          = @{
+            Presence = 'Unbound'
         }
 
         # As Connect, and the path settles: the new address is not usable for two probes, then a

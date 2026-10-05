@@ -153,7 +153,7 @@ Describe 'New-ReleasePackage.ps1' {
             $zip.Dispose()
         }
         $entries.Count | Should -Be $result.Files
-        foreach ($expected in 'install.cmd', 'uninstall.cmd', 'Start-Fm350.ps1', 'App/Start-Fm350App.ps1', 'FibocomFm350/FibocomFm350.psd1', 'FibocomFm350/Data/Drivers.psd1', 'Installer/Invoke-Fm350Setup.ps1', 'LICENSE', 'README.md', 'CHANGELOG.md') {
+        foreach ($expected in 'install.cmd', 'uninstall.cmd', 'Start-Fm350.ps1', 'App/Start-Fm350App.ps1', 'FibocomFm350/FibocomFm350.psd1', 'FibocomFm350/Data/Simulation.psd1', 'Installer/Invoke-Fm350Setup.ps1', 'LICENSE', 'README.md', 'CHANGELOG.md') {
             $entries | Should -Contain $expected
         }
         $entries -match '\\' | Should -BeNullOrEmpty -Because 'zip entries use forward slashes'

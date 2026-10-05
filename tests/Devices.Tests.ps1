@@ -1,9 +1,9 @@
-# The modem's USB functions: which is the AT port, which the network adapter, and their driver
-# state: on a captured PnP snapshot and on a matrix of made-up ones. Reading the PnP records:
-# with PnP mocked, and on a real FM350 (Hardware, read-only).
+# The modem's USB functions: which is the AT port, which the network adapter, their driver state,
+# and which the app puts on WinUSB: on captured PnP snapshots and on a matrix of made-up ones.
+# Reading the PnP records: with PnP mocked, and on a real FM350 (Hardware, read-only).
 
 BeforeDiscovery {
-    $script:atPort = $env:FM350_AT_PORT
+    $script:hardware = $env:FM350_HARDWARE
 }
 
 BeforeAll {
@@ -16,9 +16,30 @@ BeforeAll {
             [int] $ProblemCode = 0,
             [string] $Service = 'usb2ser',
             [bool] $Present = $true,
-            [string] $Parent = 'USB\VID_0E8D&PID_7127\7&00000000&0&1'
+            [string] $Parent = 'USB\VID_0E8D&PID_7127\7&00000000&0&1',
+            [string[]] $CompatibleIds = @('USB\Class_ff&SubClass_00&Prot_00'),
+            [string[]] $InterfaceGuids
         )
-        [pscustomobject]@{ InstanceId = $InstanceId; Present = $Present; ProblemCode = $ProblemCode; Service = $Service; Parent = $Parent }
+        [pscustomobject]@{
+            InstanceId = $InstanceId; Present = $Present; ProblemCode = $ProblemCode; Service = $Service; Parent = $Parent
+            CompatibleIds = $CompatibleIds; InterfaceGuids = $InterfaceGuids
+        }
+    }
+
+    # The captured modem with its driver, its vendor functions moved to WinUSB as the app moves
+    # them: the AT port with the app's interface class.
+    function Get-BoundFixture {
+        param([string] $Guid = '{4FDE9624-2286-4DC0-9D07-601A3922581A}')
+        $fixture = Get-Content -LiteralPath "$PSScriptRoot/fixtures/device/pnp.7127.driver.json" -Raw | ConvertFrom-Json
+        foreach ($record in $fixture.Devices) {
+            if ($record.Service -eq 'usb2ser_tm') {
+                $record.Service = 'WINUSB'
+                $record.PortName = $null
+                $record.DriverInfPath = 'winusb.inf'
+                $record | Add-Member -NotePropertyName InterfaceGuids -NotePropertyValue $(if ($record.InstanceId -like '*&MI_06\*') { @($Guid) } else { $null })
+            }
+        }
+        $fixture.Devices
     }
 }
 
@@ -58,6 +79,13 @@ Describe 'Resolve-ModemUsbDevice' {
         It 'sees every serial function without a driver, and ADB working' {
             $script:modems[0].Functions.State | Should -Be @('Working', 'NoDriver', 'NoDriver', 'NoDriver', 'Working', 'NoDriver', 'NoDriver', 'NoDriver', 'NoDriver')
             $script:modems[0].Functions.Role | Should -Be @('Network', 'Other', 'Other', 'Other', 'Other', 'AtPort', 'Other', 'Other', 'Other')
+        }
+
+        It 'tells the vendor functions the app puts on WinUSB: the serial ones, not the network nor ADB' {
+            ($script:modems[0].Functions | Where-Object Vendor).Interface | Should -Be @(2, 3, 4, 6, 7, 8, 9)
+            ($script:modems[0].Functions | Where-Object WinUsb).Interface | Should -Be @(5)
+            $script:modems[0].AtPort.Name | Should -Be 'MdAt'
+            $script:modems[0].Functions.Name | Should -Be @($null, 'ApLog', 'ApGnss', 'ApMeta', $null, 'MdAt', 'MdMeta', 'Npt', 'Debug')
         }
 
         It 'has no COM port yet' {
@@ -124,6 +152,26 @@ Describe 'Resolve-ModemUsbDevice' {
         $modem.AtPort.ProblemCode | Should -Be $Code
     }
 
+    It 'tells a function it couldn''t read - never one to give another driver - from one without a driver: <Name>' -ForEach @(
+        @{ Name = 'service unread'; Service = $null; Code = 0; Parameters = $true; Read = $false }
+        @{ Name = 'service unread, no driver by its problem code'; Service = $null; Code = 28; Parameters = $true; Read = $true }
+        @{ Name = 'registry parameters unread'; Service = 'usb2ser_tm'; Code = 0; Parameters = $false; Read = $false }
+        @{ Name = 'service read as none'; Service = ''; Code = 0; Parameters = $true; Read = $true }
+        @{ Name = 'everything read'; Service = 'WINUSB'; Code = 0; Parameters = $true; Read = $true }
+    ) {
+        $record = ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003' -ProblemCode $Code
+        $record.Service = $Service
+        $record | Add-Member -NotePropertyName ParametersRead -NotePropertyValue $Parameters
+        (Resolve-ModemUsbDevice -Device @($record)).Functions[0].Read | Should -Be $Read
+    }
+
+    It 'reads the captured records whole' {
+        foreach ($name in 'driver', 'nodriver', 'uninstalled') {
+            $fixture = Get-Content -LiteralPath "$PSScriptRoot/fixtures/device/pnp.7127.$name.json" -Raw | ConvertFrom-Json
+            (Resolve-ModemUsbDevice -Device $fixture.Devices).Functions.Read | Sort-Object -Unique | Should -Be $true
+        }
+    }
+
     It 'leaves a function whose service couldn''t be read to the opening of its port' {
         $record = ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&0&0006'
         $record.Service = $null
@@ -146,9 +194,9 @@ Describe 'Resolve-ModemUsbDevice' {
             @($script:modems[0].Functions | Where-Object State -EQ 'NoDriver').Interface | Should -Be @(2, 3, 4, 6, 7, 8, 9)
         }
 
-        It 'says the driver is missing' {
+        It 'says the AT port is not on WinUSB yet' {
             $presence = Resolve-ModemPresence -Modem $script:modems
-            $presence.Device | Should -Be 'NoDriver'
+            $presence.Device | Should -Be 'Unbound'
             $presence.ProductId | Should -Be '7127'
         }
     }
@@ -197,60 +245,95 @@ Describe 'Resolve-ModemUsbDevice' {
 
 Describe 'Resolve-ModemPresence' {
     BeforeAll {
+        $script:guid = '{4FDE9624-2286-4DC0-9D07-601A3922581A}'
         # A modem as Resolve-ModemUsbDevice gives it, its AT port in a given state.
         function Get-TestModem {
-            param([string] $InstanceId = 'USB\VID_0E8D&PID_7127\7&00000000&0&1', [string] $State = 'Working', [string] $PortName = 'COM14', [switch] $NoNetwork, [switch] $NoAtPort)
+            param(
+                [string] $InstanceId = 'USB\VID_0E8D&PID_7127\7&00000000&0&1',
+                [string] $State = 'Working',
+                [bool] $WinUsb = $true,
+                [string[]] $Guids = @('{4FDE9624-2286-4DC0-9D07-601A3922581A}'),
+                [int] $ProblemCode = 0,
+                [bool] $Read = $true,
+                [switch] $NoNetwork,
+                [switch] $NoAtPort
+            )
+            $atPort = [pscustomobject]@{
+                InstanceId = "$InstanceId-at"; Role = 'AtPort'; State = $State; WinUsb = $WinUsb; InterfaceGuids = $Guids; ProblemCode = $ProblemCode; Read = $Read
+                Driver = [pscustomobject]@{ InfPath = 'winusb.inf' }
+            }
             [pscustomobject]@{
                 InstanceId = $InstanceId
-                AtPort     = if ($NoAtPort) { $null } else { [pscustomobject]@{ State = $State; PortName = $PortName } }
+                ProductId  = '7127'
+                AtPort     = if ($NoAtPort) { $null } else { $atPort }
                 Network    = if ($NoNetwork) { $null } else { [pscustomobject]@{ InstanceId = "$InstanceId-net" } }
+                Functions  = @($atPort)
             }
         }
     }
 
-    It 'finds the AT port and the adapter of the captured modem with its driver' {
-        $fixture = Get-Content -LiteralPath "$PSScriptRoot/fixtures/device/pnp.7127.driver.json" -Raw | ConvertFrom-Json
-        $presence = Resolve-ModemPresence -Modem @(Resolve-ModemUsbDevice -Device $fixture.Devices)
+    It 'finds the AT port on WinUSB, with the app''s interface class, and the adapter' {
+        $presence = Resolve-ModemPresence -Modem @(Resolve-ModemUsbDevice -Device (Get-BoundFixture))
         $presence.Device | Should -Be 'Present'
-        $presence.PortName | Should -Be 'COM9'
+        $presence.AtInstanceId | Should -BeLike 'USB\VID_0E8D&PID_7127&MI_06\*'
         $presence.AdapterInstanceId | Should -BeLike 'USB\VID_0E8D&PID_7127&MI_00\*'
         $presence.InstanceId | Should -Match '^USB\\VID_0E8D&PID_7127\\[^\\]+$' -Because 'the composite device is what R6 restarts'
         $presence.Modems | Should -Be 1
         $presence.ProductId | Should -Be '7127'
+        $presence.Functions.Count | Should -Be 9
+        $presence.Driver.InfPath | Should -Be 'winusb.inf'
+    }
+
+    It 'says the AT port is on another driver: MediaTek''s, with its COM port' {
+        $fixture = Get-Content -LiteralPath "$PSScriptRoot/fixtures/device/pnp.7127.driver.json" -Raw | ConvertFrom-Json
+        $presence = Resolve-ModemPresence -Modem @(Resolve-ModemUsbDevice -Device $fixture.Devices)
+        $presence.Device | Should -Be 'Unbound'
+        $presence.AtInstanceId | Should -BeLike 'USB\VID_0E8D&PID_7127&MI_06\*'
         $presence.Driver.InfPath | Should -Be 'oem24.inf'
     }
 
-    It 'says the driver is missing on the captured modem without it, and which composition needs it' {
+    It 'says the AT port is on no driver on the captured modem without it' {
         $fixture = Get-Content -LiteralPath "$PSScriptRoot/fixtures/device/pnp.7127.nodriver.json" -Raw | ConvertFrom-Json
         $presence = Resolve-ModemPresence -Modem @(Resolve-ModemUsbDevice -Device $fixture.Devices)
-        $presence.Device | Should -Be 'NoDriver'
-        $presence.PortName | Should -BeNullOrEmpty
+        $presence.Device | Should -Be 'Unbound'
         $presence.ProductId | Should -Be '7127'
         $presence.Driver | Should -BeNullOrEmpty
     }
 
-    It 'names no composition and no driver without a modem' {
+    It 'names no modem, no function and no driver without a modem' {
         $presence = Resolve-ModemPresence -Modem @()
+        $presence.Device | Should -Be 'Absent'
         $presence.ProductId | Should -BeNullOrEmpty
+        $presence.AtInstanceId | Should -BeNullOrEmpty
+        $presence.Functions | Should -BeNullOrEmpty
         $presence.Driver | Should -BeNullOrEmpty
     }
 
     It '<Name>: <Device>' -ForEach @(
-        @{ Name = 'no modem'; Modems = @(); Device = 'Absent'; PortName = $null }
-        @{ Name = 'a modem whose AT port is not there'; Modems = @(@{ NoAtPort = $true }); Device = 'Absent'; PortName = $null }
-        @{ Name = 'an AT port with another problem'; Modems = @(@{ State = 'Problem' }); Device = 'Problem'; PortName = $null }
-        @{ Name = 'an AT port that has no COM port'; Modems = @(@{ PortName = '' }); Device = 'Problem'; PortName = $null }
-        @{ Name = 'back under another COM number'; Modems = @(@{ PortName = 'COM15' }); Device = 'Present'; PortName = 'COM15' }
-        @{ Name = 'one modem without its driver, one working'; Modems = @(@{ InstanceId = 'USB\VID_0E8D&PID_7127\7&00000000&0&2'; State = 'NoDriver'; PortName = '' }, @{}); Device = 'Present'; PortName = 'COM14' }
-        @{ Name = 'two working modems: always the first by instance ID'; Modems = @(@{ InstanceId = 'USB\VID_0E8D&PID_7127\7&00000000&0&2'; PortName = 'COM20' }, @{}); Device = 'Present'; PortName = 'COM14' }
+        @{ Name = 'no modem'; Modems = @(); Device = 'Absent'; Chosen = $null }
+        @{ Name = 'a modem whose AT port is not there'; Modems = @(@{ NoAtPort = $true }); Device = 'Absent'; Chosen = $null }
+        @{ Name = 'on WinUSB with the app''s class'; Modems = @(@{}); Device = 'Present'; Chosen = 1 }
+        @{ Name = 'the class written in another case, with spaces'; Modems = @(@{ Guids = @(' {4fde9624-2286-4dc0-9d07-601a3922581a} ') }); Device = 'Present'; Chosen = 1 }
+        @{ Name = 'on WinUSB with another program''s class besides'; Modems = @(@{ Guids = @('{11111111-2222-3333-4444-555555555555}', '{4FDE9624-2286-4DC0-9D07-601A3922581A}') }); Device = 'Present'; Chosen = 1 }
+        @{ Name = 'on WinUSB without the app''s class'; Modems = @(@{ Guids = @('{11111111-2222-3333-4444-555555555555}') }); Device = 'Unbound'; Chosen = 1 }
+        @{ Name = 'on WinUSB with no class at all'; Modems = @(@{ Guids = $null }); Device = 'Unbound'; Chosen = 1 }
+        @{ Name = 'on another driver'; Modems = @(@{ WinUsb = $false }); Device = 'Unbound'; Chosen = 1 }
+        @{ Name = 'on no driver'; Modems = @(@{ WinUsb = $false; State = 'NoDriver'; ProblemCode = 28 }); Device = 'Unbound'; Chosen = 1 }
+        @{ Name = 'failing on another driver'; Modems = @(@{ WinUsb = $false; State = 'Problem'; ProblemCode = 10 }); Device = 'Unbound'; Chosen = 1 }
+        @{ Name = 'disabled by the user'; Modems = @(@{ WinUsb = $false; State = 'Problem'; ProblemCode = 22 }); Device = 'Problem'; Chosen = 1 }
+        @{ Name = 'a problem on WinUSB'; Modems = @(@{ State = 'Problem'; ProblemCode = 10 }); Device = 'Problem'; Chosen = 1 }
+        @{ Name = 'one modem not on WinUSB, one on it: the one on it'; Modems = @(@{ WinUsb = $false }, @{ InstanceId = 'USB\VID_0E8D&PID_7127\7&00000000&0&2' }); Device = 'Present'; Chosen = 2 }
+        @{ Name = 'two on WinUSB: always the first by instance ID'; Modems = @(@{ InstanceId = 'USB\VID_0E8D&PID_7127\7&00000000&0&2' }, @{}); Device = 'Present'; Chosen = 1 }
+        @{ Name = 'an AT port that couldn''t be read: opening its interface tells'; Modems = @(@{ WinUsb = $false; Read = $false }); Device = 'Present'; Chosen = 1 }
+        @{ Name = 'none on WinUSB: the first by instance ID'; Modems = @(@{ InstanceId = 'USB\VID_0E8D&PID_7127\7&00000000&0&2'; WinUsb = $false }, @{ WinUsb = $false }); Device = 'Unbound'; Chosen = 1 }
     ) {
         $modems = @(foreach ($change in $Modems) { Get-TestModem @change })
-        $presence = Resolve-ModemPresence -Modem $modems
+        $presence = Resolve-ModemPresence -Modem $modems -InterfaceGuid $script:guid
         $presence.Device | Should -Be $Device
-        $presence.PortName | Should -Be $PortName
         $presence.Modems | Should -Be $modems.Count
-        if ($Device -eq 'Present') {
-            $presence.InstanceId | Should -Be 'USB\VID_0E8D&PID_7127\7&00000000&0&1'
+        if ($Chosen) {
+            $presence.InstanceId | Should -Be "USB\VID_0E8D&PID_7127\7&00000000&0&$Chosen"
+            $presence.AtInstanceId | Should -Be "USB\VID_0E8D&PID_7127\7&00000000&0&$Chosen-at"
         }
         else {
             $presence.InstanceId | Should -BeNullOrEmpty
@@ -259,6 +342,98 @@ Describe 'Resolve-ModemPresence' {
 
     It 'gives no adapter for a modem without its network function' {
         (Resolve-ModemPresence -Modem @(Get-TestModem -NoNetwork)).AdapterInstanceId | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Resolve-ModemBinding' {
+    BeforeAll {
+        $script:guid = '{4FDE9624-2286-4DC0-9D07-601A3922581A}'
+        # The captured modem's functions, as Resolve-ModemPresence gives them.
+        function Get-FixtureFunction {
+            param([string] $Name)
+            $fixture = Get-Content -LiteralPath "$PSScriptRoot/fixtures/device/pnp.7127.$Name.json" -Raw | ConvertFrom-Json
+            (Resolve-ModemPresence -Modem @(Resolve-ModemUsbDevice -Device $fixture.Devices)).Functions
+        }
+        function Get-TestFunction {
+            param([int] $Interface = 6, [string] $Role = 'AtPort', [bool] $Vendor = $true, [bool] $WinUsb = $false, [string] $State = 'Working',
+                [int] $ProblemCode = 0, [string[]] $Guids, [string] $PortName = 'COM14', [bool] $Read = $true)
+            [pscustomobject]@{
+                InstanceId = "USB\VID_0E8D&PID_7127&MI_0$Interface\8&00000000&0&000$Interface"; Interface = $Interface; Role = $Role; Name = "Name$Interface"
+                Vendor = $Vendor; WinUsb = $WinUsb; State = $State; ProblemCode = $ProblemCode; InterfaceGuids = $Guids; PortName = $PortName; Read = $Read
+            }
+        }
+    }
+
+    It 'puts every vendor function of the captured modem on WinUSB, the AT port first, never the network one nor ADB' {
+        $plan = Resolve-ModemBinding -Function (Get-FixtureFunction -Name driver) -InterfaceGuid $script:guid
+        $plan.Bind.Interface | Should -Be @(6, 2, 3, 4, 7, 8, 9)
+        $plan.Bind[0].Role | Should -Be 'AtPort'
+        $plan.Bind.Why | Sort-Object -Unique | Should -Be 'OtherDriver'
+        $plan.Bind[0].PortName | Should -Be 'COM9' -Because 'a COM port held by another program is left alone'
+        $plan.Left | Should -BeNullOrEmpty
+    }
+
+    It 'puts the functions without a driver on WinUSB too' {
+        $plan = Resolve-ModemBinding -Function (Get-FixtureFunction -Name nodriver) -InterfaceGuid $script:guid
+        $plan.Bind.Interface | Should -Be @(6, 2, 3, 4, 7, 8, 9)
+        $plan.Bind.Why | Sort-Object -Unique | Should -Be 'NoDriver'
+        $plan.Bind.PortName | Where-Object { $_ } | Should -BeNullOrEmpty
+    }
+
+    It 'puts the functions whose driver was just uninstalled on WinUSB too' {
+        (Resolve-ModemBinding -Function (Get-FixtureFunction -Name uninstalled) -InterfaceGuid $script:guid).Bind.Interface | Should -Be @(6, 2, 3, 4, 7, 8, 9)
+    }
+
+    It 'has nothing to do once they are on it' {
+        $presence = Resolve-ModemPresence -Modem @(Resolve-ModemUsbDevice -Device (Get-BoundFixture))
+        $plan = Resolve-ModemBinding -Function $presence.Functions -InterfaceGuid $script:guid
+        $plan.Bind | Should -BeNullOrEmpty
+        $plan.Left | Should -BeNullOrEmpty
+    }
+
+    It '<Name>' -ForEach @(
+        @{ Name = 'the AT port on WinUSB without the app''s class: given it'; Function = @{ WinUsb = $true; Guids = @('{11111111-2222-3333-4444-555555555555}') }; Bind = 'NoInterface'; Left = $null }
+        @{ Name = 'the AT port on WinUSB with no class: given it'; Function = @{ WinUsb = $true }; Bind = 'NoInterface'; Left = $null }
+        @{ Name = 'another vendor function on WinUSB with no class: as it is'; Function = @{ Interface = 3; Role = 'Other'; WinUsb = $true }; Bind = $null; Left = $null }
+        @{ Name = 'a function disabled by the user: left'; Function = @{ State = 'Problem'; ProblemCode = 22 }; Bind = $null; Left = 'Disabled' }
+        @{ Name = 'a problem on WinUSB: left'; Function = @{ WinUsb = $true; Guids = @('{4FDE9624-2286-4DC0-9D07-601A3922581A}'); State = 'Problem'; ProblemCode = 10 }; Bind = $null; Left = 'Problem' }
+        @{ Name = 'a driver failing to start: put on WinUSB'; Function = @{ State = 'Problem'; ProblemCode = 10 }; Bind = 'OtherDriver'; Left = $null }
+        @{ Name = 'the AT port that couldn''t be read: left, never taken for another driver'; Function = @{ Read = $false }; Bind = $null; Left = 'Unread' }
+        @{ Name = 'another function that couldn''t be read, though it reads as disabled: left'; Function = @{ Interface = 3; Role = 'Other'; Read = $false; State = 'Problem'; ProblemCode = 22 }; Bind = $null; Left = 'Unread' }
+        @{ Name = 'the network function: never'; Function = @{ Interface = 0; Role = 'Network'; Vendor = $false }; Bind = $null; Left = $null }
+        @{ Name = 'a function that is no vendor one (ADB): never'; Function = @{ Interface = 5; Role = 'Other'; Vendor = $false }; Bind = $null; Left = $null }
+        @{ Name = 'the network function, even marked vendor: never'; Function = @{ Interface = 0; Role = 'Network'; Vendor = $true }; Bind = $null; Left = $null }
+    ) {
+        $function = Get-TestFunction @Function
+        $plan = Resolve-ModemBinding -Function @($function) -InterfaceGuid $script:guid
+        if ($Bind) {
+            $plan.Bind.Count | Should -Be 1
+            $plan.Bind[0].Why | Should -Be $Bind
+        }
+        else {
+            $plan.Bind | Should -BeNullOrEmpty
+        }
+        if ($Left) {
+            $plan.Left[0].Why | Should -Be $Left
+        }
+        else {
+            $plan.Left | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'tries a function once per instance: one that failed is left, a new instance is tried' {
+        $failed = Get-TestFunction
+        $again = Get-TestFunction -Interface 3 -Role 'Other'
+        $plan = Resolve-ModemBinding -Function @($failed, $again) -InterfaceGuid $script:guid -Failed @($failed.InstanceId.ToLowerInvariant())
+        $plan.Bind.Interface | Should -Be @(3)
+        $plan.Left.Interface | Should -Be @(6)
+        $plan.Left[0].Why | Should -Be 'Failed'
+    }
+
+    It 'has nothing to do without functions' {
+        $plan = Resolve-ModemBinding -Function @() -InterfaceGuid $script:guid
+        $plan.Bind | Should -BeNullOrEmpty
+        $plan.Left | Should -BeNullOrEmpty
     }
 }
 
@@ -303,6 +478,7 @@ Describe 'Get-ModemPnpRecord' {
                     DEVPKEY_Device_ProblemCode    = 0
                     DEVPKEY_Device_Service        = $service
                     DEVPKEY_Device_Parent         = if ($device.InstanceId -eq $script:composite) { 'USB\ROOT_HUB30\6&00000000&1&0' } else { $script:composite }
+                    DEVPKEY_Device_CompatibleIds  = if ($device.InstanceId -eq $script:atPortId) { [string[]]@('USB\COMPAT_VID_0e8d&Class_ff&SubClass_00&Prot_00', 'USB\Class_ff&SubClass_00&Prot_00') } else { $null }
                     DEVPKEY_Device_DriverInfPath  = if ($service -eq 'usb2ser') { 'oem24.inf' } else { $null }
                     DEVPKEY_Device_DriverVersion  = if ($service -eq 'usb2ser') { '3.22.43.1' } else { $null }
                     DEVPKEY_Device_DriverProvider = if ($service -eq 'usb2ser') { 'MediaTek' } else { $null }
@@ -378,6 +554,30 @@ Describe 'Get-ModemPnpRecord' {
         (Resolve-ModemUsbDevice -Device $records).AtPort.State | Should -Be 'NoDriver'
     }
 
+    It 'reads each device''s compatible IDs: the AT port a vendor function' {
+        $atPort = Get-ModemPnpRecord | Where-Object InstanceId -EQ $script:atPortId
+        $atPort.CompatibleIds | Should -Contain 'USB\Class_ff&SubClass_00&Prot_00'
+        (Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord)).AtPort.Vendor | Should -BeTrue
+        Should -Invoke -ModuleName FibocomFm350 Get-PnpDeviceProperty -ParameterFilter { 'DEVPKEY_Device_CompatibleIds' -in $KeyName }
+    }
+
+    It 'reads a function''s device interface classes from its registry parameters' {
+        Mock -ModuleName FibocomFm350 Get-ItemProperty { [pscustomobject]@{ DeviceInterfaceGUIDs = [string[]]@('{4FDE9624-2286-4DC0-9D07-601A3922581A}') } } -ParameterFilter { $LiteralPath -like '*MI_06*' }
+        $atPort = Get-ModemPnpRecord | Where-Object InstanceId -EQ $script:atPortId
+        $atPort.InterfaceGuids | Should -Be @('{4FDE9624-2286-4DC0-9D07-601A3922581A}')
+        $atPort.PortName | Should -BeNullOrEmpty
+        (Get-ModemPnpRecord | Where-Object InstanceId -EQ $script:networkId).InterfaceGuids | Should -BeNullOrEmpty
+    }
+
+    It 'tells registry parameters it couldn''t read from a key that isn''t there' {
+        Mock -ModuleName FibocomFm350 Get-ItemProperty { Write-Error -Exception ([System.UnauthorizedAccessException]::new('denied')) -ErrorAction SilentlyContinue } -ParameterFilter { $LiteralPath -like '*MI_06*' }
+        Mock -ModuleName FibocomFm350 Get-ItemProperty { Write-Error -Exception ([System.Management.Automation.ItemNotFoundException]::new('no key')) -ErrorAction SilentlyContinue } -ParameterFilter { $LiteralPath -notlike '*MI_06*' }
+        $records = @(Get-ModemPnpRecord)
+        ($records | Where-Object InstanceId -EQ $script:atPortId).ParametersRead | Should -BeFalse
+        ($records | Where-Object InstanceId -EQ $script:networkId).ParametersRead | Should -BeTrue
+        (Resolve-ModemUsbDevice -Device $records).AtPort.Read | Should -BeFalse
+    }
+
     It 'reads nothing more when no MediaTek device is present' {
         Mock -ModuleName FibocomFm350 Get-PnpDevice { }
         Get-ModemPnpRecord | Should -BeNullOrEmpty
@@ -386,12 +586,15 @@ Describe 'Get-ModemPnpRecord' {
 }
 
 # Reads PnP only: it doesn't open the AT port, so it may run while this app holds it.
-Describe 'PnP records of a real FM350' -Tag Hardware -Skip:(-not $script:atPort) {
-    It 'finds the AT port on the COM port named in FM350_AT_PORT, and the network function' {
+Describe 'PnP records of a real FM350' -Tag Hardware -Skip:(-not $script:hardware) {
+    It 'finds the AT port on WinUSB with the app''s interface class, and the network function on RNDIS' {
         $modem = @(Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord))
         $modem.Count | Should -Be 1
         $modem[0].AtPort.State | Should -Be 'Working'
-        $modem[0].AtPort.PortName | Should -Be $env:FM350_AT_PORT
+        $modem[0].AtPort.WinUsb | Should -BeTrue
         $modem[0].Network.State | Should -Be 'Working'
+        $modem[0].Network.WinUsb | Should -BeFalse
+        (Resolve-ModemPresence -Modem $modem).Device | Should -Be 'Present'
+        @(Get-WinUsbInterfacePath -InstanceId $modem[0].AtPort.InstanceId).Count | Should -Be 1
     }
 }

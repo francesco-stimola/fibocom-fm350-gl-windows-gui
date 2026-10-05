@@ -132,8 +132,8 @@ function Stop-App {
 }
 
 function Open-AppPage {
-    # Opens a page of the app's - a release's - in the browser of the user's session, as the
-    # Driver tab does: the elevated app never starts a browser itself.
+    # Opens a page of the app's - a release's - in the browser of the user's session: the elevated
+    # app never starts a browser itself.
     param([string] $Url)
 
     if ($Url -and $script:MainWindow) {
@@ -344,7 +344,7 @@ function Start-Fm350App {
     param(
         [switch] $Simulated,
 
-        [ValidateSet('Online', 'Connect', 'ApnNeeded', 'PinRequired', 'FccLocked', 'AdapterDisabled', 'NoDevice', 'NoDriver',
+        [ValidateSet('Online', 'Connect', 'ApnNeeded', 'PinRequired', 'FccLocked', 'AdapterDisabled', 'NoDevice', 'Unbound',
             'Settling', 'DataPathDown', 'IcmpDropped', 'RegistrationLost', 'ModemHung', 'Unrecoverable', 'LteOnlyMode', 'NrOnlyMode', 'Standalone',
             'EsimEmpty', 'Esim')]
         [string] $Scenario = 'Online',

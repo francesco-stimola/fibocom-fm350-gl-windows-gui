@@ -35,11 +35,11 @@ function New-AtChannel {
     .SYNOPSIS
         Creates an AT channel over a transport (a serial port or the simulated modem).
     .DESCRIPTION
-        The transport is Open-SerialAtTransport's or New-SimulatedModem's (any object with the shape
+        The transport is Open-WinUsbAtTransport's or New-SimulatedModem's (any object with the shape
         described in Transport.ps1). The channel takes ownership of it: Close-AtChannel releases it.
         Run Initialize-AtChannel before the first command.
     .EXAMPLE
-        $channel = New-AtChannel -Transport (Open-SerialAtTransport -PortName COM5)
+        $channel = New-AtChannel -Transport (Open-WinUsbAtTransport -InterfacePath $path)
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
         Justification = 'Creates an in-memory object; changes no system state.')]

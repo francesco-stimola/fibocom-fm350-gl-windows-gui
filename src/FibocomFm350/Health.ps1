@@ -91,7 +91,7 @@ function Resolve-HealthCheck {
         A pure decision. The connect pass already reads what the checks need, from the cheapest
         to the most expensive, and stops at the first that fails: the state it reaches says
         which one (ARCHITECTURE -> Health checks):
-        - H1 device present: no modem, no driver, a device problem;
+        - H1 device present: no modem, a device problem, the AT port not on WinUSB yet;
         - H2 AT port answers: the port open but silent, or it can't be opened;
         - H3 SIM ready; H4 registered; H5 data context up, with an address;
         - H6 adapter configured: the context's address on the modem's adapter;
@@ -124,7 +124,7 @@ function Resolve-HealthCheck {
     )
 
     $check = switch ($State) {
-        'NoDevice' { if ($Reason -in 'NoDevice', 'NoDriver', 'DeviceProblem') { 'H1' } else { 'H2' } }
+        'NoDevice' { if ($Reason -in 'NoDevice', 'DeviceProblem', 'BindFailed', 'BindNotElevated', 'BindRestartNeeded' -or ($Action -eq 'BindUsb' -and $Reason -ne 'PortInUse')) { 'H1' } else { 'H2' } }
         'PortOpen' { 'H2' }
         'Identified' { 'H3' }
         'SimReady' { if ($Action -eq 'DefineContext') { 'H5' } else { 'H4' } }

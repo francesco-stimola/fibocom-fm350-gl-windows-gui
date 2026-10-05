@@ -388,7 +388,7 @@ Describe 'Invoke-RecoveryStep' {
         It 'R6 restarts the simulated USB device: the modem leaves USB' {
             $script:device.AwayMs = 60000
             (Invoke-RecoveryStep -Step R6 -Simulation $script:device -Confirm:$false).Result | Should -Be 'Done'
-            $script:device.Find().Device | Should -Be 'Absent'
+            $script:device.PnpRecords() | Should -BeNullOrEmpty -Because 'the modem is off USB'
         }
     }
 

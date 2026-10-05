@@ -3,9 +3,11 @@
 @{
     # Why the connection is where it is (Resolve-ConnectionState's reasons).
     'Reason.NoDevice'              = 'Geen modem gevonden op USB.'
-    'Reason.NoDriver'              = 'De AT-poort van de modem heeft geen stuurprogramma: de app kan pas met de modem communiceren als het is geïnstalleerd.'
     'Reason.DeviceProblem'         = 'Windows meldt een probleem met de AT-poort van de modem.'
     'Reason.PortInUse'             = 'Een ander programma gebruikt de AT-poort van de modem.'
+    'Reason.BindFailed'            = 'De AT-poort van de modem kon niet naar het WinUSB-stuurprogramma van Windows worden overgezet: de app probeert het opnieuw met "Nu controleren", of als de modem opnieuw wordt aangesloten.'
+    'Reason.BindNotElevated'       = 'Voor het overzetten van de AT-poort van de modem naar het WinUSB-stuurprogramma van Windows zijn beheerdersrechten nodig: start de app als beheerder.'
+    'Reason.BindRestartNeeded'     = 'De AT-poort van de modem gaat bij de volgende herstart van Windows naar het WinUSB-stuurprogramma van Windows.'
     'Reason.PortFailed'            = 'De AT-poort van de modem kan niet worden geopend.'
     'Reason.SimUnknown'            = 'De SIM wordt gelezen.'
     'Reason.NoPin'                 = 'De SIM wacht op de PIN.'
@@ -47,6 +49,7 @@
 
     # What the next step does, while the connection is on its way; and the same after a colon.
     'Action.OpenPort'                = 'De AT-poort van de modem openen.'
+    'Action.BindUsb'                 = 'De AT-poort van de modem naar het WinUSB-stuurprogramma van Windows overzetten.'
     'Action.Initialize'              = 'Wachten tot de modem antwoordt.'
     'Action.EnterPin'                = 'De opgeslagen PIN invoeren.'
     'Action.RadioOn'                 = 'De radio inschakelen.'
@@ -57,6 +60,7 @@
     'Action.ConfigureAdapter'        = 'De netwerkadapter configureren.'
     'Action.ApplyNetworkMode'        = 'De netwerkmodus instellen.'
     'ActionInline.OpenPort'          = 'de AT-poort van de modem openen.'
+    'ActionInline.BindUsb'           = 'de AT-poort van de modem naar het WinUSB-stuurprogramma van Windows overzetten.'
     'ActionInline.Initialize'        = 'wachten tot de modem antwoordt.'
     'ActionInline.EnterPin'          = 'de opgeslagen PIN invoeren.'
     'ActionInline.RadioOn'           = 'de radio inschakelen.'
@@ -103,25 +107,6 @@
     'Result.SetNetworkMode.ModeUnsupported' = 'De modem ondersteunt deze netwerkmodus niet: er is niets geschreven.'
     'Result.SetNetworkMode.NoSupportedBand' = 'De modem ondersteunt geen van de banden die voor een van zijn RAT''s zijn gekozen: er is niets geschreven.'
     'Result.SetNetworkMode.Unknown'         = 'De netwerkmodus van de modem kan niet worden gelezen: er is niets geschreven.'
-    'Result.CheckDriverPackage.Verified'    = 'Stuurprogrammapakket gecontroleerd: een versie die de app kent.'
-    'Result.CheckDriverPackage.Signed'      = 'Stuurprogrammapakket gecontroleerd: ondertekend door Microsoft, een versie die de app niet kent.'
-    'Result.CheckDriverPackage.Refused'     = 'Het stuurprogrammapakket kan niet worden geïnstalleerd: op het tabblad Stuurprogramma staat waarom.'
-    'Result.CheckDriverPackage.NoPackage'   = 'Er is geen stuurprogrammapakket gekozen.'
-    'Result.CheckDriverPackage.Failed'      = 'Het stuurprogrammapakket kan niet worden gelezen.'
-    'Result.InstallDriver.Done'             = 'Stuurprogramma geïnstalleerd: de app opent de AT-poort van de modem zodra Windows die start.'
-    'Result.InstallDriver.RestartNeeded'    = 'Stuurprogramma geïnstalleerd: Windows moet opnieuw worden opgestart om te voltooien.'
-    'Result.InstallDriver.NoDevice'         = 'Stuurprogramma toegevoegd aan Windows, maar geen apparaat heeft het overgenomen: het wordt gebruikt wanneer de modem wordt aangesloten, tenzij Windows een ander stuurprogramma hoger rangschikt.'
-    'Result.InstallDriver.Unconfirmed'      = 'Niet geïnstalleerd: een versie die de app niet kent, heeft je bevestiging nodig.'
-    'Result.InstallDriver.NoPackage'        = 'Kies eerst een stuurprogrammapakket.'
-    'Result.InstallDriver.DriverWorking'    = 'De AT-poort heeft al een werkend stuurprogramma: er is niets geïnstalleerd.'
-    'Result.InstallDriver.TimedOut'         = 'Windows heeft de installatie van het stuurprogramma niet op tijd voltooid: de installatie is gestopt.'
-    'Result.InstallDriver.Failed'           = 'Windows heeft het stuurprogramma niet geïnstalleerd.'
-    'Result.UninstallDriver.Done'           = 'Stuurprogramma verwijderd: de app kan pas weer met de modem communiceren als het opnieuw is geïnstalleerd.'
-    'Result.UninstallDriver.RestartNeeded'  = 'Stuurprogramma verwijderd: Windows moet opnieuw worden opgestart om te voltooien.'
-    'Result.UninstallDriver.NoDriver'       = 'De AT-poort heeft geen stuurprogramma dat de app kan verwijderen.'
-    'Result.UninstallDriver.TrialOn'        = 'Niet verwijderd: er wordt een netwerkmodus uitgeprobeerd, en alleen de AT-poort kan de vorige terugzetten.'
-    'Result.UninstallDriver.TimedOut'       = 'Windows heeft het verwijderen van het stuurprogramma niet op tijd voltooid: het verwijderen is gestopt.'
-    'Result.UninstallDriver.Failed'         = 'Windows heeft het stuurprogramma niet verwijderd.'
     'Result.NotElevated'                    = 'Daarvoor zijn administratorrechten nodig.'
     'Result.Refused'                        = 'Niet beschikbaar zolang de app alleen observeert.'
     'Result.NoModem'                        = 'De modem is niet aangesloten.'
@@ -183,7 +168,6 @@
     'Blocker.StorePin'      = 'PIN opslaan'
     'Blocker.EnableAdapter' = 'Adapter inschakelen'
     'Blocker.Unlock'        = 'Ontgrendelen...'
-    'Blocker.InstallDriver' = 'Stuurprogramma installeren...'
     'Blocker.OpenSettings'  = 'Instellingen openen'
     'Blocker.ObserveOnly'   = 'De app observeert alleen en wijzigt niets.'
     'Blocker.NeedsAdmin'    = 'Inschakelen vereist administratorrechten.'
@@ -256,34 +240,31 @@
     'Rule.Bands'               = 'moet een lijst met verschillende bandnummers van {0} tot {1} zijn'
     'Rule.Gigabytes'           = 'moet een aantal gigabytes van {0} tot {1} zijn, 0 voor geen'
 
-    # The Driver tab.
-    'DriverProblem.NoInf'        = 'het bevat geen stuurprogramma (geen INF-bestand)'
-    'DriverProblem.NotForModem'  = 'geen van de stuurprogramma''s is bedoeld voor de AT-poort van deze modem'
-    'DriverProblem.NoCatalog'    = 'het stuurprogramma heeft geen handtekeningcatalogus'
-    'DriverProblem.NotWhql'      = 'de catalogus is niet door Microsoft ondertekend (WHQL)'
-    'DriverProblem.NotInCatalog' = 'het INF-bestand is niet het bestand waarvoor de catalogus instaat: het is gewijzigd of beschadigd'
-    'DriverProblem.NotTrusted'   = 'de handtekening kan niet worden geverifieerd'
-    'Driver.Present'             = 'De AT-poort van de modem heeft zijn stuurprogramma.'
-    'Driver.PresentWhat'         = 'De AT-poort van de modem heeft zijn stuurprogramma: {0}.'
-    'Driver.NoDriver'            = 'De AT-poort van de modem heeft geen stuurprogramma: de app kan niet met de modem communiceren.'
-    'Driver.Problem'             = 'Windows meldt een probleem met de AT-poort van de modem: het stuurprogramma opnieuw installeren kan dit verhelpen.'
-    'Driver.Absent'              = 'Geen modem op USB. Een stuurprogramma dat nu wordt geïnstalleerd, wordt gebruikt zodra de modem wordt aangesloten.'
-    'Driver.NotLooked'           = 'De AT-poort van de modem is nog niet gecontroleerd.'
-    'Driver.Source'              = 'De app wordt niet met het stuurprogramma van de modem geleverd: er is geen licentie om het opnieuw te distribueren. Download een kopie en kies die hier: de app controleert of Microsoft het voor deze modem heeft ondertekend (WHQL), en start nooit een programma uit het pakket.'
-    'Driver.SourceCopy'          = 'De app wordt niet met het stuurprogramma van de modem geleverd: er is geen licentie om het opnieuw te distribueren. Een kopie van het stuurprogramma van MediaTek, {0}, wordt door een derde partij, {1}, gepubliceerd als {2}. Download het en kies het hier: de app controleert of Microsoft het voor deze modem heeft ondertekend (WHQL), en start nooit een programma uit het pakket.'
-    'Driver.Checking'            = 'Stuurprogrammapakket controleren...'
-    'Driver.Installing'          = 'Het stuurprogramma wordt geïnstalleerd: Windows kan er een minuut over doen.'
-    'Driver.Uninstalling'        = 'Stuurprogramma verwijderen...'
-    'Driver.Verified'            = '{0}: {1}, een versie die de app kent, door Microsoft ondertekend (WHQL) voor deze modem.'
-    'Driver.Signed'              = '{0}: {1}, door Microsoft ondertekend (WHQL) voor deze modem, maar geen versie die de app kent: de app vraagt om bevestiging voordat het wordt geïnstalleerd.'
-    'Driver.Refused'             = '{0} kan niet worden geïnstalleerd: {1}.'
-    'Driver.ObserveOnly'         = 'De app observeert alleen en wijzigt niets.'
-    'Driver.NeedsAdmin'          = 'Voor het installeren of verwijderen van een stuurprogramma zijn administratorrechten nodig: start de app als administrator.'
-    'Driver.Trial'               = 'Er wordt een netwerkmodus uitgeprobeerd: het stuurprogramma kan worden verwijderd zodra de proef is afgelopen.'
-    'Driver.Install'             = 'Installeren'
-    'Driver.InstallConfirm'      = 'Installeren...'
-    'Driver.ChooseTitle'         = 'Kies het gedownloade stuurprogrammapakket'
-    'Driver.FileKind'            = 'Stuurprogrammapakket'
+    # The USB tab.
+    'Usb.Present'                 = 'De AT-poort van de modem gebruikt het WinUSB-stuurprogramma van Windows: er hoeft geen stuurprogramma te worden geïnstalleerd.'
+    'Usb.Unbound'                 = 'De AT-poort van de modem gebruikt het WinUSB-stuurprogramma van Windows nog niet: de app zet hem over.'
+    'Usb.NotLooked'               = 'De functies van de modem zijn nog niet bekeken.'
+    'Usb.FunctionName'            = '{0} (MI_{1})'
+    'Usb.FunctionLine'            = '{0}: {1}'
+    'Usb.Function.MdAt'           = 'AT-poort'
+    'Usb.Function.MdMeta'         = 'META-poort van de modem'
+    'Usb.Function.ApMeta'         = 'AP-META-poort'
+    'Usb.Function.ApLog'          = 'AP-logpoort'
+    'Usb.Function.ApGnss'         = 'GNSS-poort'
+    'Usb.Function.Npt'            = 'NPT-poort'
+    'Usb.Function.Debug'          = 'Debugpoort'
+    'Usb.Function.Other'          = 'Functie'
+    'Usb.OnWinUsb'                = 'WinUSB'
+    'Usb.OtherDriver'             = 'een ander stuurprogramma'
+    'Usb.NoDriver'                = 'geen stuurprogramma'
+    'Usb.ProblemCode'             = '{0}, probleemcode {1}'
+    'Usb.LastChange'              = 'Laatste overzetting om {0}:'
+    'Usb.Bound'                   = '{0}: naar WinUSB overgezet.'
+    'Usb.Held'                    = '{0}: bij het eigen stuurprogramma gelaten, een ander programma houdt de poort open.'
+    'Usb.Failed'                  = '{0}: niet naar WinUSB overgezet ({1}).'
+    'Usb.RestartNeeded'           = '{0}: op WinUSB bij de volgende herstart van Windows.'
+    'Usb.ObserveOnly'             = 'De app observeert alleen: hij zet geen functie naar WinUSB over.'
+    'Usb.NeedsAdmin'              = 'Voor het overzetten van de functies van de modem naar WinUSB zijn beheerdersrechten nodig: start de app als beheerder.'
 
     # The window: the connection, its notes, the signal, the footer.
     'Window.Restarting'      = 'De bewaking is gestopt en wordt opnieuw gestart. De verbinding wordt niet aangeraakt.'
@@ -293,7 +274,7 @@
     'Window.ObserveOnly'     = 'De app observeert alleen en wijzigt niets aan de modem of het systeem.'
     'Window.SettingsPending' = 'De gegevensverbinding is actief met andere instellingen: de nieuwe gelden vanaf de volgende verbinding.'
     'Window.SettingsFile'    = 'Instellingenbestand: {0}'
-    'Window.Modems'          = '{0} modems gevonden: de app gebruikt die op {1}.'
+    'Window.Modems'          = '{0} modems gevonden: de app gebruikt er één, altijd dezelfde.'
     'Window.Recovered'       = 'Hersteld om {0}: {1}'
     'Window.NrAvailable'     = '{0}, 5G beschikbaar'
     'Window.NothingMeasured' = 'Niets gemeten.'
@@ -307,7 +288,7 @@
     'Carrier.Primary'        = 'Primair'
     'Carrier.Active'         = 'Actief'
     'Carrier.Inactive'       = 'Inactief'
-    'Footer.Port'            = 'AT-poort {0}'
+    'Footer.Port'            = 'AT-poort via {0}'
     'Footer.PortClosed'      = 'AT-poort gesloten'
     'Footer.Updated'         = 'bijgewerkt om {0}'
     'Footer.PathChecked'     = 'datapad gecontroleerd om {0}'
@@ -330,20 +311,6 @@ De modem wordt daarna opnieuw opgestart.
 De PIN van de SIM verwijderen?
 
 Dit wijzigt de SIM-kaart, niet de app: de SIM vraagt niet meer om de PIN, in deze modem of in welke telefoon dan ook. Een onjuiste PIN kost een van de pogingen.
-'@
-    'Confirm.UnknownDriverTitle'   = 'Een onbekende stuurprogrammaversie installeren'
-    'Confirm.UnknownDriver'        = @'
-Een stuurprogrammaversie installeren die de app niet kent?
-
-Microsoft heeft dit pakket ondertekend (WHQL) voor de AT-poort van de modem, dus Windows accepteert het; maar het is geen versie die de app kent.
-
-Windows installeert het voor elk apparaat waarvoor het geschikt is.
-'@
-    'Confirm.UninstallDriverTitle' = 'Het stuurprogramma verwijderen'
-    'Confirm.UninstallDriver'      = @'
-Het stuurprogramma van de AT-poort van de modem verwijderen?
-
-Windows verwijdert het van de seriële poorten van de modem en uit de stuurprogrammaopslag. De gegevensverbinding blijft actief, maar de app kan niet met de modem communiceren en de verbinding niet bewaken, totdat het stuurprogramma opnieuw is geïnstalleerd.
 '@
 
     # The window's fixed texts (MainWindow.xaml).
@@ -391,11 +358,7 @@ Windows verwijdert het van de seriële poorten van de modem en uit de stuurprogr
     'Xaml.Updates'           = 'Updates'
     'Xaml.UpdateCheck'       = 'Eén keer per start naar een nieuwere versie zoeken'
     'Xaml.Save'              = 'Opslaan'
-    'Xaml.DriverTab'         = 'Stuurprogramma'
-    'Xaml.OpenPage'          = 'Downloadpagina openen'
-    'Xaml.ChoosePackage'     = 'Gedownload pakket kiezen...'
-    'Xaml.Install'           = 'Installeren'
-    'Xaml.UninstallDriver'   = 'Stuurprogramma verwijderen...'
+    'Xaml.UsbTab'            = 'USB'
 
     # Starting the app at sign-in, in the connection tab.
     'Xaml.Startup'                    = 'Opstarten'

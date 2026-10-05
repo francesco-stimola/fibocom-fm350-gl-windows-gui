@@ -11,7 +11,7 @@
 $script:LpacRelativePath = 'lpac\lpac.exe'
 
 # lpac's settings for every run (AT-COMMANDS section 8), named in full: unset, lpac picks backends
-# of its own - one opens the COM port itself. Both through standard input and output: the APDUs go
+# of its own - one opens a COM port itself. Both through standard input and output: the APDUs go
 # to the eUICC through the worker, the HTTPS requests to the SM-DP+ are made by the app, which
 # checks the server's certificate (decided 2026-10-04). lpac's ES10 segments are 120 bytes: APDUs
 # of 125 bytes at most, below the 131 the device carried intact.

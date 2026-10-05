@@ -12,8 +12,7 @@ $script:WindowControlNames = @(
     'CurrentModeText', 'NetworkModeBox', 'BandsPanel', 'LteAllBox', 'LteBandsPanel', 'NrAllBox', 'NrBandsPanel', 'ModeNoteText', 'ApplyModeButton', 'ReloadModeButton'
     'ApnSimText', 'ApnBox', 'PdpTypeBox', 'AuthenticationBox', 'ApnUserBox', 'ApnPasswordBox', 'ClearPasswordBox', 'ApnPasswordStoredText'
     'DnsBox', 'DohBox', 'DohTemplateBox', 'DohRefreshBox', 'DohStateText', 'MetricBox', 'UpdateCheckBox', 'StartupBox', 'StartupNoteText', 'SaveSettingsButton', 'ReloadSettingsButton', 'SettingsProblemText'
-    'Tabs', 'ConnectionTab', 'DriverTab', 'DriverStateText', 'DriverSourceText', 'OpenDriverPageButton', 'ChooseDriverButton', 'DriverPackageText'
-    'InstallDriverButton', 'UninstallDriverButton', 'DriverNoteText'
+    'Tabs', 'ConnectionTab', 'UsbTab', 'UsbStateText', 'UsbFunctionsText', 'UsbBindingText', 'UsbNoteText'
     'MessagesTab', 'MessagesStateText', 'MessagesGrid', 'MessageHeaderText', 'DeleteMessageButton', 'MessageBodyText', 'MessageNoteText'
     'MessageToBox', 'MessageTextBox', 'MessageCountText', 'SendMessageButton', 'MessageFromText'
     'DataTab', 'UsageTodayText', 'UsageCycleText', 'UsageQuotaText', 'UsageQuotaBar', 'CycleDayBox', 'QuotaBox', 'SaveUsageButton', 'ReloadUsageButton', 'UsageProblemText'
@@ -36,9 +35,8 @@ function New-MainWindow {
         -Send queues a command for the worker: it is called with a command kind and its
         parameters (Send-ModemCommand's), and must not wait. -Ask asks the user a question
         and returns $true when they agree; a modal Yes/No dialog by default, No preselected.
-        -Choose asks for a driver package and returns its path, or nothing; a file dialog by
-        default (a zip, or an INF in its folder). -ChooseImage asks for the image of a QR code
-        likewise. -AskName asks the user to type a name to confirm: param($title, $message,
+        -ChooseImage asks for the image of a QR code and returns its path, or nothing; a file
+        dialog by default. -AskName asks the user to type a name to confirm: param($title, $message,
         $name), $true once typed; a dialog of its own by default. -Copy puts a text on the clipboard,
         and throws when it can't. -Open shows a web page; by default Explorer
         hands it to the user's browser - the app runs elevated, and should never start a browser
@@ -59,8 +57,6 @@ function New-MainWindow {
         [scriptblock] $Send,
 
         [scriptblock] $Ask,
-
-        [scriptblock] $Choose,
 
         [scriptblock] $ChooseImage,
 
@@ -99,16 +95,6 @@ function New-MainWindow {
             [System.Windows.MessageBox]::Show($script:MainWindow.Window, $message, $title, 'YesNo', 'Warning', 'No') -eq 'Yes'
         }
     }
-    if (-not $Choose) {
-        $Choose = {
-            $dialog = [Microsoft.Win32.OpenFileDialog]::new()
-            $dialog.Title = Get-AppText 'Driver.ChooseTitle'
-            $dialog.Filter = "$(Get-AppText 'Driver.FileKind') (*.zip, *.inf)|*.zip;*.inf"
-            if ($dialog.ShowDialog($script:MainWindow.Window)) {
-                $dialog.FileName
-            }
-        }
-    }
     if (-not $ChooseImage) {
         $ChooseImage = {
             $dialog = [Microsoft.Win32.OpenFileDialog]::new()
@@ -135,7 +121,6 @@ function New-MainWindow {
         Controls     = $controls
         Send         = $Send
         Ask          = $Ask
-        Choose       = $Choose
         ChooseImage  = $ChooseImage
         AskName      = $AskName
         Copy         = $Copy
@@ -230,24 +215,6 @@ function New-MainWindow {
     $controls.NetworkModeBox.Add_SelectionChanged({ Sync-WindowBandState })
     $controls.LteAllBox.Add_Click({ Sync-WindowBandState })
     $controls.NrAllBox.Add_Click({ Sync-WindowBandState })
-    $controls.OpenDriverPageButton.Add_Click({
-            $driver = if ($script:MainWindow.View) { $script:MainWindow.View.Driver } else { $null }
-            if ($driver -and $driver.PageUrl) {
-                & $script:MainWindow.Open $driver.PageUrl
-            }
-        })
-    $controls.ChooseDriverButton.Add_Click({
-            $path = & $script:MainWindow.Choose
-            if ($path) {
-                & $script:MainWindow.Send 'CheckDriverPackage' @{ Path = [string]$path }
-            }
-        })
-    $controls.InstallDriverButton.Add_Click({ Invoke-WindowDriverInstall })
-    $controls.UninstallDriverButton.Add_Click({
-            if (& $script:MainWindow.Ask (Get-AppText 'Confirm.UninstallDriverTitle') (Get-AppText 'Confirm.UninstallDriver')) {
-                & $script:MainWindow.Send 'UninstallDriver' @{}
-            }
-        })
     $controls.SaveSettingsButton.Add_Click({ Save-WindowSetting })
     $controls.ReloadSettingsButton.Add_Click({
             $script:MainWindow.FormSettings = $null
@@ -502,30 +469,12 @@ function Invoke-BlockerAction {
             & $script:MainWindow.Send 'SetNetworkMode' @{ NetworkMode = 'Automatic'; LteBands = [int[]]@(); NrBands = [int[]]@() }
             $script:MainWindow.FormMode = $null
         }
-        'Driver' {
-            $controls.Tabs.SelectedItem = $controls.DriverTab
-        }
         'Esim' {
             $controls.Tabs.SelectedItem = $controls.EsimTab
         }
         'Settings' {
             $controls.Tabs.SelectedItem = $controls.ConnectionTab
         }
-    }
-}
-
-function Invoke-WindowDriverInstall {
-    # The Driver tab's Install: a version the app knows at once; one it doesn't, once the user
-    # accepted it.
-    $driver = if ($script:MainWindow.View) { $script:MainWindow.View.Driver } else { $null }
-    if (-not $driver -or -not $driver.CanInstall) {
-        return
-    }
-    if (-not $driver.ConfirmInstall) {
-        & $script:MainWindow.Send 'InstallDriver' @{}
-    }
-    elseif (& $script:MainWindow.Ask (Get-AppText 'Confirm.UnknownDriverTitle') (Get-AppText 'Confirm.UnknownDriver')) {
-        & $script:MainWindow.Send 'InstallDriver' @{ AcceptUnknown = $true }
     }
 }
 
@@ -1092,19 +1041,14 @@ function Update-MainWindow {
         $controls.DisablePinButton.IsEnabled = $sim.CanDisablePin
     }
 
-    $driver = $View.Driver
-    if ($driver) {
-        $controls.DriverStateText.Text = $driver.StateText
-        $controls.DriverSourceText.Text = $driver.SourceText
-        $controls.OpenDriverPageButton.IsEnabled = [bool]$driver.PageUrl
-        $controls.ChooseDriverButton.IsEnabled = $driver.CanChoose
-        $controls.DriverPackageText.Text = [string]$driver.PackageText
-        $controls.DriverPackageText.Visibility = & $show $driver.PackageText
-        $controls.InstallDriverButton.IsEnabled = $driver.CanInstall
-        $controls.InstallDriverButton.Content = Get-AppText $(if ($driver.ConfirmInstall) { 'Driver.InstallConfirm' } else { 'Driver.Install' })
-        $controls.UninstallDriverButton.IsEnabled = $driver.CanUninstall
-        $controls.DriverNoteText.Text = [string]$driver.Note
-        $controls.DriverNoteText.Visibility = & $show $driver.Note
+    $usb = $View.Usb
+    if ($usb) {
+        $controls.UsbStateText.Text = $usb.StateText
+        $controls.UsbFunctionsText.Text = (@($usb.Functions) -join [Environment]::NewLine)
+        $controls.UsbBindingText.Text = [string]$usb.BindingText
+        $controls.UsbBindingText.Visibility = & $show $usb.BindingText
+        $controls.UsbNoteText.Text = [string]$usb.Note
+        $controls.UsbNoteText.Visibility = & $show $usb.Note
     }
 
     $controls.ApnPasswordStoredText.Text = Get-AppText $(if ($View.ApnPasswordStored) { 'Window.PasswordStored' } else { 'Window.NoPassword' })

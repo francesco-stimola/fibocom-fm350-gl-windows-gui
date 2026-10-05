@@ -38,6 +38,10 @@ $script:WorkerMessageUrcPattern = '^\s*\+CMTI\s*:'
 # The commands about messages: what they carry - a number, a text - is never logged.
 $script:MessageCommandKinds = @('OpenMessage', 'DeleteMessage', 'SendMessage')
 
+# How long the interface of a function just put on WinUSB is waited for, in ms: it was there within
+# seconds on the device (AT-COMMANDS section 1.2).
+$script:WorkerInterfaceWaitMs = 5000
+
 # The longest the worker goes without a sign of life, a wait for the modem's answer included
 # (WorkerTransport): the supervisor's hang timeout is far above it.
 $script:WorkerBeatMs = 1000
@@ -59,11 +63,8 @@ $script:WorkerPassUrcPattern = '^\s*\+(CREG|CGREG|CEREG|C5GREG|CGEV)\s*:'
 
 # The commands the UI can send (Send-ModemCommand).
 $script:WorkerCommandKinds = @('ConnectNow', 'SaveSettings', 'SetNetworkMode', 'SaveSimPin', 'ForgetSimPin', 'DisableSimPin', 'UnlockFcc', 'EnableAdapter',
-    'CheckDriverPackage', 'InstallDriver', 'UninstallDriver', 'OpenMessage', 'DeleteMessage', 'SendMessage', 'ReadEsim', 'SelectSimSlot', 'EnableProfile',
+    'OpenMessage', 'DeleteMessage', 'SendMessage', 'ReadEsim', 'SelectSimSlot', 'EnableProfile',
     'DisableProfile', 'SetProfileNickname', 'DeleteProfile', 'DownloadProfile')
-
-# The commands about the AT port's driver: they change the system, and may take a while.
-$script:DriverCommandKinds = @('CheckDriverPackage', 'InstallDriver', 'UninstallDriver')
 
 # The commands about the SIM slots and the eUICC (ARCHITECTURE -> eSIM): lpac runs for each, so
 # they may take a while; an activation code is never logged.
@@ -205,13 +206,6 @@ function Send-ModemCommand {
           user confirmed it.
         - UnlockFcc: lifts the FCC lock (Invoke-FccUnlock). Only after the user confirmed it.
         - EnableAdapter: enables the modem's network adapter (Enable-ModemAdapter).
-        - CheckDriverPackage: Path, the driver package the user chose (a zip, or an INF in its
-          folder): copied where only administrators can write, and checked there
-          (Resolve-DriverPackage). Never runs anything from it.
-        - InstallDriver: installs the package checked last (Install-ModemDriver); AcceptUnknown,
-          $true once the user accepted a version the app doesn't know.
-        - UninstallDriver: removes the AT port's driver package (Uninstall-ModemDriver). Only
-          after the user confirmed it.
         - SetStartAtLogon: turns the installer's logon task on or off (Set-AppLogonTask); Enabled.
           'NoTask' when the app is not installed.
         - OpenMessage: Fingerprints, a message's as the snapshot gives them; it is new no more.
@@ -241,7 +235,7 @@ function Send-ModemCommand {
 
         [Parameter(Mandatory)]
         [ValidateSet('ConnectNow', 'SaveSettings', 'SetNetworkMode', 'SaveSimPin', 'ForgetSimPin', 'DisableSimPin', 'UnlockFcc', 'EnableAdapter',
-            'CheckDriverPackage', 'InstallDriver', 'UninstallDriver', 'SetStartAtLogon', 'OpenMessage', 'DeleteMessage', 'SendMessage', 'ReadEsim',
+            'SetStartAtLogon', 'OpenMessage', 'DeleteMessage', 'SendMessage', 'ReadEsim',
             'SelectSimSlot', 'EnableProfile', 'DisableProfile', 'SetProfileNickname', 'DeleteProfile', 'DownloadProfile')]
         [string] $Kind,
 
@@ -460,6 +454,29 @@ function Get-WorkerMessageView {
     }
 }
 
+function Get-WorkerUsbView {
+    # The modem's vendor functions with the driver of each - 'WinUsb', 'Other', 'None' -, and the
+    # last outcome of putting them on WinUSB: what the window's USB tab shows. Interfaces and
+    # names, never an instance ID.
+    param([hashtable] $Worker)
+
+    $presence = $Worker.Presence
+    $functions = @(if ($presence -and $presence.PSObject.Properties['Functions'] -and $presence.Functions) { $presence.Functions | Where-Object { $_ -and $_.Vendor } })
+    [pscustomobject]@{
+        Device    = if ($presence) { $presence.Device } else { $null }
+        Functions = [object[]]@(foreach ($function in $functions) {
+                [pscustomobject]@{
+                    Interface   = $function.Interface
+                    Name        = $function.Name
+                    Role        = $function.Role
+                    Driver      = if ($function.WinUsb) { 'WinUsb' } elseif ($function.State -eq 'NoDriver') { 'None' } else { 'Other' }
+                    ProblemCode = $function.ProblemCode
+                }
+            })
+        Binding   = $Worker.Binding
+    }
+}
+
 function New-ModemSnapshot {
     <#
     .SYNOPSIS
@@ -480,11 +497,11 @@ function New-ModemSnapshot {
         that replaces this one carries on); NetworkMode (Current: the modem's setting as read;
         Support: what it supports; Decision: Resolve-NetworkMode's; Trial: a mode the user chose,
         being tried - Selection, Until, and what a worker that replaces this one carries on -;
-        Notice: how the last trial ended, or a mode the modem didn't keep); Driver (the AT port's:
-        Device - Resolve-ModemPresence's -, Inf, Version and Provider of its driver; Package, the
-        package the user chose: Name, Verdict - Resolve-DriverPackage's - and Time; Operation,
-        the driver command under way); Update (the update notice: Status - 'Pending', 'Running',
-        'Done' -, Result, Version and Url of a newer release, Detail, Time); Dns (the adapter's
+        Notice: how the last trial ended, or a mode the modem didn't keep); Usb (the modem's
+        vendor functions, Get-WorkerUsbView: Device - Resolve-ModemPresence's -, Functions with the
+        driver of each, Binding - the last outcome of putting them on WinUSB); Update (the update
+        notice: Status - 'Pending', 'Running', 'Done' -, Result, Version and Url of a newer
+        release, Detail, Time); Dns (the adapter's
         encrypted DNS: Supported, Encrypted - the servers encrypted now -, Known - the servers
         Windows has a DoH template for -, Name - a DoH server named by its template: Host,
         Addresses, LookedUp, Via, Next, Failure); Usage (Measure-DataUsage's: today, the cycle,
@@ -524,7 +541,6 @@ function New-ModemSnapshot {
     $field = { param($name) if ($decision) { $decision.$name } }
     $pin = & $fact 'Sim'
     $presence = $Worker.Presence
-    $driver = if ($presence -and $presence.PSObject.Properties['Driver']) { $presence.Driver } else { $null }
 
     [pscustomobject]@{
         Version           = $Worker.Version
@@ -569,14 +585,7 @@ function New-ModemSnapshot {
             Trial    = if ($Worker.NetworkModeTrial) { $Worker.NetworkModeTrial | Select-Object -Property * } else { $null }
             Notice   = $Worker.NetworkModeNotice
         }
-        Driver            = [pscustomobject]@{
-            Device    = if ($presence) { $presence.Device } else { $null }
-            Inf       = if ($driver) { $driver.InfPath } else { $null }
-            Version   = if ($driver) { $driver.Version } else { $null }
-            Provider  = if ($driver) { $driver.Provider } else { $null }
-            Package   = if ($Worker.DriverPackage) { $Worker.DriverPackage | Select-Object -Property Name, Verdict, Time } else { $null }
-            Operation = $Worker.DriverOperation
-        }
+        Usb               = Get-WorkerUsbView -Worker $Worker
         Dns               = [pscustomobject]@{
             Supported = & $fact 'DohSupported'
             Encrypted = [string[]]@(& $fact 'DohServers')
@@ -626,11 +635,8 @@ function New-ModemWorker {
         of the one before) starts from its state: its first pass attaches, it never re-dials, and
         its recovery carries on where the other's was - a restart never starts the ladder over.
 
-        -DataFolder keeps the settings, the secrets, the log and the driver packages the user
-        chooses in one folder (development mode, tests); by default they are the app's
-        (ARCHITECTURE -> Settings and logs), and a driver package goes to a folder of its own
-        that only administrators can open, in Windows' temporary folder (ARCHITECTURE ->
-        Drivers). -Simulation is
+        -DataFolder keeps the settings, the secrets and the log in one folder (development mode,
+        tests); by default they are the app's (ARCHITECTURE -> Settings and logs). -Simulation is
         New-SimulatedDevice's device, driven instead of a real modem. -ObserveOnly reads and
         never writes: no step, no command that changes the modem or the system.
         -CheckForUpdates reads the latest release once the connection is first online, unless
@@ -670,11 +676,9 @@ function New-ModemWorker {
             SimSettings      = Join-Path -Path $DataFolder -ChildPath 'sim-settings.json'
             ApnSecret        = Join-Path -Path $DataFolder -ChildPath 'apn-password.dat'
             Log              = Join-Path -Path $DataFolder -ChildPath 'logs'
-            DriverStaging    = Join-Path -Path $DataFolder -ChildPath 'driver-staging'
             Usage            = Join-Path -Path $DataFolder -ChildPath 'usage.json'
             SmsNew           = Join-Path -Path $DataFolder -ChildPath 'sms-new.dat'
             SmsSim           = Join-Path -Path $DataFolder -ChildPath 'sms-sim.dat'
-            DriverAdminOnly  = $false
         }
     }
     else {
@@ -684,11 +688,9 @@ function New-ModemWorker {
             SimSettings      = Get-AppDataPath -Name 'sim-settings.json'
             ApnSecret        = Get-AppDataPath -Name 'apn-password.dat'
             Log              = Get-AppDataPath -Name 'logs' -Local
-            DriverStaging    = Join-Path -Path ([Environment]::GetFolderPath('Windows')) -ChildPath 'Temp'
             Usage            = Get-AppDataPath -Name 'usage.json' -Local
             SmsNew           = Get-AppDataPath -Name 'sms-new.dat' -Local
             SmsSim           = Get-AppDataPath -Name 'sms-sim.dat' -Local
-            DriverAdminOnly  = $true
         }
     }
     @{
@@ -718,6 +720,21 @@ function New-ModemWorker {
         PortError         = $null
         Channel           = $null
         PortName          = $null
+        # The AT port's function, as it was when its port was opened.
+        AtInstanceId      = $null
+        # Putting the modem's functions on WinUSB (Update-WorkerBinding): the instances whose
+        # installation failed - tried once each -, those whose held port was logged, why the AT
+        # port isn't on WinUSB (BindState, for the connection's state; BindAtFailure, its failure
+        # kept), the last outcome for the window, a look asked for while the port is open (the
+        # user's check now), the AT port just put there, and no rights, logged once.
+        BindFailed        = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        BindHeldLogged    = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        BindState         = $null
+        BindAtFailure     = $null
+        Binding           = $null
+        BindDue           = $false
+        BindJustDone      = $false
+        BindNotElevatedLogged = $false
         AdapterInstanceId = $null
         Decision          = $null
         Facts             = $null
@@ -766,13 +783,6 @@ function New-ModemWorker {
         DnsAdvertisedLogged = ''
         NetworkModeTrial   = if ($Previous -and $Previous.PSObject.Properties['NetworkMode'] -and $Previous.NetworkMode) { $Previous.NetworkMode.Trial } else { $null }
         NetworkModeNotice  = if ($Previous -and $Previous.PSObject.Properties['NetworkMode'] -and $Previous.NetworkMode) { $Previous.NetworkMode.Notice } else { $null }
-        # The driver package the user chose last, as copied and checked (Test-WorkerDriverPackage),
-        # and the driver command under way.
-        DriverPackage     = $null
-        DriverOperation   = $null
-        # Copies that couldn't be deleted yet, tried again; each logged once.
-        DriverLeftovers   = [System.Collections.Generic.List[string]]::new()
-        DriverLeftoversLogged = [System.Collections.Generic.HashSet[string]]::new()
         # The update notice: one request per app start, carried over from the worker this one
         # replaces - one that was under way then counts as done (Get-WorkerUpdateState).
         CheckForUpdates   = [bool]$CheckForUpdates
@@ -1454,35 +1464,153 @@ function Close-WorkerChannel {
     $Worker.LastAdapterLook = $null
     Set-WorkerProbeAddress -Worker $Worker -Address $null
     if ($Why) {
-        Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "AT port $($Worker.PortName) $Why$(if ($reason) { ": $reason" })"
+        Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "AT port ($($Worker.PortName)) $Why$(if ($reason) { ": $reason" })"
     }
 }
 
 function Get-WorkerPresence {
-    # The modem as PnP reports it now - or as the simulated device does.
+    # The modem as PnP reports it now - or as the simulated device does -, decided by the same
+    # pure functions.
     param([hashtable] $Worker)
 
-    if ($Worker.Simulation) {
-        $Worker.Simulation.Find()
+    $records = if ($Worker.Simulation) { $Worker.Simulation.PnpRecords() } else { Get-ModemPnpRecord }
+    Resolve-ModemPresence -Modem @(Resolve-ModemUsbDevice -Device @($records))
+}
+
+function Get-UsbFunctionLabel {
+    # A function as the log names it: its interface, and what it is when known ('MI_06 MdAt').
+    param([object] $Function)
+
+    "MI_$(([int]$Function.Interface).ToString('X2', [cultureinfo]::InvariantCulture))$(if ($Function.Name) { " $($Function.Name)" })"
+}
+
+function Update-WorkerBinding {
+    # Puts the chosen modem's vendor functions on WinUSB (ARCHITECTURE -> USB functions), the AT
+    # port first: those Resolve-ModemBinding names, each once per instance. A function whose COM
+    # port or device interface another program holds is left on its driver, and looked at again
+    # next time (decided 2026-10-04); so is the function whose port the worker holds open, whatever
+    # a PnP read says of it. Nothing in observe-only mode, nothing without administrator rights. Sets the
+    # worker's BindState - why the AT port isn't on WinUSB, for the connection's state - and
+    # Binding, the last outcome, for the window. Returns $true when a function was put on
+    # WinUSB: PnP is read again.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'A step of the worker''s cycle: observe-only mode withholds it, and Install-WinUsbDriver, which changes the driver, supports ShouldProcess.')]
+    param([hashtable] $Worker, [object] $Presence)
+
+    # The port the worker holds is never given another driver: it is on WinUSB, whatever a read said.
+    $open = if ($Worker.Channel) { $Worker.AtInstanceId } else { $null }
+    $plan = Resolve-ModemBinding -Function @($Presence.Functions | Where-Object { $_ -and -not ($open -and [string]::Equals([string]$_.InstanceId, $open, 'OrdinalIgnoreCase')) }) -Failed @($Worker.BindFailed)
+    $atLeft = @($plan.Left | Where-Object Role -EQ 'AtPort') | Select-Object -First 1
+    # The AT port's failure stays said while its instance is the one that failed - whatever PnP shows
+    # of it meanwhile (a restart awaited can show as a problem on WinUSB).
+    $Worker.BindState = if ($atLeft -and $Worker.BindFailed.Contains($atLeft.InstanceId)) { $Worker.BindAtFailure } else { $null }
+    if ($plan.Bind.Count -eq 0) {
+        return $false
     }
-    else {
-        Resolve-ModemPresence -Modem @(Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord))
+    if ($Worker.ObserveOnly) {
+        # The step the app withholds: the window says so.
+        return $false
     }
+    if (-not $Worker.Elevated) {
+        if (@($plan.Bind | Where-Object Role -EQ 'AtPort').Count -gt 0) {
+            $Worker.BindState = 'NotElevated'
+        }
+        if (-not $Worker.BindNotElevatedLogged) {
+            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message 'The modem''s functions can''t be put on WinUSB without administrator rights'
+            $Worker.BindNotElevatedLogged = $true
+        }
+        return $false
+    }
+
+    $beat = Get-WorkerBeat -Worker $Worker
+    $outcomes = [System.Collections.Generic.List[object]]::new()
+    $bound = $false
+    foreach ($function in $plan.Bind) {
+        $label = Get-UsbFunctionLabel -Function $function
+        try {
+            $held = if ($Worker.Simulation) {
+                $function.PortName -and $Worker.Simulation.TryPort($function.PortName) -eq 5
+            }
+            else {
+                -not (Test-UsbFunctionFree -InstanceId $function.InstanceId -PortName $function.PortName -InterfaceGuid @($function.InterfaceGuids | Where-Object { $_ })).Free
+            }
+        }
+        catch {
+            # Told by its type alone: the text may name the port or the device.
+            $outcomes.Add([pscustomobject]@{ Interface = $function.Interface; Name = $function.Name; Role = $function.Role; Result = 'Failed'; Step = 'Check'; Error = $null })
+            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "USB function ${label}: its ports can't be looked at ($($_.Exception.GetType().Name)) - left on its driver"
+            continue
+        }
+        if ($held) {
+            # Never a driver changed under another program: its port stays as it is.
+            $outcomes.Add([pscustomobject]@{ Interface = $function.Interface; Name = $function.Name; Role = $function.Role; Result = 'InUse'; Step = $null; Error = $null })
+            if ($function.Role -eq 'AtPort') {
+                $Worker.BindState = 'InUse'
+            }
+            if ($Worker.BindHeldLogged.Add($function.InstanceId)) {
+                Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "USB function ${label}: another program holds its port - left on its driver"
+            }
+            continue
+        }
+        $options = @{ InstanceId = $function.InstanceId; Beat = $beat; Confirm = $false }
+        if ($function.Role -eq 'AtPort') {
+            $options['InterfaceGuid'] = $script:AppInterfaceGuid
+        }
+        $result = try {
+            if ($Worker.Simulation) { $Worker.Simulation.Bind($function.InstanceId) } else { Install-WinUsbDriver @options }
+        }
+        catch {
+            [pscustomobject]@{ Done = $false; NeedReboot = $false; Step = $_.Exception.GetType().Name; Error = 0 }
+        }
+        # Windows' code as it writes it: a negative one is its 0xE... form.
+        $code = if ($result.Error) { '0x' + ([int]$result.Error).ToString('X8', [cultureinfo]::InvariantCulture) } else { $null }
+        $outcome = if ($result.Done -and $result.NeedReboot) { 'RestartNeeded' } elseif ($result.Done) { 'Done' } else { 'Failed' }
+        $outcomes.Add([pscustomobject]@{ Interface = $function.Interface; Name = $function.Name; Role = $function.Role; Result = $outcome; Step = $result.Step; Error = $code })
+        if ($outcome -eq 'Done') {
+            $bound = $true
+            [void]$Worker.BindHeldLogged.Remove($function.InstanceId)
+            Write-WorkerLog -Worker $Worker -Level 'Info' -Message "USB function ${label}: on WinUSB ($($function.Why))"
+            if ($function.Role -eq 'AtPort') {
+                # A port just started may stay silent for minutes (AT-COMMANDS section 2): an
+                # intentional operation, which nothing escalates over - as long as a USB restart's
+                # settle time.
+                $Worker.Recovery = Open-MaintenanceWindow -History $Worker.Recovery -Now (& $Worker.Clock) -DurationMs $script:RecoveryTimings.Settle['R6']
+                $Worker.BindState = $null
+                $Worker.BindJustDone = $true
+            }
+        }
+        else {
+            # Tried once per instance: again at the next start, at a new instance, or when the user
+            # asks to check now (decided 2026-10-04).
+            [void]$Worker.BindFailed.Add($function.InstanceId)
+            $why = if ($outcome -eq 'RestartNeeded') { 'Windows finishes it at the next restart' } else { "failed at $($result.Step)$(if ($code) { ", error $code" })" }
+            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "USB function ${label}: not put on WinUSB - $why"
+            if ($function.Role -eq 'AtPort') {
+                $Worker.BindAtFailure = $outcome
+                $Worker.BindState = $outcome
+            }
+        }
+    }
+    $Worker.Binding = [pscustomobject]@{ Time = [DateTimeOffset]::Now; Functions = [object[]]$outcomes.ToArray() }
+    $bound
 }
 
 function Find-WorkerModem {
-    # Looks for the modem and opens its AT port when it is there. Every look starts from nothing:
-    # the COM number may have changed.
+    # Looks for the modem, puts its vendor functions on WinUSB when they aren't, and opens its AT
+    # port when it is there. Every look starts from nothing: the device instance may have changed.
     param([hashtable] $Worker)
 
     $presence = Get-WorkerPresence -Worker $Worker
+    if ($presence.Device -ne 'Absent' -and (Update-WorkerBinding -Worker $Worker -Presence $presence)) {
+        $presence = Get-WorkerPresence -Worker $Worker
+    }
     $before = if ($Worker.Presence) { $Worker.Presence.Device } else { $null }
     if ($presence.Device -ne $before) {
-        Write-WorkerLog -Worker $Worker -Level 'Info' -Message "Modem: $($presence.Device)$(if ($presence.PortName) { ", AT port $($presence.PortName)" })"
+        Write-WorkerLog -Worker $Worker -Level 'Info' -Message "Modem: $($presence.Device)"
     }
     $Worker.Presence = $presence
     # The modem's network adapter, whatever its AT port does: data usage is read from it while
-    # another program holds the port, or the port has no driver.
+    # another program holds the port, or the port isn't on WinUSB.
     $Worker.AdapterInstanceId = $presence.AdapterInstanceId
     if ($presence.Device -ne 'Present') {
         $Worker.PortError = $null
@@ -1490,20 +1618,44 @@ function Find-WorkerModem {
     }
 
     $portError = $null
+    $justBound = $Worker.BindJustDone
+    $Worker.BindJustDone = $false
     try {
-        $inner = if ($Worker.Simulation) { $Worker.Simulation.Open() } else { Open-SerialAtTransport -PortName $presence.PortName }
+        $inner = if ($Worker.Simulation) {
+            $Worker.Simulation.Open()
+        }
+        else {
+            # The interface of a function just put on WinUSB is there within seconds
+            # (AT-COMMANDS section 1.2): waited for, the heartbeat beating.
+            $path = $null
+            $deadline = [Environment]::TickCount64 + $(if ($justBound) { $script:WorkerInterfaceWaitMs } else { 0 })
+            while ($true) {
+                $path = @(Get-WinUsbInterfacePath -InstanceId $presence.AtInstanceId) | Select-Object -First 1
+                if ($path -or [Environment]::TickCount64 -ge $deadline) {
+                    break
+                }
+                $Worker.Link['Heartbeat'] = [Environment]::TickCount64
+                [System.Threading.Thread]::Sleep(250)
+            }
+            if (-not $path) {
+                throw [System.InvalidOperationException]::new('The AT port has no WinUSB interface yet.')
+            }
+            Open-WinUsbAtTransport -InterfacePath $path
+        }
     }
     catch {
         # Another program holding the port is told apart: the user can do something about it.
         $exception = $_.Exception
         $inUse = $false
         while ($exception) {
-            if ($exception -is [System.UnauthorizedAccessException]) { $inUse = $true }
+            if ($exception -is [System.ComponentModel.Win32Exception] -and $exception.NativeErrorCode -in $script:Win32Errors['AccessDenied'], $script:Win32Errors['SharingViolation']) {
+                $inUse = $true
+            }
             $exception = $exception.InnerException
         }
         $portError = if ($inUse) { 'InUse' } else { 'Failed' }
         if ($portError -ne $Worker.PortError) {
-            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "AT port $($presence.PortName) can't be opened: $($_.Exception.Message)"
+            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "AT port can't be opened: $($_.Exception.Message)"
         }
     }
     $Worker.PortError = $portError
@@ -1511,9 +1663,10 @@ function Find-WorkerModem {
         return
     }
     $Worker.Channel = New-AtChannel -Transport ([WorkerTransport]::new($inner, $Worker.Link, $script:WorkerBeatMs))
-    $Worker.PortName = $presence.PortName
+    $Worker.PortName = $inner.PortName
+    $Worker.AtInstanceId = $presence.AtInstanceId
     $Worker.PassForced = $true
-    Write-WorkerLog -Worker $Worker -Level 'Info' -Message "AT port $($presence.PortName) open"
+    Write-WorkerLog -Worker $Worker -Level 'Info' -Message "AT port open ($($inner.PortName))"
 }
 
 function Set-WorkerProbeAddress {
@@ -2086,31 +2239,6 @@ function Invoke-WorkerNetworkModeTrial {
     }
     $false
 }
-function Clear-WorkerDriverPackage {
-    # Deletes the driver package copied for checking: nothing is kept once it is installed,
-    # replaced or refused, or the worker ends. A copy that can't be deleted (a file still held) is
-    # logged once and tried again at every later clear and when the worker ends; one left by an
-    # app that ended mid-install goes at the next start (Remove-DriverStagingLeftover).
-    param([hashtable] $Worker)
-
-    $package = $Worker.DriverPackage
-    $Worker.DriverPackage = $null
-    if ($package -and $package.Folder -and -not $Worker.DriverLeftovers.Contains($package.Folder)) {
-        $Worker.DriverLeftovers.Add($package.Folder)
-    }
-    foreach ($folder in @($Worker.DriverLeftovers)) {
-        if (Test-Path -LiteralPath $folder) {
-            Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue
-        }
-        if (-not (Test-Path -LiteralPath $folder)) {
-            [void]$Worker.DriverLeftovers.Remove($folder)
-        }
-        elseif ($Worker.DriverLeftoversLogged.Add($folder)) {
-            Write-WorkerLog -Worker $Worker -Level 'Warning' -Message 'A copy of a driver package can''t be deleted yet: it is tried again later'
-        }
-    }
-}
-
 function Get-WorkerBeat {
     # What a long wait runs about once a second, so that the supervisor never takes the worker
     # for hung: the heartbeat.
@@ -2118,127 +2246,6 @@ function Get-WorkerBeat {
 
     $link = $Worker.Link
     { $link['Heartbeat'] = [Environment]::TickCount64 }.GetNewClosure()
-}
-
-function Test-WorkerDriverPackage {
-    # Copies the driver package the user chose where only administrators can write, and decides
-    # on it there (Resolve-DriverPackage): what is checked is what pnputil would install. A package
-    # refused is deleted at once; one that may be installed is kept until it is installed or
-    # replaced, or the worker ends. Returns the verdict.
-    param([hashtable] $Worker, [string] $Path)
-
-    Clear-WorkerDriverPackage -Worker $Worker
-    if (-not $Path) {
-        return 'NoPackage'
-    }
-    $name = Split-Path -Path $Path -Leaf
-    $beat = Get-WorkerBeat -Worker $Worker
-    $folder = New-DriverStagingFolder -Root $Worker.Paths.DriverStaging -AdminOnly:$Worker.Paths.DriverAdminOnly -Confirm:$false
-    try {
-        [void](Copy-DriverPackage -Path $Path -Destination $folder -Beat $beat -Confirm:$false)
-        $productId = if ($Worker.Presence -and $Worker.Presence.PSObject.Properties['ProductId']) { $Worker.Presence.ProductId } else { $null }
-        $verdict = Resolve-DriverPackage -Inf @(Get-DriverPackageFact -Folder $folder -Beat $beat) -Known @(Get-KnownDriverPackage) -ProductId $productId
-    }
-    catch {
-        Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue
-        # Told with the package's name alone: its folder may hold the user's name, which the log
-        # keeps out.
-        $message = $_.Exception.Message
-        $full = [System.IO.Path]::GetFullPath($Path)
-        foreach ($form in @($Path, $full)) {
-            $message = $message.Replace($form, $name)
-        }
-        foreach ($form in @((Split-Path -Path $Path -Parent), [System.IO.Path]::GetDirectoryName($full))) {
-            if ($form) {
-                $message = $message.Replace($form, '...')
-            }
-        }
-        throw [System.InvalidOperationException]::new($message)
-    }
-    $Worker.DriverPackage = [pscustomobject]@{ Name = $name; Folder = $folder; Verdict = $verdict; Time = [DateTimeOffset]::Now }
-    $what = @($verdict.Provider, $verdict.Version | Where-Object { $_ }) -join ' '
-    $why = if ($verdict.Problems.Count -gt 0) { " ($($verdict.Problems -join ', '))" } else { '' }
-    Write-WorkerLog -Worker $Worker -Level 'Info' -Message "Driver package ${name}: $($verdict.Verdict)$(if ($what) { " - $what" })$why"
-    if ($verdict.Verdict -eq 'Refused') {
-        Clear-WorkerDriverPackage -Worker $Worker
-        # The verdict stays in view; the copy is gone.
-        $Worker.DriverPackage = [pscustomobject]@{ Name = $name; Folder = $null; Verdict = $verdict; Time = [DateTimeOffset]::Now }
-    }
-    $verdict.Verdict
-}
-
-function Install-WorkerDriver {
-    # Installs the package checked last, from the folder it was checked in; a version the app
-    # doesn't know only once the user accepted it. Never over an AT port that works. Once Windows
-    # starts the port, the modem may stay silent on it for minutes (AT-COMMANDS section 2): a
-    # maintenance window as long as a USB restart's settle time keeps recovery from taking that
-    # for a failure. Returns Result and ExitCode.
-    param([hashtable] $Worker, [switch] $AcceptUnknown)
-
-    $package = $Worker.DriverPackage
-    $verdict = if ($package -and $package.Folder) { $package.Verdict.Verdict } else { $null }
-    $refusal = if ($verdict -notin 'Verified', 'Signed') {
-        'NoPackage'
-    }
-    elseif ($verdict -eq 'Signed' -and -not $AcceptUnknown) {
-        'Unconfirmed'
-    }
-    elseif ($Worker.Presence -and $Worker.Presence.Device -eq 'Present') {
-        'DriverWorking'
-    }
-    if ($refusal) {
-        return [pscustomobject]@{ Result = $refusal; ExitCode = $null }
-    }
-    try {
-        $outcome = if ($Worker.Simulation) {
-            $Worker.Simulation.InstallDriver()
-            [pscustomobject]@{ Result = 'Done'; ExitCode = 0 }
-        }
-        else {
-            $inf = Join-Path -Path $package.Folder -ChildPath $package.Verdict.Path.Replace('/', '\')
-            Install-ModemDriver -InfPath $inf -Beat (Get-WorkerBeat -Worker $Worker) -Confirm:$false
-        }
-    }
-    finally {
-        Clear-WorkerDriverPackage -Worker $Worker
-    }
-    if ($outcome.Result -in 'Done', 'RestartNeeded', 'NoDevice') {
-        # The AT port is looked for at once.
-        $Worker.LastScan = $null
-    }
-    if ($outcome.Result -eq 'Done') {
-        $Worker.Recovery = Open-MaintenanceWindow -History $Worker.Recovery -Now (& $Worker.Clock) -DurationMs $script:RecoveryTimings.Settle['R6']
-    }
-    $outcome
-}
-
-function Uninstall-WorkerDriver {
-    # Removes the AT port's driver package, the port closed first. The data connection stays as
-    # it is - the network adapter has Windows' own driver -, but without its AT port the app can
-    # no longer watch it. Returns Result and ExitCode.
-    param([hashtable] $Worker)
-
-    $presence = $Worker.Presence
-    $inf = if ($presence -and $presence.Device -eq 'Present' -and $presence.PSObject.Properties['Driver'] -and $presence.Driver) { $presence.Driver.InfPath } else { $null }
-    if ($inf -notmatch '^oem\d+\.inf$') {
-        return [pscustomobject]@{ Result = 'NoDriver'; ExitCode = $null }
-    }
-    # A network mode on trial is written back, and the data connection its write ended is
-    # brought back, through the AT port: not while one is on trial.
-    if ($Worker.NetworkModeTrial) {
-        return [pscustomobject]@{ Result = 'TrialOn'; ExitCode = $null }
-    }
-    # Windows can't remove the driver of a port held open.
-    Close-WorkerChannel -Worker $Worker -Why 'closed to uninstall its driver'
-    $outcome = if ($Worker.Simulation) {
-        $Worker.Simulation.UninstallDriver()
-        [pscustomobject]@{ Result = 'Done'; ExitCode = 0 }
-    }
-    else {
-        Uninstall-ModemDriver -PublishedName $inf -Beat (Get-WorkerBeat -Worker $Worker) -Confirm:$false
-    }
-    $Worker.LastScan = $null
-    $outcome
 }
 
 function Test-WorkerLpac {
@@ -2645,12 +2652,12 @@ function Invoke-WorkerCommand {
     $parts = $null
     $channelOpen = $Worker.Channel -and $Worker.Channel.State -eq 'Open'
     $writes = $Command.Kind -in @('DisableSimPin', 'UnlockFcc', 'EnableAdapter', 'SetStartAtLogon', 'DeleteMessage', 'SendMessage', 'SelectSimSlot', 'EnableProfile', 'DisableProfile',
-        'SetProfileNickname', 'DeleteProfile', 'DownloadProfile') + $script:DriverCommandKinds
+        'SetProfileNickname', 'DeleteProfile', 'DownloadProfile')
     try {
         if ($writes -and $Worker.ObserveOnly) {
             $result = 'Refused'
         }
-        elseif ($Command.Kind -in @('SetStartAtLogon') + $script:DriverCommandKinds -and -not $Worker.Elevated) {
+        elseif ($Command.Kind -eq 'SetStartAtLogon' -and -not $Worker.Elevated) {
             $result = 'NotElevated'
         }
         elseif ($Command.Kind -in @('SaveSimPin', 'DisableSimPin', 'UnlockFcc', 'DeleteMessage', 'SendMessage') + $script:EsimCommandKinds -and -not $channelOpen) {
@@ -2661,7 +2668,13 @@ function Invoke-WorkerCommand {
         }
         else {
             switch ($Command.Kind) {
-                'ConnectNow' { }
+                'ConnectNow' {
+                    # A function whose installation failed is tried again (decided 2026-10-04).
+                    $Worker.BindFailed.Clear()
+                    $Worker.BindAtFailure = $null
+                    $Worker.BindDue = $true
+                    $Worker.LastScan = $null
+                }
                 'SaveSettings' {
                     # The network mode stays as saved: SetNetworkMode sets it, and saves it only
                     # once the modem has found a network with it.
@@ -2778,21 +2791,8 @@ function Invoke-WorkerCommand {
                         $result = 'NoModem'
                     }
                 }
-                'CheckDriverPackage' {
-                    $result = Test-WorkerDriverPackage -Worker $Worker -Path $parameter['Path']
-                }
                 'SetStartAtLogon' {
                     $result = Set-WorkerStartAtLogon -Worker $Worker -Enabled ([bool]$parameter['Enabled'])
-                }
-                'InstallDriver' {
-                    $outcome = Install-WorkerDriver -Worker $Worker -AcceptUnknown:([bool]$parameter['AcceptUnknown'])
-                    $result = $outcome.Result
-                    $detail = if ($outcome.Result -eq 'Failed') { "pnputil exit code $($outcome.ExitCode)" } else { $null }
-                }
-                'UninstallDriver' {
-                    $outcome = Uninstall-WorkerDriver -Worker $Worker
-                    $result = $outcome.Result
-                    $detail = if ($outcome.Result -eq 'Failed') { "pnputil exit code $($outcome.ExitCode)" } else { $null }
                 }
                 'OpenMessage' {
                     # Only the app's own record changes: the modem marked it read already. The
@@ -2843,7 +2843,7 @@ function Invoke-WorkerCommand {
         Parts        = $parts
         Time         = [DateTimeOffset]::Now
     }
-    $level = if ($result -in 'Done', 'Disabled', 'Enabled', 'AlreadyOff', 'Restarted', 'NotLocked', 'Verified', 'Signed', 'RestartNeeded', 'NoDevice', 'Sent', 'Unchanged') { 'Info' } else { 'Warning' }
+    $level = if ($result -in 'Done', 'Disabled', 'Enabled', 'AlreadyOff', 'Restarted', 'NotLocked', 'Sent', 'Unchanged') { 'Info' } else { 'Warning' }
     Write-WorkerLog -Worker $Worker -Level $level -Message "Command $($Command.Kind): $result$(if ($detail) { " - $detail" })"
     $outcome
 }
@@ -2923,11 +2923,6 @@ function Invoke-ModemWorkerCycle {
     # The user's commands.
     $command = $null
     while ($link['Commands'].TryDequeue([ref]$command)) {
-        if ($command.Kind -in $script:DriverCommandKinds) {
-            # Published before it runs: it can take minutes, and the window says so meanwhile.
-            $Worker.DriverOperation = $command.Kind
-            & $publish
-        }
         if ($command.Kind -eq 'SendMessage') {
             # A message's parts can take a minute each: the window says it is going out.
             $Worker.MessageOperation = 'Sending'
@@ -2939,7 +2934,6 @@ function Invoke-ModemWorkerCycle {
             & $publish
         }
         $Worker.Results.Add((Invoke-WorkerCommand -Worker $Worker -Command $command))
-        $Worker.DriverOperation = $null
         $Worker.MessageOperation = $null
         $Worker.EsimOperation = $null
         if ($command.Kind -in 'SetNetworkMode', 'SelectSimSlot', 'EnableProfile', 'DisableProfile') {
@@ -2969,14 +2963,31 @@ function Invoke-ModemWorkerCycle {
     & $lost
     if ((& $due).Scan) {
         $started = & $Worker.Clock
+        $Worker.BindDue = $false
         Find-WorkerModem -Worker $Worker
         $Worker.LastScan = $started
         if (-not $Worker.Channel) {
-            $observation = @{ Device = $Worker.Presence.Device; PortOpen = $false; PortError = $Worker.PortError }
+            $observation = @{ Device = $Worker.Presence.Device; PortOpen = $false; PortError = $Worker.PortError; Binding = $Worker.BindState }
             $previous = if ($Worker.State) { @{ Previous = $Worker.State } } else { @{} }
             Register-WorkerDecision -Worker $Worker -Decision (Resolve-ConnectionState -Observation $observation @previous)
         }
         $published = $true
+    }
+
+    # The user asked to check now with the port open: the modem's other functions are put on
+    # WinUSB if they aren't (a failed one is tried again).
+    if ($Worker.BindDue) {
+        $Worker.BindDue = $false
+        if ($Worker.Channel) {
+            $presence = Get-WorkerPresence -Worker $Worker
+            if (Update-WorkerBinding -Worker $Worker -Presence $presence) {
+                $presence = Get-WorkerPresence -Worker $Worker
+            }
+            if ($presence.Device -eq 'Present' -and $presence.AtInstanceId -eq $Worker.AtInstanceId) {
+                $Worker.Presence = $presence
+            }
+            $published = $true
+        }
     }
 
     # The modem's network adapter, looked for again while a pass finds none: a PnP read can miss
@@ -2985,7 +2996,7 @@ function Invoke-ModemWorkerCycle {
         $started = & $Worker.Clock
         $presence = Get-WorkerPresence -Worker $Worker
         $Worker.LastAdapterLook = $started
-        if ($presence.Device -eq 'Present' -and $presence.PortName -eq $Worker.PortName -and $presence.AdapterInstanceId -and $presence.AdapterInstanceId -ne $Worker.AdapterInstanceId) {
+        if ($presence.Device -eq 'Present' -and $presence.AtInstanceId -eq $Worker.AtInstanceId -and $presence.AdapterInstanceId -and $presence.AdapterInstanceId -ne $Worker.AdapterInstanceId) {
             $Worker.AdapterInstanceId = $presence.AdapterInstanceId
             $Worker.PassForced = $true
             Write-WorkerLog -Worker $Worker -Level 'Info' -Message 'The modem''s network adapter is found'
@@ -3199,9 +3210,8 @@ function Invoke-ModemWorkerCycle {
 function Close-ModemWorker {
     <#
     .SYNOPSIS
-        Ends a worker: closes its AT port, saves the data usage counted since the last save,
-        deletes the copy of a driver package it kept, and drops an update check and a lookup
-        under way. The connection stays as it is.
+        Ends a worker: closes its AT port, saves the data usage counted since the last save, and
+        drops an update check and a lookup under way. The connection stays as it is.
     .EXAMPLE
         Close-ModemWorker -Worker $worker
     #>
@@ -3220,7 +3230,6 @@ function Close-ModemWorker {
             Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "Data usage not saved ($($_.Exception.GetType().Name))"
         }
     }
-    Clear-WorkerDriverPackage -Worker $Worker
     if ($Worker.UpdateCheck) {
         Stop-UpdateCheck -Check $Worker.UpdateCheck -Confirm:$false
         $Worker.UpdateCheck = $null
@@ -3269,18 +3278,6 @@ function Invoke-ModemWorker {
     $worker = New-ModemWorker @PSBoundParameters
     $mode = if ($Simulation) { " - simulated, scenario $($Simulation.Scenario)" } else { '' }
     Write-WorkerLog -Worker $worker -Level 'Info' -Message "Worker $Generation started$mode$(if ($ObserveOnly) { ' - observe only' })"
-    if ($Generation -eq 1 -and $worker.Paths.DriverAdminOnly -and -not $ObserveOnly) {
-        # As the app starts: copies of driver packages an app ended mid-install left behind.
-        try {
-            $deleted = Remove-DriverStagingLeftover -Root $worker.Paths.DriverStaging -Confirm:$false
-            if ($deleted) {
-                Write-WorkerLog -Worker $worker -Level 'Info' -Message "$deleted leftover copies of driver packages deleted"
-            }
-        }
-        catch {
-            Write-WorkerLog -Worker $worker -Level 'Warning' -Message "Leftover copies of driver packages not deleted: $($_.Exception.Message)"
-        }
-    }
     $failures = 0
     try {
         while (-not $Link['Stop']) {

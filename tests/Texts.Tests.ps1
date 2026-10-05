@@ -98,7 +98,7 @@ Describe 'The language of the app' {
         $saved = [System.Globalization.CultureInfo]::CurrentCulture
         try {
             [System.Globalization.CultureInfo]::CurrentCulture = 'it-IT'
-            Get-AppText 'Window.Modems' -Arguments ([double]1.5), 'COM7' | Should -Be '1.5 modems found: the app uses the one on COM7.'
+            Get-AppText 'Window.Modems' -Arguments ([double]1.5) | Should -Be '1.5 modems found: the app uses one of them, always the same.'
         }
         finally {
             [System.Globalization.CultureInfo]::CurrentCulture = $saved
@@ -173,7 +173,7 @@ Describe 'The keys the code uses' {
 
 Describe 'Each language on the screen' {
     BeforeAll {
-        $script:snapshots = foreach ($scenario in 'Online', 'Connect', 'ApnNeeded', 'PinRequired', 'FccLocked', 'AdapterDisabled', 'NoDevice', 'NoDriver', 'DataPathDown', 'Unrecoverable', 'LteOnlyMode', 'NrOnlyMode') {
+        $script:snapshots = foreach ($scenario in 'Online', 'Connect', 'ApnNeeded', 'PinRequired', 'FccLocked', 'AdapterDisabled', 'NoDevice', 'Unbound', 'DataPathDown', 'Unrecoverable', 'LteOnlyMode', 'NrOnlyMode') {
             Get-ScenarioSnapshot -Scenario $scenario
         }
     }
