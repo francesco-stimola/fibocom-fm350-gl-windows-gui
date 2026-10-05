@@ -7,6 +7,31 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+A major version: the modem's AT port is no longer a COM port.
+
+### Changed
+- **No driver to bring.** At its first start the app puts the modem's AT port, and its other vendor
+  ports — GNSS, log, META, NPT, debug —, on WinUSB, the generic USB driver that comes with
+  Windows, and talks to the modem through it. MediaTek's serial driver is no longer needed nor
+  used: where it is installed, **the modem's COM ports go away while the app is installed**, so a
+  program that used them can't run beside it. A port another program holds is left on its driver
+  until that program lets it go. The network adapter keeps Windows' own driver; the connection is
+  not interrupted. A port that comes back as a new device — another USB port — is put on WinUSB
+  again, by itself.
+- The *Driver* tab is replaced by a *USB* tab: each of the modem's ports with its driver, and how
+  the app's last change went. Nothing to click: *Check now* tries again what failed.
+- Uninstalling gives the modem's ports back to the driver Windows ranks best — MediaTek's serial
+  driver, where it is installed — with the modem plugged in.
+
+### Added
+- **Windows on Arm64**: the installer accepts 64-bit Windows on an Arm64 processor, and the release
+  carries lpac's Arm64 build beside the x64 one. **Compatible in software only: not tested on Arm64
+  hardware.**
+
+### Removed
+- The driver intake of 1.x: the link to a third party's copy of MediaTek's driver, the check of a
+  downloaded package, and its installation and uninstallation through the app.
+
 ## [1.2.0] - 2026-10-04
 
 ### Added

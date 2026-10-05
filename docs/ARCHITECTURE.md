@@ -214,13 +214,16 @@ the process, and the port, alive.
   Windows' installed apps, which runs it): the running app exits as above, then the tasks and
   their folder, the shortcut and the install folder are removed, and the app's entry in the list
   last — until the folder is gone, an uninstallation that failed can run again from there. First,
-  while the app's code is still there, the modem's functions on WinUSB go back to the driver
-  Windows ranks best (`Restore-ModemUsbFunction`, M10; *USB functions and WinUSB*): MediaTek's
-  COM ports come back where its driver is in the driver store; a function another program holds,
-  or a modem not plugged in, stays on WinUSB, and the uninstaller says so — a failure there stops
+  while the app's code is still there, the modem's functions on WinUSB — on Windows' own
+  `winusb.inf`, as the app puts them: one another tool put there with an INF of its own is left —
+  go back to the driver Windows ranks best (`Restore-ModemUsbFunction`, M10; *USB functions and
+  WinUSB*): MediaTek's COM ports come back where its driver is in the driver store. A function
+  another program holds stays on WinUSB, and so do the functions of a modem not plugged in —
+  `DiInstallDevice` reaches present devices only —, counted from the devices Windows remembers;
+  the uninstaller says each. A failure there, PnP that couldn't be read included, is said and stops
   nothing. Nothing else on the modem or its adapter is undone: the connection stays as it is, as
-  *Exit* leaves it. The uninstaller asks whether to delete the settings, the stored SIM PIN and APN password, and the
-  logs too.
+  *Exit* leaves it. The uninstaller asks whether to delete the settings, the stored SIM PIN and
+  APN password, and the logs too.
 
 ### Updates (M7)
 The zip on GitHub Releases is the only distribution channel. Once per app start, when the
@@ -934,7 +937,8 @@ itself. The network function stays on Windows' RNDIS driver, as before.
    function's `DeviceInterfaceGUIDs`, then `DiInstallDevice` with no driver named — the best match
    in the driver store, MediaTek's serial driver when it is there —; with none, a null driver: the
    function as Windows leaves one it found no driver for. The uninstallation does it for every
-   function on WinUSB (*Installing and updating*, M10).
+   vendor function on `winusb.inf` of every FM350 plugged in, and counts those of the ones that
+   aren't (*Installing and updating*, M10).
 7. **The USB tab** (decided 2026-10-04): the state, with nothing to click — the app puts the
    functions on WinUSB by itself, and *Check now* tries again what failed: each vendor function
    with its driver (WinUSB, another, none) and its problem code, and the last time the app put

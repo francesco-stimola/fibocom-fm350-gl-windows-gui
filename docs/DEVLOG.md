@@ -4,6 +4,30 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-05 — M10: the second review pass
+
+The second review pass (of three: the uninstallation's way back, Windows on Arm64, lpac's Arm64
+build) found three, fixed with tests:
+- **A modem not plugged in kept its functions on WinUSB unsaid**: the uninstaller read only the
+  devices present, and a modem unplugged, or plugged since into another USB port — a new instance
+  —, came back on WinUSB later, with no app to use it. The functions on WinUSB of the FM350s
+  Windows remembers but that aren't plugged in are now counted (`Measure-AbsentWinUsbFunction`)
+  and said, with Device Manager as the way out; *no modem plugged in* is no longer said when
+  nothing is on WinUSB at all. Removing those devices' entries, so that Windows chooses afresh at
+  the next plug-in, is a further system change: an open decision (ROADMAP).
+- **The uninstallation would give back a WinUSB another tool chose**: every vendor function on
+  WinUSB went back to its best driver. Only the functions on Windows' own `winusb.inf` — the model
+  the app installs — are given back now; one on an INF of its own is not the app's.
+- **A PnP read that failed was said as *no modem plugged in***: the uninstaller now reads PnP
+  strictly — any error but Get-PnpDevice's own *nothing matched* is a failure (`-Strict`) — and
+  says it as one: the functions stay on WinUSB, and why. The worker's reads are unchanged: a
+  failed look is tried again at the next.
+
+And three minor ones: the simulated device's COM port held answers `ERROR_BUSY`, as MediaTek's
+driver does, the worker reading it through `Test-Win32Held`; the launcher's help named x64 alone;
+the tests read both lpac builds' import tables in the zip — Windows' own libraries alone, not
+`libcurl.dll` — since the Arm64 one can't be run here.
+
 ## 2026-10-05 — M10: the way back at the uninstallation; Windows on Arm64
 
 - **The uninstallation gives the modem's functions back** before the app's folder goes, with the
@@ -26,6 +50,7 @@ only.
   `Get-LpacPath` takes the build of the Windows's own architecture, native even when the
   PowerShell that runs the app is emulated. The tests check each build's PE machine in the zip CI
   builds, and run the x64 one. Not run on Arm64, nor anything else of the app: no hardware.
+
 ## 2026-10-05 — M10: the binding, the transport and the way back, on the device
 
 The app's own code on our modem (AT-COMMANDS §1.2, §2), the network function up throughout and
@@ -49,6 +74,7 @@ the modem never reset; everything put back and compared with its start, equal:
   answers to: it says nothing of the driver, and the app reads the driver from the service.
 - The PnP snapshot of the modem on WinUSB, redacted, is `pnp.7127.winusb.json`; the fixtures may
   carry the device interface classes, which name a kind of interface, never a device.
+
 ## 2026-10-05 — M10: the AT port on WinUSB, M6's intake removed, the USB tab
 
 The core of M10 (ARCHITECTURE → *USB functions and WinUSB*): the worker puts the modem's vendor
@@ -124,6 +150,7 @@ The first review pass (of three) found two, fixed with tests:
   port is (`Test-UsbFunctionFree`). An interface a driver registers under a class not named there
   is not looked at.
 And a minor one: the tab said every function was on WinUSB when only the AT port was known to be.
+
 ## 2026-10-04 — Decided: each message by the SIM it came in on
 
 The profiles on the eUICC's slot share part of its storage (AT-COMMANDS §9, question 6): a profile

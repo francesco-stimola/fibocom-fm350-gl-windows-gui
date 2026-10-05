@@ -10,7 +10,7 @@
 
 **Connects the modem, shows the signal, locks 4G/5G bands — and brings the link back when it drops.**
 
-System tray app · PowerShell 7 · recovery ladder · band lock · driver install
+System tray app · PowerShell 7 · recovery ladder · band lock · no driver to install
 
 [![CI](https://github.com/francesco-stimola/fibocom-fm350-gl-windows-gui/actions/workflows/ci.yml/badge.svg)](https://github.com/francesco-stimola/fibocom-fm350-gl-windows-gui/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
@@ -42,8 +42,9 @@ adapter's IP address by hand. And when the link drops — it does — nothing br
   escalates only while the link stays down.
 - **Modes and bands** — 4G + 5G, 4G only or 5G only (SA), and per-band locking for LTE and NR.
   A new mode is tried first: if the modem finds no network with it, it goes back to what it had.
-- **Drivers** — detects when the modem's AT ports have no driver and installs the driver package
-  you provide, after checking its Microsoft signature and that it matches your modem.
+- **No driver to install** (since 2.0) — the app puts the modem's AT port, and its other vendor
+  ports, on WinUSB, the generic USB driver that comes with Windows: nothing to find, download or
+  install. The *USB* tab shows each port and its driver.
 - **Encrypted DNS** — DNS over HTTPS to the DNS servers you choose, or to the one your DoH
   template names — by name too, looked up again every hour —, on the modem's adapter alone, never
   falling back to plain DNS (Windows 11).
@@ -77,10 +78,9 @@ adapter's IP address by hand. And when the link drops — it does — nothing br
    administrator rights, adds **Fibocom FM350-GL Windows GUI** to the Start menu, and starts the app. Your account must
    be an administrator: the app runs as the account that installs it. The extracted folder can be
    deleted afterwards.
-4. **The modem's driver.** If its AT ports have no driver, the app says so and opens its *Driver*
-   tab: it tells you where a copy of MediaTek's driver is published, and by whom. Download it and
-   choose it there; the app checks that Microsoft signed it for your modem, then installs it. The
-   app never downloads or bundles the driver.
+4. **Nothing else.** At its first start the app puts the modem's ports on Windows' own WinUSB driver,
+   and connects. If MediaTek's serial driver gave you COM ports for the modem, they go away while the
+   app is installed (see *Requirements*).
 
 From then on the Start-menu entry opens its window — no more UAC prompts. To have it start in
 the tray when you sign in to Windows, tick *Start the app in the tray when you sign in to Windows*
@@ -96,6 +96,8 @@ IP address. *Connection* → *Updates* turns it off.
 the zip, or from the install folder — and accept the UAC prompt. It removes the app, its tasks,
 its Start-menu entry and its place in the list of installed apps, and asks whether to delete your
 settings, the stored SIM PIN and APN password, and the logs too. The connection is left as it is.
+The modem's ports go back to the driver Windows ranks best — MediaTek's serial driver, where it is
+installed —: plug the modem in before uninstalling, or they stay on WinUSB.
 
 ## How it works
 
@@ -107,7 +109,7 @@ picks up the connection where it is.
 ```
  tray icon · window ──commands──►  worker: state machine · health · recovery
                     ◄─snapshots──        │                  │
-                                    AT port (COMx)    modem network adapter
+                                 AT port (WinUSB)     modem network adapter
 ```
 
 The app starts through scheduled tasks with elevated rights — from the Start menu, and at sign-in
@@ -116,18 +118,18 @@ once you turn that on — with one UAC prompt at install time, none afterwards. 
 
 ## Requirements
 
-- Windows 10 or 11, 64-bit, on an x64 (Intel or AMD) processor — the installer refuses others:
-  PowerShell 7 has no 32-bit version, and Windows on Arm can't load the modem's driver. Encrypted
-  DNS needs Windows 11.
+- Windows 10 or 11, 64-bit, on an x64 (Intel or AMD) or an Arm64 processor — the installer refuses
+  others: PowerShell 7 has no 32-bit version. **Windows on Arm64 is supported in software only: it
+  has not been tested on Arm64 hardware.** Encrypted DNS needs Windows 11.
 - [PowerShell 7.6+](https://github.com/PowerShell/PowerShell): `winget install Microsoft.PowerShell`.
 - A Fibocom FM350-GL on a USB adapter, with a SIM.
-- The **MediaTek USB serial driver** (`usb2ser_tm`, WHQL-signed) for the modem's AT ports. The
-  network adapter needs no driver: Windows provides it. This project does not distribute the
-  driver: the app tells you where a verified copy is published, and installs the package you
-  download once it has checked it.
+- No driver: the modem's AT port runs on WinUSB and its network adapter on RNDIS, both part of
+  Windows. From 2.0 MediaTek's serial driver is not used: while the app is installed the modem has
+  no COM ports, so another program that needs them can't run beside it.
 
 Nothing else to install: the app runs on PowerShell alone, and from `v1.2.0` its release carries
-the two programs eSIM needs: lpac, and ZXing.Net to read a QR code.
+the two programs eSIM needs: lpac — for x64 and, from `v2.0.0`, Arm64 —, and ZXing.Net to read a
+QR code.
 
 ## Development
 
@@ -156,8 +158,8 @@ process: [`docs/SETUP.md`](docs/SETUP.md). Protocol facts and their sources:
 Not affiliated with, endorsed by, or supported by Fibocom or MediaTek. Product names are
 trademarks of their owners and are used only to say which hardware this software works with.
 
-The app changes system state — the modem's configuration, the network adapter's IP settings,
-drivers — and needs administrator rights to do it. Use it at your own risk.
+The app changes system state — the modem's configuration, the network adapter's IP settings, the
+driver of the modem's USB ports — and needs administrator rights to do it. Use it at your own risk.
 
 ## License
 
