@@ -4,6 +4,29 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-05 — M10: the binding, the transport and the way back, on the device
+
+The app's own code on our modem (AT-COMMANDS §1.2, §2), the network function up throughout and
+the modem never reset; everything put back and compared with its start, equal:
+- **Put on WinUSB** by `Install-WinUsbDriver`: the AT function in 202 ms, the six others in about
+  100 ms each, no restart; the AT function's interface there 6 ms after. Over WinUSB the modem
+  answered within 4–20 ms, in packets of at most 434 bytes so far.
+- **A second program** opening the AT function on WinUSB is refused with `ERROR_ACCESS_DENIED`,
+  which the worker reads as *another program is using the AT port*; the app's worker opened the
+  interface **without administrator rights**, attached to the connection that was up — online at
+  once, nothing written — and read the radio and the data path.
+- **The way back** by `Restore-UsbFunctionDriver`: `DiInstallDevice` with no driver named gave
+  each function back to MediaTek's driver from the driver store, about 150 ms each, the AT port on
+  the same COM port, answering at once.
+- **Found and fixed: a COM port another program holds answers `ERROR_BUSY`**, not access denied,
+  on MediaTek's driver — from another process as from the same one. The check before a function
+  changes driver took it for free; it now counts `ERROR_BUSY` as held, with `ERROR_ACCESS_DENIED`
+  and `ERROR_SHARING_VIOLATION` (`Test-Win32Held`). A 1.x app never told *another program holds
+  the AT port* on that driver either: it looked for an access denied.
+- A function moved off MediaTek's driver keeps its COM port's name in the registry, a name no port
+  answers to: it says nothing of the driver, and the app reads the driver from the service.
+- The PnP snapshot of the modem on WinUSB, redacted, is `pnp.7127.winusb.json`; the fixtures may
+  carry the device interface classes, which name a kind of interface, never a device.
 ## 2026-10-05 — M10: the AT port on WinUSB, M6's intake removed, the USB tab
 
 The core of M10 (ARCHITECTURE → *USB functions and WinUSB*): the worker puts the modem's vendor

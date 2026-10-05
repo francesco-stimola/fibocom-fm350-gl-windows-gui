@@ -176,7 +176,8 @@ prefix (`InstanceId`, `Present`, `ProblemCode`, `Service`, `Parent`, `HardwareId
 `tests/fixtures/fakes.psd1` — IMEI, IMSI, ICCID and EID digit runs, phone numbers, the module
 serial number (`+CFSN`), the TAC and cell identity of registration reports and `+GTCCINFO`
 lines, and in PnP snapshots the instance part of every instance ID (a USB serial number, or a
-Windows-generated hash) and the container ID. Message text and USSD replies are
+Windows-generated hash) and the container ID; the only other GUIDs they may hold are the device
+interface classes listed there, which name a kind of interface, never a device. Message text and USSD replies are
 rewritten by hand. Location fakes keep the length the modem pads to (TAC 4 or 6 digits, cell
 identity 8, 9 or 10); the modem's own "not known" pattern (`FFFF`, `00FFFFFFF`, `000000`) stays as
 captured. Captured fixtures also take the 3GPP test network `001`/`01` for the operator, invented

@@ -892,7 +892,8 @@ itself. The network function stays on Windows' RNDIS driver, as before.
      program holds is left on its driver: each is opened for an instant, exclusively, nothing read
      or written (`Test-UsbFunctionFree`) — its COM port, and the interfaces of every class its
      `DeviceInterfaceGUIDs` name (WinUSB's, or another program's: a function another tool put on
-     WinUSB) —, and a port held is said — for the AT port, *another program is using
+     WinUSB) —; Windows answers a port held with `ERROR_BUSY` on MediaTek's driver, with
+     `ERROR_ACCESS_DENIED` on WinUSB (`AT-COMMANDS.md` §2, §1.2). A port held is said — for the AT port, *another program is using
      the modem's AT port*, as before — and looked at again at the next look (decided 2026-10-04).
    - **As Device Manager does when a driver is picked by hand** (`AT-COMMANDS.md` §1.2): for the
      AT function, the app's device interface class `{4FDE9624-2286-4DC0-9D07-601A3922581A}`
