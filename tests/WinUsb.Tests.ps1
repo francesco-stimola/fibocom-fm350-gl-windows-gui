@@ -102,3 +102,50 @@ Describe 'Waiting for an installation run on the pool' {
         }
     }
 }
+
+Describe 'Restore-ModemUsbFunction' {
+    BeforeEach {
+        $script:fixture = (Get-Content -LiteralPath "$PSScriptRoot/fixtures/device/pnp.7127.winusb.json" -Raw | ConvertFrom-Json).Devices
+        $script:restored = [System.Collections.Generic.List[object]]::new()
+        Mock -ModuleName FibocomFm350 Get-ModemPnpRecord { $script:fixture }
+        Mock -ModuleName FibocomFm350 Test-UsbFunctionFree { [pscustomobject]@{ Free = $InstanceId -notlike '*&MI_03\*'; Held = $null; Error = 0 } }
+        # Never the real one: each call recorded, the debug port's refused.
+        Mock -ModuleName FibocomFm350 Restore-UsbFunctionDriver {
+            $script:restored.Add([pscustomobject]@{ InstanceId = $InstanceId; InterfaceGuid = $InterfaceGuid })
+            if ($InstanceId -like '*&MI_09\*') { [pscustomobject]@{ Done = $false; NeedReboot = $false; Step = 'Best'; Error = 5 } }
+            elseif ($InstanceId -like '*&MI_08\*') { [pscustomobject]@{ Done = $true; NeedReboot = $true; Step = 'Best'; Error = 0 } }
+            else { [pscustomobject]@{ Done = $true; NeedReboot = $false; Step = 'Best'; Error = 0 } }
+        }
+    }
+
+    It 'gives each function on WinUSB back, the AT port with the app''s interface class taken out, one held left' {
+        $outcome = Restore-ModemUsbFunction -Confirm:$false
+        $outcome.Modems | Should -Be 1
+        $outcome.Functions.Interface | Should -Be @(6, 2, 3, 4, 7, 8, 9)
+        $outcome.Functions.Result | Should -Be @('Done', 'Done', 'InUse', 'Done', 'Done', 'RestartNeeded', 'Failed')
+        $script:restored[0].InterfaceGuid | Should -Be '{4FDE9624-2286-4DC0-9D07-601A3922581A}'
+        @($script:restored | Where-Object InterfaceGuid).Count | Should -Be 1
+        $script:restored.InstanceId | Should -Not -Contain 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003'
+    }
+
+    It 'gives nothing back with -WhatIf' {
+        $outcome = Restore-ModemUsbFunction -WhatIf
+        $outcome.Functions | Should -BeNullOrEmpty
+        $script:restored | Should -BeNullOrEmpty
+    }
+
+    It 'says no modem when none is plugged in' {
+        Mock -ModuleName FibocomFm350 Get-ModemPnpRecord { }
+        $outcome = Restore-ModemUsbFunction -Confirm:$false
+        $outcome.Modems | Should -Be 0
+        $outcome.Functions | Should -BeNullOrEmpty
+    }
+
+    It 'goes on past a function whose restore throws' {
+        Mock -ModuleName FibocomFm350 Restore-UsbFunctionDriver { throw [System.InvalidOperationException]::new('no') } -ParameterFilter { $InstanceId -like '*&MI_06\*' }
+        $outcome = Restore-ModemUsbFunction -Confirm:$false
+        $outcome.Functions[0].Result | Should -Be 'Failed'
+        $outcome.Functions[0].Step | Should -Be 'InvalidOperationException'
+        $outcome.Functions.Count | Should -Be 7
+    }
+}

@@ -958,3 +958,56 @@ function Restore-UsbFunctionDriver {
     $task = [FibocomFm350.UsbDriverBinding]::StartRestore($InstanceId, $InterfaceGuid)
     Wait-UsbBindingTask -Task $task -TimeoutMs $TimeoutMs -Beat $Beat
 }
+
+function Restore-ModemUsbFunction {
+    <#
+    .SYNOPSIS
+        Gives every function of the modems on WinUSB back to the driver Windows ranks best: what the
+        uninstallation does.
+    .DESCRIPTION
+        The way back from WinUSB (ARCHITECTURE -> USB functions and WinUSB): the FM350s present, read
+        by PnP, their vendor functions on WinUSB (Resolve-ModemRestore), each given back to its best
+        driver (Restore-UsbFunctionDriver) - MediaTek's serial driver when it is in the driver store,
+        none otherwise -, the app's interface class taken out of the AT port's. A function another
+        program holds is left as it is (Test-UsbFunctionFree). Administrator rights; the app must
+        have exited, its port closed. A modem not plugged in can't be reached: its functions stay on
+        WinUSB.
+
+        Returns Modems (how many are present) and Functions: each with Interface, Name, Role and
+        Result - 'Done', 'RestartNeeded', 'InUse', 'Failed' -, Step and Error.
+    .EXAMPLE
+        Restore-ModemUsbFunction -Confirm:$false
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([pscustomobject])]
+    param()
+
+    $modems = @(Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord))
+    $outcomes = foreach ($function in @(Resolve-ModemRestore -Modem $modems)) {
+        $entry = [ordered]@{ Interface = $function.Interface; Name = $function.Name; Role = $function.Role; Result = $null; Step = $null; Error = $null }
+        if (-not $PSCmdlet.ShouldProcess("USB function $($function.InstanceId)", 'Restore its best driver')) {
+            continue
+        }
+        try {
+            if (-not (Test-UsbFunctionFree -InstanceId $function.InstanceId -InterfaceGuid @($function.InterfaceGuids | Where-Object { $_ })).Free) {
+                $entry['Result'] = 'InUse'
+                [pscustomobject]$entry
+                continue
+            }
+            $options = @{ InstanceId = $function.InstanceId; Confirm = $false }
+            if ($function.Role -eq 'AtPort') {
+                $options['InterfaceGuid'] = $script:AppInterfaceGuid
+            }
+            $result = Restore-UsbFunctionDriver @options
+            $entry['Result'] = if ($result.Done -and $result.NeedReboot) { 'RestartNeeded' } elseif ($result.Done) { 'Done' } else { 'Failed' }
+            $entry['Step'] = $result.Step
+            $entry['Error'] = $result.Error
+        }
+        catch {
+            $entry['Result'] = 'Failed'
+            $entry['Step'] = $_.Exception.GetType().Name
+        }
+        [pscustomobject]$entry
+    }
+    [pscustomobject]@{ Modems = $modems.Count; Functions = [object[]]@($outcomes) }
+}

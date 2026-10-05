@@ -35,7 +35,9 @@ AfterAll {
 
 Describe 'lpac, as the release zip bundles it' -Skip:(-not $script:bundled) {
     BeforeAll {
-        $script:lpac = Join-Path (Expand-BundledFolder -Folder 'lpac' -Destination $TestDrive) 'lpac.exe'
+        # The build of the Windows the tests run on, as the app picks it.
+        $architecture = Split-Path -Leaf (Split-Path -Parent (Get-LpacPath))
+        $script:lpac = Join-Path (Expand-BundledFolder -Folder "lpac/$architecture" -Destination $TestDrive) 'lpac.exe'
         $script:testAid = 'A0000005591010FFFFFFFF8900002000'
 
         # Runs the bundled lpac for one operation on the simulated eUICC; nothing may reach the
@@ -45,6 +47,25 @@ Describe 'lpac, as the release zip bundles it' -Skip:(-not $script:bundled) {
             $http = { throw "lpac asked for the network: $($args[0].Url)" }
             Invoke-LpacOperation -Channel $script:channel -Lpac (Start-LpacProcess -Path $script:lpac -Argument (Get-LpacArgument -Operation $Operation @Option)) -TimeoutMs 60000 -Http $http
         }
+    }
+
+    It 'carries a native build for x64 and one for Arm64' -ForEach @(
+        @{ Architecture = 'x64'; Machine = 0x8664 }
+        @{ Architecture = 'arm64'; Machine = 0xAA64 }
+    ) {
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($env:FM350_PACKAGE)
+        try {
+            $stream = $zip.GetEntry("lpac/$Architecture/lpac.exe").Open()
+            $bytes = [System.IO.MemoryStream]::new()
+            $stream.CopyTo($bytes)
+            $stream.Dispose()
+            $image = $bytes.ToArray()
+        }
+        finally {
+            $zip.Dispose()
+        }
+        # The PE header's machine: where the header is, at 0x3C; the machine 4 bytes in.
+        [BitConverter]::ToUInt16($image, [BitConverter]::ToInt32($image, 0x3C) + 4) | Should -Be $Machine
     }
 
     BeforeEach {

@@ -470,6 +470,47 @@ Describe 'Resolve-ModemBinding' {
     }
 }
 
+Describe 'Resolve-ModemRestore' {
+    BeforeAll {
+        function Get-FixtureModem {
+            param([string] $Name)
+            $fixture = Get-Content -LiteralPath "$PSScriptRoot/fixtures/device/pnp.7127.$Name.json" -Raw | ConvertFrom-Json
+            @(Resolve-ModemUsbDevice -Device $fixture.Devices)
+        }
+    }
+
+    It 'gives back every vendor function on WinUSB, the AT port first, never the network function nor ADB' {
+        $functions = @(Resolve-ModemRestore -Modem (Get-FixtureModem -Name winusb))
+        $functions.Interface | Should -Be @(6, 2, 3, 4, 7, 8, 9)
+        $functions[0].Role | Should -Be 'AtPort'
+        $functions[0].InterfaceGuids | Should -Be @('{4FDE9624-2286-4DC0-9D07-601A3922581A}')
+    }
+
+    It 'has nothing to give back on <_>' -ForEach @('driver', 'nodriver', 'uninstalled') {
+        Resolve-ModemRestore -Modem (Get-FixtureModem -Name $_) | Should -BeNullOrEmpty
+    }
+
+    It 'gives back the functions of every modem present, not only the one the app uses' {
+        $first = 'USB\VID_0E8D&PID_7127\7&00000000&0&1'
+        $second = 'USB\VID_0E8D&PID_7127\7&00000000&0&2'
+        $modems = @(Resolve-ModemUsbDevice -Device @(
+                ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&1&0006' -Service 'WINUSB' -Parent $first
+                ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&2&0003' -Service 'WINUSB' -Parent $second
+                ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_00\8&00000000&2&0000' -Service 'WINUSB' -Parent $second -CompatibleIds @('USB\Class_ff&SubClass_00&Prot_00')
+            ))
+        (Resolve-ModemRestore -Modem $modems).Interface | Should -Be @(6, 3)
+    }
+
+    It 'leaves a function it couldn''t read' {
+        $record = ConvertTo-PnpRecord -InstanceId 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003' -Service 'WINUSB'
+        $record | Add-Member -NotePropertyName ParametersRead -NotePropertyValue $false
+        Resolve-ModemRestore -Modem @(Resolve-ModemUsbDevice -Device @($record)) | Should -BeNullOrEmpty
+    }
+
+    It 'has nothing to give back without a modem' {
+        Resolve-ModemRestore -Modem @() | Should -BeNullOrEmpty
+    }
+}
 Describe 'Restart-ModemUsbDevice' {
     It 'restarts nothing but an FM350 composite device: <InstanceId>' -ForEach @(
         @{ InstanceId = 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&1&0006' }

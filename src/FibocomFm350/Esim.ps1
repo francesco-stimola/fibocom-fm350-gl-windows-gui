@@ -8,7 +8,7 @@
 # around it is thin, and works on any AT channel, whatever transport is under it.
 
 # Where lpac is, below the app's folder: the one place that names it.
-$script:LpacRelativePath = 'lpac\lpac.exe'
+$script:LpacFolder = 'lpac'
 
 # lpac's settings for every run (AT-COMMANDS section 8), named in full: unset, lpac picks backends
 # of its own - one opens a COM port itself. Both through standard input and output: the APDUs go
@@ -109,19 +109,26 @@ $script:EsimMaxNicknameBytes = 64
 function Get-LpacPath {
     <#
     .SYNOPSIS
-        Returns where lpac.exe is: in the 'lpac' folder beside the app's modules.
+        Returns where lpac.exe is: in the 'lpac' folder beside the app's modules, the build of the
+        Windows the app runs on.
     .DESCRIPTION
-        The one place that names lpac's path. The installer copies the folder with the rest of the
-        app, under Program Files, where only administrators can write (invariant 10); no setting
-        names it. Returns the path whether the file is there or not.
+        The one place that names lpac's path. The release zip carries a build of lpac for x64 and one
+        for Arm64 (M10), each in a folder of its own: -Architecture, by default the Windows's own -
+        'arm64' on Windows on Arm, 'x64' otherwise; a native build, whichever architecture the
+        PowerShell that runs the app has. The installer copies the folder with the rest of the app,
+        under Program Files, where only administrators can write (invariant 10); no setting names
+        it. Returns the path whether the file is there or not.
     .EXAMPLE
         Test-Path -LiteralPath (Get-LpacPath)
     #>
     [CmdletBinding()]
     [OutputType([string])]
-    param()
+    param(
+        [ValidateSet('x64', 'arm64')]
+        [string] $Architecture = $(if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) { 'arm64' } else { 'x64' })
+    )
 
-    Join-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -ChildPath $script:LpacRelativePath
+    Join-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -ChildPath "$script:LpacFolder\$Architecture\lpac.exe"
 }
 
 function Get-LpacField {

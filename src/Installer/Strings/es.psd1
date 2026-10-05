@@ -3,8 +3,7 @@
 # may change. UTF-8 with a byte order mark: Windows PowerShell 5.1 reads it too.
 @{
     # The launcher (Start-Fm350.ps1).
-    'Launcher.Arm'       = 'Fibocom FM350-GL Windows GUI funciona en Windows de 64 bits con un procesador x64 (Intel o AMD). Este equipo tiene un procesador Arm, que no puede cargar el controlador del módem: no se ha instalado nada.'
-    'Launcher.NotX64'    = 'Fibocom FM350-GL Windows GUI funciona en Windows de 64 bits con un procesador x64 (Intel o AMD), y este Windows no lo es: no se ha instalado nada.'
+    'Launcher.Not64'     = 'Fibocom FM350-GL Windows GUI funciona en Windows de 64 bits con un procesador x64 (Intel o AMD) o Arm64, y este Windows no lo es: no se ha instalado nada.'
     'Launcher.NotFound'  = 'No se ha encontrado PowerShell 7.6 o posterior.'
     'Launcher.TooOld'    = 'El PowerShell 7 instalado es anterior a la versión 7.6.'
     'Launcher.Untrusted' = 'El PowerShell 7 encontrado no está en Program Files con una firma de Microsoft.'
@@ -50,4 +49,9 @@
     'Uninstall.Folder'      = 'Carpeta eliminada: {0}.'
     'Uninstall.Entry'       = 'Quitada de Configuración > Aplicaciones > Aplicaciones instaladas.'
     'Uninstall.UserData'    = 'Configuración, secretos y registros eliminados: {0}.'
+    'Uninstall.UsbRestored' = 'Funciones del módem devueltas al controlador que Windows considera mejor - el controlador serie de MediaTek, donde está instalado: {0}.'
+    'Uninstall.UsbRestart'  = 'Funciones del módem que vuelven a ese controlador en el próximo reinicio de Windows: {0}.'
+    'Uninstall.UsbLeft'     = 'Funciones del módem que se quedan en WinUSB - las usa otro programa, o Windows lo rechazó; el Administrador de dispositivos puede darles otro controlador: {0}.'
+    'Uninstall.UsbNoModem'  = 'No hay ningún módem conectado: las funciones que la aplicación pasó a WinUSB se quedan en él; el Administrador de dispositivos puede darles otro controlador.'
+    'Uninstall.UsbFailed'   = 'Las funciones del módem no se pueden devolver a su controlador ({0}): se quedan en WinUSB.'
 }

@@ -3,8 +3,7 @@
 # keeps the same ones. UTF-8 with a byte order mark: Windows PowerShell 5.1 reads it too.
 @{
     # The launcher (Start-Fm350.ps1).
-    'Launcher.Arm'       = 'O Fibocom FM350-GL Windows GUI funciona em Windows de 64 bits num processador x64 (Intel ou AMD). Este computador tem um processador Arm, que não consegue carregar o controlador do modem: nada foi instalado.'
-    'Launcher.NotX64'    = 'O Fibocom FM350-GL Windows GUI funciona em Windows de 64 bits num processador x64 (Intel ou AMD), e este Windows não é desse tipo: nada foi instalado.'
+    'Launcher.Not64'     = 'O Fibocom FM350-GL Windows GUI funciona em Windows de 64 bits num processador x64 (Intel ou AMD) ou Arm64, e este Windows não é desse tipo: nada foi instalado.'
     'Launcher.NotFound'  = 'Não foi encontrado o PowerShell 7.6 ou posterior.'
     'Launcher.TooOld'    = 'O PowerShell 7 instalado é anterior à versão 7.6.'
     'Launcher.Untrusted' = 'O PowerShell 7 encontrado não está em Program Files com uma assinatura da Microsoft.'
@@ -50,4 +49,9 @@
     'Uninstall.Folder'      = 'Pasta removida: {0}.'
     'Uninstall.Entry'       = 'Removida de Definições > Aplicações > Aplicações instaladas.'
     'Uninstall.UserData'    = 'Definições, segredos e registos removidos: {0}.'
+    'Uninstall.UsbRestored' = 'Funções do modem devolvidas ao controlador que o Windows considera melhor - o controlador série da MediaTek, onde está instalado: {0}.'
+    'Uninstall.UsbRestart'  = 'Funções do modem que voltam a esse controlador no próximo reinício do Windows: {0}.'
+    'Uninstall.UsbLeft'     = 'Funções do modem que ficam no WinUSB - outro programa usa-as, ou o Windows recusou; o Gestor de Dispositivos pode dar-lhes outro controlador: {0}.'
+    'Uninstall.UsbNoModem'  = 'Nenhum modem ligado: as funções que a aplicação passou para o WinUSB ficam nele; o Gestor de Dispositivos pode dar-lhes outro controlador.'
+    'Uninstall.UsbFailed'   = 'Não é possível devolver as funções do modem ao seu controlador ({0}): ficam no WinUSB.'
 }

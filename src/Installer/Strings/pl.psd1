@@ -3,8 +3,7 @@
 # ones. UTF-8 with a byte order mark: Windows PowerShell 5.1 reads it too.
 @{
     # The launcher (Start-Fm350.ps1).
-    'Launcher.Arm'       = 'Fibocom FM350-GL Windows GUI działa w 64-bitowym systemie Windows na procesorze x64 (Intel lub AMD). Ten komputer ma procesor Arm, który nie może załadować sterownika modemu: nic nie zostało zainstalowane.'
-    'Launcher.NotX64'    = 'Fibocom FM350-GL Windows GUI działa w 64-bitowym systemie Windows na procesorze x64 (Intel lub AMD), a ten system Windows takim nie jest: nic nie zostało zainstalowane.'
+    'Launcher.Not64'     = 'Fibocom FM350-GL Windows GUI działa w 64-bitowym systemie Windows na procesorze x64 (Intel lub AMD) lub Arm64, a ten system Windows takim nie jest: nic nie zostało zainstalowane.'
     'Launcher.NotFound'  = 'Nie znaleziono programu PowerShell 7.6 lub nowszego.'
     'Launcher.TooOld'    = 'Zainstalowany PowerShell 7 jest starszy niż 7.6.'
     'Launcher.Untrusted' = 'Znaleziony PowerShell 7 nie znajduje się w folderze Program Files z podpisem firmy Microsoft.'
@@ -50,4 +49,9 @@
     'Uninstall.Folder'      = 'Usunięto folder: {0}.'
     'Uninstall.Entry'       = 'Usunięto z Ustawienia > Aplikacje > Zainstalowane aplikacje.'
     'Uninstall.UserData'    = 'Usunięto ustawienia, dane poufne i dzienniki: {0}.'
+    'Uninstall.UsbRestored' = 'Funkcje modemu przywrócone do sterownika, który Windows uznaje za najlepszy - sterownika szeregowego MediaTek, tam gdzie jest zainstalowany: {0}.'
+    'Uninstall.UsbRestart'  = 'Funkcje modemu, które wrócą do tego sterownika po następnym ponownym uruchomieniu systemu Windows: {0}.'
+    'Uninstall.UsbLeft'     = 'Funkcje modemu pozostawione na WinUSB - używa ich inny program albo Windows odmówił; Menedżer urządzeń może przypisać im inny sterownik: {0}.'
+    'Uninstall.UsbNoModem'  = 'Brak podłączonego modemu: funkcje, które aplikacja przełączyła na WinUSB, pozostają na nim; Menedżer urządzeń może przypisać im inny sterownik.'
+    'Uninstall.UsbFailed'   = 'Nie można przywrócić funkcji modemu do ich sterownika ({0}): pozostają na WinUSB.'
 }

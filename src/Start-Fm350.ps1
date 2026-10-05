@@ -118,20 +118,17 @@ function Get-LauncherPwshCandidate {
 
 function Test-LauncherPlatform {
     # Whether this Windows can run the app, from Win32_Processor's Architecture and AddressWidth:
-    # only 64-bit Windows on an x64 processor can - PowerShell 7.6 is published for x64 and Arm64
-    # alone, and Windows on Arm loads only Arm64 kernel drivers, which the modem's driver package
-    # doesn't have (docs/AT-COMMANDS.md section 11.2). A pure decision. Returns $null when it can -
-    # or when they couldn't be read: the check only explains early what would fail later -, else
-    # the problem: 'Arm' or 'NotX64'.
+    # 64-bit Windows on an x64 or an Arm64 processor can - PowerShell 7.6 is published for x64 and
+    # Arm64 alone; the app's driver is Windows' own WinUSB, built into Windows on Arm too (M10;
+    # docs/AT-COMMANDS.md sections 1.2 and 11.2). A pure decision. Returns $null when it can - or
+    # when they couldn't be read: the check only explains early what would fail later -, else the
+    # problem: 'Not64'.
     param([object] $Architecture, [object] $AddressWidth)
 
-    if ($null -eq $Architecture -or $null -eq $AddressWidth -or ([int]$Architecture -eq 9 -and [int]$AddressWidth -eq 64)) {
+    if ($null -eq $Architecture -or $null -eq $AddressWidth -or ([int]$Architecture -in 9, 12 -and [int]$AddressWidth -eq 64)) {
         return $null
     }
-    if ([int]$Architecture -in 5, 12) {
-        return 'Arm'
-    }
-    'NotX64'
+    'Not64'
 }
 
 function Get-LauncherProblemText {
@@ -139,8 +136,7 @@ function Get-LauncherProblemText {
     param([string] $Problem)
 
     switch ($Problem) {
-        'Arm' { return Get-SetupText 'Launcher.Arm' }
-        'NotX64' { return Get-SetupText 'Launcher.NotX64' }
+        'Not64' { return Get-SetupText 'Launcher.Not64' }
         'TooOld' { $what = Get-SetupText 'Launcher.TooOld' }
         'Untrusted' { $what = Get-SetupText 'Launcher.Untrusted' }
         default { $what = Get-SetupText 'Launcher.NotFound' }

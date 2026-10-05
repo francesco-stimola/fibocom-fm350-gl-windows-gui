@@ -94,9 +94,21 @@ AfterAll {
 }
 
 Describe 'Get-LpacPath' {
-    It 'names lpac.exe in the lpac folder beside the modules' {
-        $expected = Join-Path -Path (Resolve-Path "$PSScriptRoot/../src").Path -ChildPath 'lpac\lpac.exe'
-        Get-LpacPath | Should -Be $expected
+    It 'names the lpac.exe of <Architecture> in the lpac folder beside the modules' -ForEach @(
+        @{ Architecture = 'x64' }
+        @{ Architecture = 'arm64' }
+    ) {
+        $expected = Join-Path -Path (Resolve-Path "$PSScriptRoot/../src").Path -ChildPath "lpac\$Architecture\lpac.exe"
+        Get-LpacPath -Architecture $Architecture | Should -Be $expected
+    }
+
+    It 'takes the build of the Windows it runs on' {
+        $windows = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) { 'arm64' } else { 'x64' }
+        Get-LpacPath | Should -Be (Get-LpacPath -Architecture $windows)
+    }
+
+    It 'names no other architecture' {
+        { Get-LpacPath -Architecture x86 -ErrorAction Stop } | Should -Throw -ExceptionType ([System.Management.Automation.ParameterBindingException])
     }
 }
 

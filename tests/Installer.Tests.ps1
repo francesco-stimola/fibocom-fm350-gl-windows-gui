@@ -82,22 +82,22 @@ Describe 'The launcher (Start-Fm350.ps1)' {
 
     It 'installs on <Name>: <Problem>' -ForEach @(
         @{ Name = '64-bit Windows on x64'; Architecture = 9; Width = 64; Problem = $null }
-        @{ Name = 'Windows on Arm64'; Architecture = 12; Width = 64; Problem = 'Arm' }
-        @{ Name = 'Windows on 32-bit Arm'; Architecture = 5; Width = 32; Problem = 'Arm' }
-        @{ Name = '32-bit Windows'; Architecture = 0; Width = 32; Problem = 'NotX64' }
-        @{ Name = '32-bit Windows on an x64 processor'; Architecture = 9; Width = 32; Problem = 'NotX64' }
-        @{ Name = 'Itanium'; Architecture = 6; Width = 64; Problem = 'NotX64' }
+        @{ Name = 'Windows on Arm64'; Architecture = 12; Width = 64; Problem = $null }
+        @{ Name = 'Windows on 32-bit Arm'; Architecture = 5; Width = 32; Problem = 'Not64' }
+        @{ Name = '32-bit Windows on an Arm64 processor'; Architecture = 12; Width = 32; Problem = 'Not64' }
+        @{ Name = '32-bit Windows'; Architecture = 0; Width = 32; Problem = 'Not64' }
+        @{ Name = '32-bit Windows on an x64 processor'; Architecture = 9; Width = 32; Problem = 'Not64' }
+        @{ Name = 'Itanium'; Architecture = 6; Width = 64; Problem = 'Not64' }
         @{ Name = 'a processor that can''t be read'; Architecture = $null; Width = $null; Problem = $null }
     ) {
         Test-LauncherPlatform -Architecture $Architecture -AddressWidth $Width | Should -Be $Problem
     }
 
     It 'says why it doesn''t install on <Problem>, and that nothing was installed' -ForEach @(
-        @{ Problem = 'Arm'; Text = 'Arm processor' }
-        @{ Problem = 'NotX64'; Text = '64-bit Windows on an x64' }
+        @{ Problem = 'Not64'; Text = '64-bit Windows, on an x64 (Intel or AMD) or an Arm64 processor' }
     ) {
         $said = Get-LauncherProblemText -Problem $Problem
-        $said | Should -Match $Text
+        $said | Should -BeLike "*$Text*"
         $said | Should -Match 'nothing was installed'
     }
 
@@ -133,11 +133,11 @@ Describe 'The launcher (Start-Fm350.ps1)' {
 )
 `$choice = Select-LauncherPwsh -Candidate `$list -ProgramFiles 'C:\Program Files' -Minimum ([version]'7.6.0')
 `$none = Select-LauncherPwsh -Candidate @() -ProgramFiles 'C:\Program Files' -Minimum ([version]'7.6.0')
-'{0}|{1}|{2}|{3}|{4}{5}' -f `$choice.Path, `$none.Problem, (ConvertTo-LauncherCommandLine -Argument @('-File', 'C:\Program Files\a b\x.ps1')), `$PSVersionTable.PSVersion.Major, (Test-LauncherPlatform -Architecture 12 -AddressWidth 64), (Test-LauncherPlatform -Architecture 9 -AddressWidth 64)
+'{0}|{1}|{2}|{3}|{4}{5}' -f `$choice.Path, `$none.Problem, (ConvertTo-LauncherCommandLine -Argument @('-File', 'C:\Program Files\a b\x.ps1')), `$PSVersionTable.PSVersion.Major, (Test-LauncherPlatform -Architecture 5 -AddressWidth 32), (Test-LauncherPlatform -Architecture 12 -AddressWidth 64)
 "@
         $output = & $winps -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $probe
         $LASTEXITCODE | Should -Be 0
-        $output | Should -Be 'C:\Program Files\WindowsApps\p\pwsh.exe|NotFound|-File "C:\Program Files\a b\x.ps1"|5|Arm'
+        $output | Should -Be 'C:\Program Files\WindowsApps\p\pwsh.exe|NotFound|-File "C:\Program Files\a b\x.ps1"|5|Not64'
     }
 
     It 'finds the PowerShell running these tests, when it is under Program Files' {
@@ -655,6 +655,8 @@ Describe 'Uninstall-Fm350App' {
         Mock -ModuleName FibocomFm350.Installer Start-ScheduledTask { }
         Mock -ModuleName FibocomFm350.Installer Invoke-InstalledApp { }
         Mock -ModuleName FibocomFm350.Installer Unregister-AppTask { '\fibocom-fm350-gl-windows-gui\Start at logon'; '\fibocom-fm350-gl-windows-gui\Open' }
+        # Never the modem's real drivers in a test.
+        Mock -ModuleName FibocomFm350.Installer Restore-AppUsbFunction { }
         Install-Fm350App -Source (Copy-TestPackage) -UserSid $script:userSid -Layout $script:layout -NoStart | Out-Null
         foreach ($folder in $script:layout.UserData) {
             [void](New-Item -ItemType Directory -Path $folder -Force)
@@ -709,6 +711,13 @@ Describe 'Uninstall-Fm350App' {
         Test-Path -LiteralPath $script:layout.UninstallEntry | Should -BeFalse
     }
 
+    It 'gives the modem''s functions back to their driver first, while the app''s code is still there' {
+        Mock -ModuleName FibocomFm350.Installer Restore-AppUsbFunction { (Test-Path -LiteralPath (Join-Path $Layout.InstallFolder 'FibocomFm350\FibocomFm350.psd1')).ToString() }
+        $output = @(Uninstall-Fm350App -Layout $script:layout)
+        $output[0] | Should -Be 'True' -Because 'the folder is removed after'
+        Should -Invoke -ModuleName FibocomFm350.Installer Restore-AppUsbFunction -Times 1 -Exactly
+    }
+
     It 'has nothing to remove a second time' {
         Uninstall-Fm350App -Layout $script:layout | Out-Null
         Mock -ModuleName FibocomFm350.Installer Unregister-AppTask { }
@@ -716,6 +725,54 @@ Describe 'Uninstall-Fm350App' {
     }
 }
 
+Describe 'Restore-AppUsbFunction' {
+    BeforeAll {
+        $script:restoreLayout = Get-TestLayout
+        Mock -ModuleName FibocomFm350.Installer Register-AppTask { }
+        Mock -ModuleName FibocomFm350.Installer Invoke-InstalledApp { }
+        Mock -ModuleName FibocomFm350.Installer Test-AppFolderAccess { [pscustomobject]@{ Allowed = $true; Offenders = [string[]]@() } }
+        Mock -ModuleName FibocomFm350.Installer Stop-AppInstance { [pscustomobject]@{ WasRunning = $false; Stopped = $true; Mutex = $null } }
+        Mock -ModuleName FibocomFm350.Installer Exit-AppInstallLock { }
+        Install-Fm350App -Source (Copy-TestPackage) -UserSid $script:userSid -Layout $script:restoreLayout -NoStart | Out-Null
+    }
+
+    It 'says how many functions went back, waiting for a restart, or stayed: <Name>' -ForEach @(
+        @{ Name = 'all back'; Results = @('Done', 'Done', 'Done'); Lines = @('*back on the driver Windows ranks best*: 3.') }
+        @{ Name = 'some later, some left'; Results = @('Done', 'RestartNeeded', 'InUse', 'Failed'); Lines = @('*: 1.', '*next restart of Windows: 1.', '*left on WinUSB*: 2.') }
+        @{ Name = 'nothing on WinUSB'; Results = @(); Lines = @() }
+    ) {
+        $functions = @(foreach ($result in $Results) { [pscustomobject]@{ Result = $result } })
+        $restore = { [pscustomobject]@{ Modems = 1; Functions = $functions } }.GetNewClosure()
+        $said = @(InModuleScope FibocomFm350.Installer -Parameters @{ Layout = $script:restoreLayout; Restore = $restore } { param($Layout, $Restore) Restore-AppUsbFunction -Layout $Layout -Restore $Restore })
+        $said.Count | Should -Be $Lines.Count
+        for ($i = 0; $i -lt $Lines.Count; $i++) {
+            $said[$i] | Should -BeLike $Lines[$i]
+        }
+    }
+
+    It 'gives the installed core module to the restore, and lets it go after' {
+        $restore = { param($Core) [pscustomobject]@{ Modems = 1; Functions = @([pscustomobject]@{ Result = ($Core.ModuleBase) }) } }
+        $said = InModuleScope FibocomFm350.Installer -Parameters @{ Layout = $script:restoreLayout; Restore = $restore } { param($Layout, $Restore) Restore-AppUsbFunction -Layout $Layout -Restore $Restore }
+        $said | Should -BeLike '*left on WinUSB*: 1.' -Because 'a result the restore didn''t give is no success'
+        @(Get-Module FibocomFm350 | Where-Object ModuleBase -Like "$($script:restoreLayout.InstallFolder)*") | Should -BeNullOrEmpty
+    }
+
+    It 'says no modem is plugged in' {
+        $said = InModuleScope FibocomFm350.Installer -Parameters @{ Layout = $script:restoreLayout } { param($Layout) Restore-AppUsbFunction -Layout $Layout -Restore { [pscustomobject]@{ Modems = 0; Functions = @() } } }
+        $said | Should -BeLike 'No modem plugged in*'
+    }
+
+    It 'says a restore that failed, and the uninstallation goes on' {
+        $said = InModuleScope FibocomFm350.Installer -Parameters @{ Layout = $script:restoreLayout } { param($Layout) Restore-AppUsbFunction -Layout $Layout -Restore { throw 'SetupAPI said no' } }
+        $said | Should -BeLike '*(SetupAPI said no)*stay on WinUSB.'
+    }
+
+    It 'does nothing without the app''s code: an uninstallation run again' {
+        $gone = [pscustomobject]@{ InstallFolder = (Join-Path $TestDrive 'nothing-here') }
+        $said = InModuleScope FibocomFm350.Installer -Parameters @{ Layout = $gone } { param($Layout) Restore-AppUsbFunction -Layout $Layout -Restore { throw 'must not run' } }
+        $said | Should -BeNullOrEmpty
+    }
+}
 Describe 'Stop-AppInstance' {
     BeforeEach {
         $script:name = "fm350-test-$([guid]::NewGuid().ToString('N'))"

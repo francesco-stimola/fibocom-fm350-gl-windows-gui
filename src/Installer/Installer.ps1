@@ -809,15 +809,62 @@ function Invoke-InstalledApp {
     }
 }
 
+# Gives the modem's functions back to their driver with the installed app's core module, -Core.
+$script:RestoreUsbFunctions = {
+    param($Core)
+    & $Core {
+        Restore-ModemUsbFunction -Confirm:$false
+    }
+}
+
+function Restore-AppUsbFunction {
+    # The way back from WinUSB, with the installed app's own code (its core module, from the install
+    # folder, before it goes): the modem's functions the app put on WinUSB given back to the driver
+    # Windows ranks best (Restore-ModemUsbFunction) - MediaTek's serial driver where it is in the
+    # driver store. -Restore runs it with the module (the tests stand in for it). Returns the lines
+    # to say; a failure is said, and the uninstallation goes on: the functions then stay on WinUSB.
+    param([object] $Layout, [scriptblock] $Restore = $script:RestoreUsbFunctions)
+
+    $manifest = Join-Path -Path $Layout.InstallFolder -ChildPath 'FibocomFm350\FibocomFm350.psd1'
+    if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) {
+        # Nothing installed to do it with: an uninstallation run again.
+        return
+    }
+    try {
+        $core = Import-Module -Name $manifest -PassThru -ErrorAction Stop
+        try {
+            $outcome = & $Restore $core
+        }
+        finally {
+            Remove-Module -ModuleInfo $core -ErrorAction SilentlyContinue
+        }
+    }
+    catch {
+        return Get-SetupText 'Uninstall.UsbFailed' $_.Exception.Message
+    }
+    if (-not $outcome -or $outcome.Modems -eq 0) {
+        return Get-SetupText 'Uninstall.UsbNoModem'
+    }
+    $results = @($outcome.Functions | ForEach-Object { $_.Result })
+    $back = @($results | Where-Object { $_ -eq 'Done' }).Count
+    $later = @($results | Where-Object { $_ -eq 'RestartNeeded' }).Count
+    $left = @($results | Where-Object { $_ -notin 'Done', 'RestartNeeded' }).Count
+    if ($back) { Get-SetupText 'Uninstall.UsbRestored' $back }
+    if ($later) { Get-SetupText 'Uninstall.UsbRestart' $later }
+    if ($left) { Get-SetupText 'Uninstall.UsbLeft' $left }
+}
+
 function Uninstall-Fm350App {
     <#
     .SYNOPSIS
         Removes the app: its tasks, its Start-menu shortcut, its install folder and its entry in
-        Windows' installed apps.
+        Windows' installed apps; first, the modem's functions it put on WinUSB go back to the driver
+        Windows ranks best (Restore-AppUsbFunction).
     .DESCRIPTION
         Needs administrator rights. The running app is asked to exit first (Stop-AppInstance):
         monitoring stops, the connection stays as it is - nothing on the modem or its adapter is
-        undone. An app that doesn't exit stops the uninstallation before anything changes.
+        undone but its functions' driver: MediaTek's COM ports come back where its driver is in the
+        driver store. A modem not plugged in keeps its functions on WinUSB. An app that doesn't exit stops the uninstallation before anything changes.
         -RemoveUserData also deletes the settings, the stored SIM PIN and APN password, and the
         logs. Returns one line per step done.
     .EXAMPLE
@@ -839,6 +886,9 @@ function Uninstall-Fm350App {
         Get-SetupText 'Install.Exited'
     }
     try {
+        foreach ($line in @(Restore-AppUsbFunction -Layout $Layout)) {
+            $line
+        }
         foreach ($task in @(Unregister-AppTask -Layout $Layout -Confirm:$false)) {
             Get-SetupText 'Uninstall.Task' $task
         }

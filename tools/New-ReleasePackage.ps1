@@ -12,9 +12,9 @@
     named after the zip.
 
     Two tools go in the zip beside the app (ARCHITECTURE -> eSIM), each from its pin:
-    - lpac, in the 'lpac' folder: the files -LpacPin (tools/Lpac.psd1) lists from its pinned
-      Windows build - lpac.exe, its README and licenses -, and SOURCE.txt, which says where its
-      source is. Its source archive is written beside the zip, for the release to carry.
+    - lpac, in the 'lpac' folder: for each of its pinned Windows builds (tools/Lpac.psd1, -LpacPin)
+      - x64 and Arm64 -, the files the pin lists - lpac.exe, its README and licenses - in a folder
+      named after the architecture; and SOURCE.txt, which says where its source is. Its source archive is written beside the zip, for the release to carry.
     - ZXing.Net, in the 'zxing' folder: the files -ZxingPin (tools/ZXing.psd1) lists from its
       pinned package, its license, and README.txt, which says what it is.
     Each pinned file is taken from -Cache, or downloaded there from its pinned address, and used
@@ -49,6 +49,9 @@ param(
 $script:ReleaseManifests = @('src/FibocomFm350/FibocomFm350.psd1', 'src/App/FibocomFm350.App.psd1', 'src/Installer/FibocomFm350.Installer.psd1')
 $script:ReleaseTopFiles = @('LICENSE', 'README.md', 'CHANGELOG.md')
 $script:BundledFolders = @('lpac', 'zxing')
+
+# The architectures lpac is bundled for, as the app names them (Get-LpacPath).
+$script:LpacArchitectures = @('arm64', 'x64')
 
 function Resolve-ReleaseVersion {
     # The version to release: the one every module carries, and the tag's when there is one
@@ -129,9 +132,10 @@ function Test-PinnedFile {
 }
 
 function Test-LpacPin {
-    # Whether a pin of lpac's release is complete: a version, the build's files to package -
-    # lpac.exe among them, plain names -, and for its build and its source a file name, an https
-    # address and a SHA-256. Throws on what is missing. A pure check.
+    # Whether a pin of lpac's release is complete: a version, the builds' files to package - lpac.exe
+    # among them, plain names -, a build for each architecture the app runs on (x64, arm64) and its
+    # source, each with a file name, an https address and a SHA-256. Throws on what is missing. A pure
+    # check.
     param([hashtable] $Pin)
 
     if ([string]$Pin['Version'] -notmatch '^\d+\.\d+\.\d+$') {
@@ -141,10 +145,17 @@ function Test-LpacPin {
     if ('lpac.exe' -notin $files -or @($files | Where-Object { [string]$_ -notmatch '^[A-Za-z0-9._-]+$' -or $_ -match '^\.\.?$' }).Count -gt 0) {
         throw "lpac's pin has no list of the build's files to package, lpac.exe among them, plain names."
     }
-    foreach ($part in 'Build', 'Source') {
-        if (-not (Test-PinnedFile -Entry $Pin[$part])) {
-            throw "lpac's pin has no complete $part (a file name, an https address, a SHA-256)."
+    $builds = $Pin['Builds']
+    if ($builds -isnot [hashtable] -or @($builds.Keys | Sort-Object) -join ',' -ne ($script:LpacArchitectures -join ',')) {
+        throw "lpac's pin has no build for each of $($script:LpacArchitectures -join ', ')."
+    }
+    foreach ($architecture in $script:LpacArchitectures) {
+        if (-not (Test-PinnedFile -Entry $builds[$architecture])) {
+            throw "lpac's pin has no complete $architecture build (a file name, an https address, a SHA-256)."
         }
+    }
+    if (-not (Test-PinnedFile -Entry $Pin['Source'])) {
+        throw "lpac's pin has no complete Source (a file name, an https address, a SHA-256)."
     }
     $true
 }
@@ -198,6 +209,9 @@ function Get-LpacSourceNote {
 
     @(
         "lpac $($Pin.Version), by ESTKME TECHNOLOGY LIMITED: $($Pin.Page)"
+        ''
+        'Its Windows builds for x64 and for Arm64 are in the folders x64 and arm64: the app runs the one'
+        'of the Windows it is on.'
         ''
         'This app runs lpac to manage the profiles of an eSIM. lpac is free software: its program is'
         'under the GNU Affero General Public License v3.0 only (LICENSE-lpac), its eUICC library under'
@@ -281,7 +295,10 @@ $lpac = Import-PowerShellDataFile -LiteralPath $LpacPin
 [void](Test-LpacPin -Pin $lpac)
 $zxing = Import-PowerShellDataFile -LiteralPath $ZxingPin
 [void](Test-ZxingPin -Pin $zxing)
-$lpacBuild = Get-PinnedFile -Entry $lpac.Build -Cache $Cache
+$lpacBuilds = @{}
+foreach ($architecture in $script:LpacArchitectures) {
+    $lpacBuilds[$architecture] = Get-PinnedFile -Entry $lpac.Builds[$architecture] -Cache $Cache
+}
 $lpacSource = Get-PinnedFile -Entry $lpac.Source -Cache $Cache
 $zxingPackage = Get-PinnedFile -Entry $zxing.Package -Cache $Cache
 $zxingLicense = Get-PinnedFile -Entry $zxing.License -Cache $Cache
@@ -303,16 +320,19 @@ try {
     foreach ($file in $files) {
         [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.Path, $file.Entry, [System.IO.Compression.CompressionLevel]::Optimal)
     }
-    # lpac: the files of its build the pin lists, as published, and where its source is.
-    $build = [System.IO.Compression.ZipFile]::OpenRead($lpacBuild)
-    try {
-        foreach ($name in @($lpac.Files)) {
-            Copy-ZipEntry -From $build -Name $name -What $lpac.Build.Name -To $zip -Entry "lpac/$name"
-            $count++
+    # lpac: the files of each build the pin lists, as published, in the folder of its architecture,
+    # and where its source is.
+    foreach ($architecture in $script:LpacArchitectures) {
+        $build = [System.IO.Compression.ZipFile]::OpenRead($lpacBuilds[$architecture])
+        try {
+            foreach ($name in @($lpac.Files)) {
+                Copy-ZipEntry -From $build -Name $name -What $lpac.Builds[$architecture].Name -To $zip -Entry "lpac/$architecture/$name"
+                $count++
+            }
         }
-    }
-    finally {
-        $build.Dispose()
+        finally {
+            $build.Dispose()
+        }
     }
     Add-ZipText -To $zip -Entry 'lpac/SOURCE.txt' -Text (Get-LpacSourceNote -Pin $lpac)
     $count++

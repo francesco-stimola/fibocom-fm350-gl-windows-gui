@@ -365,6 +365,43 @@ function Resolve-ModemBinding {
     [pscustomobject]@{ Bind = [object[]]$bind.ToArray(); Left = [object[]]$left.ToArray() }
 }
 
+function Resolve-ModemRestore {
+    <#
+    .SYNOPSIS
+        Decides which of the modems' functions go back to the driver Windows ranks best: the way back
+        from WinUSB, when the app is uninstalled.
+    .DESCRIPTION
+        A pure decision over Resolve-ModemUsbDevice's modems - every FM350 present, not only the one
+        the app uses: their vendor functions on WinUSB (ARCHITECTURE -> USB functions and WinUSB),
+        each read whole. Never the network function, nor a function that is not a vendor one (ADB,
+        which Windows puts on WinUSB itself), nor one that couldn't be read.
+
+        Returns the functions, the AT ports first, each with InstanceId, Interface, Role, Name and
+        InterfaceGuids (to look for a program holding it first).
+    .EXAMPLE
+        Resolve-ModemRestore -Modem @(Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord))
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]] $Modem
+    )
+
+    $functions = foreach ($item in @($Modem | Where-Object { $_ } | ForEach-Object { $_.Functions })) {
+        if (-not $item -or -not $item.Vendor -or $item.Role -eq 'Network' -or -not $item.WinUsb) {
+            continue
+        }
+        if ($item.PSObject.Properties['Read'] -and -not $item.Read) {
+            continue
+        }
+        $item
+    }
+    foreach ($item in @($functions | Sort-Object -Property @{ Expression = { $_.Role -ne 'AtPort' } }, InstanceId)) {
+        [pscustomobject]@{ InstanceId = $item.InstanceId; Interface = $item.Interface; Role = $item.Role; Name = $item.Name; InterfaceGuids = $item.InterfaceGuids }
+    }
+}
 function Restart-ModemUsbDevice {
     <#
     .SYNOPSIS

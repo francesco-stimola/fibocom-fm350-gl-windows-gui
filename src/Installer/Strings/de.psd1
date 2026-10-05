@@ -3,8 +3,7 @@
 # translation keeps the same ones. UTF-8 with a byte order mark: Windows PowerShell 5.1 reads it too.
 @{
     # The launcher (Start-Fm350.ps1).
-    'Launcher.Arm'       = 'Fibocom FM350-GL Windows GUI läuft unter 64-Bit-Windows auf einem x64-Prozessor (Intel oder AMD). Dieser Computer hat einen Arm-Prozessor, der den Treiber des Modems nicht laden kann: Es wurde nichts installiert.'
-    'Launcher.NotX64'    = 'Fibocom FM350-GL Windows GUI läuft unter 64-Bit-Windows auf einem x64-Prozessor (Intel oder AMD), und dieses Windows ist kein solches: Es wurde nichts installiert.'
+    'Launcher.Not64'     = 'Fibocom FM350-GL Windows GUI läuft unter 64-Bit-Windows auf einem x64-Prozessor (Intel oder AMD) oder einem Arm64-Prozessor, und dieses Windows ist kein solches: Es wurde nichts installiert.'
     'Launcher.NotFound'  = 'PowerShell 7.6 oder höher wurde nicht gefunden.'
     'Launcher.TooOld'    = 'Das installierte PowerShell 7 ist älter als 7.6.'
     'Launcher.Untrusted' = 'Das gefundene PowerShell 7 liegt nicht unter Program Files oder trägt keine Signatur von Microsoft.'
@@ -50,4 +49,9 @@
     'Uninstall.Folder'      = 'Ordner entfernt: {0}.'
     'Uninstall.Entry'       = 'Aus Einstellungen > Apps > Installierte Apps entfernt.'
     'Uninstall.UserData'    = 'Einstellungen, vertrauliche Daten und Protokolle entfernt: {0}.'
+    'Uninstall.UsbRestored' = 'Funktionen des Modems wieder auf dem Treiber, den Windows am besten bewertet - dem seriellen Treiber von MediaTek, wo er installiert ist: {0}.'
+    'Uninstall.UsbRestart'  = 'Funktionen des Modems, die beim nächsten Neustart von Windows wieder diesen Treiber verwenden: {0}.'
+    'Uninstall.UsbLeft'     = 'Funktionen des Modems, die auf WinUSB bleiben - ein anderes Programm verwendet sie, oder Windows hat abgelehnt; der Geräte-Manager kann ihnen einen anderen Treiber geben: {0}.'
+    'Uninstall.UsbNoModem'  = 'Kein Modem angeschlossen: Die Funktionen, die die App auf WinUSB umgestellt hat, bleiben dort; der Geräte-Manager kann ihnen einen anderen Treiber geben.'
+    'Uninstall.UsbFailed'   = 'Die Funktionen des Modems können nicht wieder ihren Treiber erhalten ({0}): Sie bleiben auf WinUSB.'
 }

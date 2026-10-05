@@ -8,33 +8,35 @@ BeforeAll {
     $script:builder = Join-Path $script:root 'tools/New-ReleasePackage.ps1'
     . $script:builder
 
-    # A stand-in for lpac's release: a build zip - lpac.exe, its license, and a libcurl.dll the pin
-    # doesn't list - and a source archive in -Cache, and a pin that names them with their SHA-256
-    # (or -Wrong ones), addresses never fetched, and the files to package (one -Missing).
+    # A stand-in for lpac's release: a build zip for each architecture - lpac.exe, its license, and a
+    # libcurl.dll the pin doesn't list - and a source archive in -Cache, and a pin that names them
+    # with their SHA-256 (or -Wrong ones), addresses never fetched, and the files to package (one
+    # -Missing).
     function Get-TestLpac {
         param([string] $Folder, [switch] $Wrong, [switch] $Missing)
         $cache = Join-Path $Folder 'cache'
         New-Item -ItemType Directory -Path $cache -Force | Out-Null
-        $staging = Join-Path $Folder 'build'
-        New-Item -ItemType Directory -Path $staging -Force | Out-Null
-        Set-Content -LiteralPath (Join-Path $staging 'lpac.exe') -Value 'not a program'
-        Set-Content -LiteralPath (Join-Path $staging 'LICENSE-lpac') -Value 'AGPL-3.0'
-        Set-Content -LiteralPath (Join-Path $staging 'libcurl.dll') -Value 'not a library'
+        $builds = @{}
+        $hashes = @{}
+        foreach ($architecture in 'x64', 'arm64') {
+            $staging = Join-Path $Folder "build-$architecture"
+            New-Item -ItemType Directory -Path $staging -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $staging 'lpac.exe') -Value "not a program, $architecture"
+            Set-Content -LiteralPath (Join-Path $staging 'LICENSE-lpac') -Value 'AGPL-3.0'
+            Set-Content -LiteralPath (Join-Path $staging 'libcurl.dll') -Value 'not a library'
+            $builds[$architecture] = Join-Path $cache "lpac-test-$architecture.zip"
+            Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $builds[$architecture] -Force
+            $hashes[$architecture] = if ($Wrong) { '0' * 64 } else { (Get-FileHash -LiteralPath $builds[$architecture] -Algorithm SHA256).Hash }
+        }
         $files = if ($Missing) { "'lpac.exe', 'LICENSE-lpac', 'LICENSE-cjson'" } else { "'lpac.exe', 'LICENSE-lpac'" }
-        $build = Join-Path $cache 'lpac-test.zip'
-        Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $build -Force
         $source = Join-Path $cache 'lpac-9.9.9-source.tar.gz'
         Set-Content -LiteralPath $source -Value 'source'
-        $buildHash = (Get-FileHash -LiteralPath $build -Algorithm SHA256).Hash
-        $sourceHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
-        if ($Wrong) {
-            $buildHash = '0' * 64
-            $sourceHash = '0' * 64
-        }
+        $sourceHash = if ($Wrong) { '0' * 64 } else { (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash }
         $pin = Join-Path $Folder 'Lpac.psd1'
         Set-Content -LiteralPath $pin -Value @(
             "@{ Version = '9.9.9'; Page = 'https://example.invalid/lpac'; Files = @($files)"
-            "    Build = @{ Name = 'lpac-test.zip'; Url = 'https://example.invalid/build.zip'; Sha256 = '$buildHash' }"
+            "    Builds = @{ x64 = @{ Name = 'lpac-test-x64.zip'; Url = 'https://example.invalid/x64.zip'; Sha256 = '$($hashes['x64'])' }"
+            "        arm64 = @{ Name = 'lpac-test-arm64.zip'; Url = 'https://example.invalid/arm64.zip'; Sha256 = '$($hashes['arm64'])' } }"
             "    Source = @{ Name = 'lpac-9.9.9-source.tar.gz'; Url = 'https://example.invalid/source.tar.gz'; Sha256 = '$sourceHash' } }"
         )
         # ZXing.Net's stand-in in the same cache: a package with the library and another one, its
@@ -54,7 +56,8 @@ BeforeAll {
             "    Package = @{ Name = 'zxing.test.nupkg'; Url = 'https://example.invalid/zxing.nupkg'; Sha256 = '$((Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash)' }"
             "    License = @{ Name = 'COPYING'; Url = 'https://example.invalid/COPYING'; Sha256 = '$((Get-FileHash -LiteralPath $license -Algorithm SHA256).Hash)' } }"
         )
-        [pscustomobject]@{ Pin = $pin; ZxingPin = $zxingPin; Cache = $cache; Build = $build; Source = $source }
+        # The arm64 build is checked first: the one a wrong SHA-256 deletes.
+        [pscustomobject]@{ Pin = $pin; ZxingPin = $zxingPin; Cache = $cache; Build = $builds['arm64']; Source = $source }
     }
 
     $script:changelog = @'
@@ -158,7 +161,7 @@ Describe 'New-ReleasePackage.ps1' {
         }
         $entries -match '\\' | Should -BeNullOrEmpty -Because 'zip entries use forward slashes'
         $entries -match '^(tests|docs|tools|captures|\.github)/' | Should -BeNullOrEmpty
-        @($entries -like 'lpac/*') | Should -Be @('lpac/lpac.exe', 'lpac/LICENSE-lpac', 'lpac/SOURCE.txt')
+        @($entries -like 'lpac/*') | Should -Be @('lpac/arm64/lpac.exe', 'lpac/arm64/LICENSE-lpac', 'lpac/x64/lpac.exe', 'lpac/x64/LICENSE-lpac', 'lpac/SOURCE.txt')
         @($entries -like 'zxing/*') | Should -Be @('zxing/zxing.dll', 'zxing/COPYING', 'zxing/README.txt')
         $result.LpacSource | Should -Exist
         Split-Path -Leaf $result.LpacSource | Should -Be 'lpac-9.9.9-source.tar.gz'
@@ -210,7 +213,8 @@ Describe 'lpac''s pin' {
     It 'pins this repository''s lpac: its official release, a version, two SHA-256' {
         $pin = Import-PowerShellDataFile -LiteralPath (Join-Path $script:root 'tools/Lpac.psd1')
         Test-LpacPin -Pin $pin | Should -BeTrue
-        $pin.Build.Url | Should -BeLike "https://github.com/estkme-group/lpac/releases/download/v$($pin.Version)/*"
+        $pin.Builds.x64.Url | Should -Be "https://github.com/estkme-group/lpac/releases/download/v$($pin.Version)/lpac-windows-x86_64-mingw.zip"
+        $pin.Builds.arm64.Url | Should -Be "https://github.com/estkme-group/lpac/releases/download/v$($pin.Version)/lpac-windows-arm64-mingw.zip"
         $pin.Source.Url | Should -Be "https://github.com/estkme-group/lpac/archive/refs/tags/v$($pin.Version).tar.gz"
         $pin.Page | Should -Be "https://github.com/estkme-group/lpac/releases/tag/v$($pin.Version)"
         # The app makes the HTTPS requests itself (decided 2026-10-04): no libcurl in the zip.
@@ -220,13 +224,15 @@ Describe 'lpac''s pin' {
     }
 
     It 'refuses a pin without <Name>' -ForEach @(
-        @{ Name = 'a version'; Pin = @{ Files = @('lpac.exe'); Version = ''; Build = @{ Name = 'a.zip'; Url = 'https://x/a'; Sha256 = ('a' * 64) }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
-        @{ Name = 'a SHA-256'; Pin = @{ Files = @('lpac.exe'); Version = '1.0.0'; Build = @{ Name = 'a.zip'; Url = 'https://x/a'; Sha256 = 'abc' }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
-        @{ Name = 'an https address'; Pin = @{ Files = @('lpac.exe'); Version = '1.0.0'; Build = @{ Name = 'a.zip'; Url = 'http://x/a'; Sha256 = ('a' * 64) }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
-        @{ Name = 'its source'; Pin = @{ Files = @('lpac.exe'); Version = '1.0.0'; Build = @{ Name = 'a.zip'; Url = 'https://x/a'; Sha256 = ('a' * 64) } } }
-        @{ Name = 'a plain file name'; Pin = @{ Files = @('lpac.exe'); Version = '1.0.0'; Build = @{ Name = '../a.zip'; Url = 'https://x/a'; Sha256 = ('a' * 64) }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
-        @{ Name = 'lpac.exe among its files'; Pin = @{ Files = @('README.md'); Version = '1.0.0'; Build = @{ Name = 'a.zip'; Url = 'https://x/a'; Sha256 = ('a' * 64) }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
-        @{ Name = 'files with plain names'; Pin = @{ Files = @('lpac.exe', '../x.dll'); Version = '1.0.0'; Build = @{ Name = 'a.zip'; Url = 'https://x/a'; Sha256 = ('a' * 64) }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
+        @{ Name = 'a version'; Pin = @{ Files = @('lpac.exe'); Version = ''; Builds = @{ x64 = @{ Name = 'a.zip'; Url = 'https://x/a'; Sha256 = ('a' * 64) }; arm64 = @{ Name = 'c.zip'; Url = 'https://x/c'; Sha256 = ('c' * 64) } }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
+        @{ Name = 'a SHA-256'; Pin = @{ Files = @('lpac.exe'); Version = '1.0.0'; Builds = @{ x64 = @{ Name = 'a.zip'; Url = 'https://x/a'; Sha256 = 'abc' }; arm64 = @{ Name = 'c.zip'; Url = 'https://x/c'; Sha256 = ('c' * 64) } }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
+        @{ Name = 'an https address'; Pin = @{ Files = @('lpac.exe'); Version = '1.0.0'; Builds = @{ x64 = @{ Name = 'a.zip'; Url = 'http://x/a'; Sha256 = ('a' * 64) }; arm64 = @{ Name = 'c.zip'; Url = 'https://x/c'; Sha256 = ('c' * 64) } }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
+        @{ Name = 'its source'; Pin = @{ Files = @('lpac.exe'); Version = '1.0.0'; Builds = @{ x64 = @{ Name = 'a.zip'; Url = 'https://x/a'; Sha256 = ('a' * 64) }; arm64 = @{ Name = 'c.zip'; Url = 'https://x/c'; Sha256 = ('c' * 64) } } } }
+        @{ Name = 'a plain file name'; Pin = @{ Files = @('lpac.exe'); Version = '1.0.0'; Builds = @{ x64 = @{ Name = '../a.zip'; Url = 'https://x/a'; Sha256 = ('a' * 64) }; arm64 = @{ Name = 'c.zip'; Url = 'https://x/c'; Sha256 = ('c' * 64) } }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
+        @{ Name = 'lpac.exe among its files'; Pin = @{ Files = @('README.md'); Version = '1.0.0'; Builds = @{ x64 = @{ Name = 'a.zip'; Url = 'https://x/a'; Sha256 = ('a' * 64) }; arm64 = @{ Name = 'c.zip'; Url = 'https://x/c'; Sha256 = ('c' * 64) } }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
+        @{ Name = 'a build for each architecture'; Pin = @{ Files = @('lpac.exe'); Version = '1.0.0'; Builds = @{ x64 = @{ Name = 'a.zip'; Url = 'https://x/a'; Sha256 = ('a' * 64) } }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
+        @{ Name = 'builds of no other architecture'; Pin = @{ Files = @('lpac.exe'); Version = '1.0.0'; Builds = @{ x64 = @{ Name = 'a.zip'; Url = 'https://x/a'; Sha256 = ('a' * 64) }; arm64 = @{ Name = 'c.zip'; Url = 'https://x/c'; Sha256 = ('c' * 64) }; x86 = @{ Name = 'd.zip'; Url = 'https://x/d'; Sha256 = ('d' * 64) } }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
+        @{ Name = 'files with plain names'; Pin = @{ Files = @('lpac.exe', '../x.dll'); Version = '1.0.0'; Builds = @{ x64 = @{ Name = 'a.zip'; Url = 'https://x/a'; Sha256 = ('a' * 64) }; arm64 = @{ Name = 'c.zip'; Url = 'https://x/c'; Sha256 = ('c' * 64) } }; Source = @{ Name = 'b.tar.gz'; Url = 'https://x/b'; Sha256 = ('b' * 64) } } }
     ) {
         { Test-LpacPin -Pin $Pin } | Should -Throw "*lpac's pin*"
     }

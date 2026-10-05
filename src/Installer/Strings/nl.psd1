@@ -2,8 +2,7 @@
 # same placeholders. UTF-8 with a byte order mark: Windows PowerShell 5.1 reads it too.
 @{
     # The launcher (Start-Fm350.ps1).
-    'Launcher.Arm'       = 'Fibocom FM350-GL Windows GUI werkt op 64-bits Windows met een x64-processor (Intel of AMD). Deze computer heeft een Arm-processor, die het stuurprogramma van de modem niet kan laden: er is niets geïnstalleerd.'
-    'Launcher.NotX64'    = 'Fibocom FM350-GL Windows GUI werkt op 64-bits Windows met een x64-processor (Intel of AMD), en deze Windows-installatie is dat niet: er is niets geïnstalleerd.'
+    'Launcher.Not64'     = 'Fibocom FM350-GL Windows GUI werkt op 64-bits Windows met een x64-processor (Intel of AMD) of een Arm64-processor, en deze Windows-installatie is dat niet: er is niets geïnstalleerd.'
     'Launcher.NotFound'  = 'PowerShell 7.6 of hoger is niet gevonden.'
     'Launcher.TooOld'    = 'De geïnstalleerde PowerShell 7 is ouder dan 7.6.'
     'Launcher.Untrusted' = 'De gevonden PowerShell 7 staat niet onder Program Files met een handtekening van Microsoft.'
@@ -49,4 +48,9 @@
     'Uninstall.Folder'      = 'Map verwijderd: {0}.'
     'Uninstall.Entry'       = 'Verwijderd uit Instellingen > Apps > Geïnstalleerde apps.'
     'Uninstall.UserData'    = 'Instellingen, geheimen en logboeken verwijderd: {0}.'
+    'Uninstall.UsbRestored' = 'Functies van de modem terug op het stuurprogramma dat Windows het best vindt - het seriële stuurprogramma van MediaTek, waar het is geïnstalleerd: {0}.'
+    'Uninstall.UsbRestart'  = 'Functies van de modem die bij de volgende herstart van Windows terug op dat stuurprogramma gaan: {0}.'
+    'Uninstall.UsbLeft'     = 'Functies van de modem die op WinUSB blijven - een ander programma gebruikt ze, of Windows weigerde; Apparaatbeheer kan ze een ander stuurprogramma geven: {0}.'
+    'Uninstall.UsbNoModem'  = 'Geen modem aangesloten: de functies die de app naar WinUSB heeft overgezet, blijven daar; Apparaatbeheer kan ze een ander stuurprogramma geven.'
+    'Uninstall.UsbFailed'   = 'De functies van de modem kunnen niet terug naar hun stuurprogramma ({0}): ze blijven op WinUSB.'
 }

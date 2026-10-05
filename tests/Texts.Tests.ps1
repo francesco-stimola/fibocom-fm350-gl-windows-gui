@@ -279,11 +279,11 @@ Describe 'The installer''s and the launcher''s languages' {
         Set-Content -LiteralPath $probe -Value @"
 . '$(Join-Path $script:src 'Start-Fm350.ps1')'
 `$language = Set-SetupLanguage -Culture 'it-IT'
-`$text = (Get-LauncherProblemText -Problem 'Arm') + '|' + `$language
+`$text = (Get-LauncherProblemText -Problem 'Not64') + '|' + `$language
 [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(`$text))
 "@
         $output = & $winps -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $probe
         $LASTEXITCODE | Should -Be 0
-        [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($output)) | Should -BeExactly ((Get-Table -Component 'Installer' -Language 'it')['Launcher.Arm'] + '|it')
+        [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($output)) | Should -BeExactly ((Get-Table -Component 'Installer' -Language 'it')['Launcher.Not64'] + '|it')
     }
 }

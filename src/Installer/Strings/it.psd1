@@ -3,8 +3,7 @@
 # keeps the same ones. UTF-8 with a byte order mark: Windows PowerShell 5.1 reads it too.
 @{
     # The launcher (Start-Fm350.ps1).
-    'Launcher.Arm'       = 'Fibocom FM350-GL Windows GUI funziona su Windows a 64 bit con un processore x64 (Intel o AMD). Questo computer ha un processore Arm, che non può caricare il driver del modem: non è stato installato nulla.'
-    'Launcher.NotX64'    = 'Fibocom FM350-GL Windows GUI funziona su Windows a 64 bit con un processore x64 (Intel o AMD), e questa installazione di Windows non lo è: non è stato installato nulla.'
+    'Launcher.Not64'     = 'Fibocom FM350-GL Windows GUI funziona su Windows a 64 bit, con un processore x64 (Intel o AMD) o Arm64, e questa installazione di Windows non lo è: non è stato installato nulla.'
     'Launcher.NotFound'  = 'Non è stato trovato PowerShell 7.6 o versione successiva.'
     'Launcher.TooOld'    = 'La versione di PowerShell 7 installata è precedente alla 7.6.'
     'Launcher.Untrusted' = 'Il PowerShell 7 trovato non si trova in Program Files con una firma di Microsoft.'
@@ -50,4 +49,9 @@
     'Uninstall.Folder'      = 'Cartella rimossa: {0}.'
     'Uninstall.Entry'       = 'Tolta da Impostazioni > App > App installate.'
     'Uninstall.UserData'    = 'Impostazioni, credenziali e log rimossi: {0}.'
+    'Uninstall.UsbRestored' = 'Funzioni del modem tornate al driver che Windows giudica migliore - il driver seriale di MediaTek, dove è installato: {0}.'
+    'Uninstall.UsbRestart'  = 'Funzioni del modem che tornano a quel driver al prossimo riavvio di Windows: {0}.'
+    'Uninstall.UsbLeft'     = 'Funzioni del modem rimaste su WinUSB - le usa un altro programma, o Windows ha rifiutato; Gestione dispositivi può dar loro un altro driver: {0}.'
+    'Uninstall.UsbNoModem'  = 'Nessun modem collegato: le funzioni che l''app ha passato a WinUSB ci restano; Gestione dispositivi può dar loro un altro driver.'
+    'Uninstall.UsbFailed'   = 'Le funzioni del modem non si possono rimettere sul loro driver ({0}): restano su WinUSB.'
 }
