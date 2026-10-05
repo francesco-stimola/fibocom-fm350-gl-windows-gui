@@ -14,7 +14,8 @@ The third review pass (of three: the whole change since `v1.2.0`) found three, f
 - **The way back took the null driver after any failure** but access denied: a policy or a
   blocked driver would have left a function with no driver where MediaTek's was in the store, the
   uninstaller saying it was given back. Only *no compatible drivers* and *no driver selected* lead
-  to it now (`TakesNullDriver`); the binding's rollback goes the same way.
+  to it now (`TakesNullDriver`); the binding's rollback goes the same way. On the device, an
+  uninstallation with no driver in the store still took the null driver.
 - **A worker that replaced another tried its failed installations again**, against *once per
   instance*: the failed instances now go with the snapshot, as SHA-256 hashes, to the worker that
   replaces it, and the AT port's failure — a restart awaited stays said.
