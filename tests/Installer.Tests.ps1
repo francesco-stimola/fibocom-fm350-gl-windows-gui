@@ -778,6 +778,29 @@ Describe 'Restore-AppUsbFunction' {
         $said | Should -BeNullOrEmpty
     }
 }
+Describe 'uninstall.cmd' {
+    # It deletes the folder it runs from. Run as it is, the setup stood in for by a command that
+    # deletes that folder and exits -Code; stdin empty, so that its pause returns.
+    It 'exits <Exit> when the setup exits <Code>, its folder gone meanwhile, saying nothing of it' -ForEach @(
+        @{ Code = 0; Exit = 0; Lines = 0 }
+        @{ Code = 3; Exit = 1; Lines = 1 }
+    ) {
+        $folder = Join-Path $TestDrive "uninstall-$Code"
+        [void](New-Item -ItemType Directory -Path $folder)
+        $script = Get-Content -LiteralPath "$PSScriptRoot/../src/uninstall.cmd" -Raw
+        $stand = $script.Replace('-File "%~dp0Start-Fm350.ps1" -Mode Uninstall', "-Command `"Remove-Item -LiteralPath '%~dp0' -Recurse -Force; exit $Code`"")
+        $stand | Should -Not -Be $script -Because 'the setup''s call is stood in for'
+        [IO.File]::WriteAllText((Join-Path $folder 'uninstall.cmd'), $stand)
+
+        $said = @($null | cmd.exe /c "`"$(Join-Path $folder 'uninstall.cmd')`"" 2>&1 | ForEach-Object { "$_" } | Where-Object { $_.Trim() })
+
+        $LASTEXITCODE | Should -Be $Exit
+        Test-Path -LiteralPath $folder | Should -BeFalse
+        # Nothing when the setup succeeded; its pause's prompt alone when it failed.
+        $said.Count | Should -Be $Lines -Because "cmd said: $($said -join ' | ')"
+    }
+}
+
 Describe 'Stop-AppInstance' {
     BeforeEach {
         $script:name = "fm350-test-$([guid]::NewGuid().ToString('N'))"
