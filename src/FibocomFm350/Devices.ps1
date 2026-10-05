@@ -458,6 +458,54 @@ function Select-AbsentWinUsbFunction {
     }
 }
 
+function Select-UnreadModemFunction {
+    <#
+    .SYNOPSIS
+        Picks the FM350 vendor functions a PnP read missed: what the uninstallation can't decide on.
+    .DESCRIPTION
+        A pure decision over Get-ModemPnpRecord -IncludeAbsent's records: an FM350 function the app
+        names (its vendor functions; never the network function, nor ADB) whose service couldn't be
+        read - or, plugged in, whose registry parameters couldn't -, unless its problem code says it
+        has no driver. A read now and then misses one (ARCHITECTURE -> USB functions and WinUSB):
+        what it is on is then unknown.
+
+        Returns InstanceId, Interface, Name, Role and Present of each.
+    .EXAMPLE
+        Select-UnreadModemFunction -Device @(Get-ModemPnpRecord -IncludeAbsent)
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]] $Device
+    )
+
+    foreach ($record in $Device) {
+        if (-not $record -or [string]$record.InstanceId -notmatch '^USB\\VID_0E8D&PID_(7126|7127)&MI_([0-9A-F]{2})\\') {
+            continue
+        }
+        $productId = $Matches[1]
+        $interface = [Convert]::ToInt32($Matches[2], 16)
+        if (-not $script:FunctionNames[$productId].ContainsKey($interface)) {
+            continue
+        }
+        $noDriver = [int]$record.ProblemCode -in $script:NoDriverProblemCodes
+        $serviceRead = $null -ne $record.Service
+        $parametersRead = -not $record.PSObject.Properties['ParametersRead'] -or [bool]$record.ParametersRead
+        $read = $noDriver -or ($serviceRead -and (-not $record.Present -or $parametersRead))
+        if (-not $read) {
+            [pscustomobject]@{
+                InstanceId = [string]$record.InstanceId
+                Interface  = $interface
+                Name       = $script:FunctionNames[$productId][$interface]
+                Role       = if ($interface -eq $script:AtPortInterfaces[$productId]) { 'AtPort' } else { 'Other' }
+                Present    = [bool]$record.Present
+            }
+        }
+    }
+}
+
 function Restart-ModemUsbDevice {
     <#
     .SYNOPSIS

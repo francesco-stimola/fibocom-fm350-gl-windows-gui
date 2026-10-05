@@ -51,7 +51,7 @@
     'Uninstall.UserData'    = 'Usunięto ustawienia, dane poufne i dzienniki: {0}.'
     'Uninstall.UsbRestored' = 'Funkcje modemu przywrócone do sterownika, który Windows uznaje za najlepszy - sterownika szeregowego MediaTek, tam gdzie jest zainstalowany: {0}.'
     'Uninstall.UsbRestart'  = 'Funkcje modemu, które wrócą do tego sterownika po następnym ponownym uruchomieniu systemu Windows: {0}.'
-    'Uninstall.UsbLeft'     = 'Funkcje modemu pozostawione na WinUSB - używa ich inny program albo Windows odmówił; Menedżer urządzeń może przypisać im inny sterownik: {0}.'
+    'Uninstall.UsbLeft'     = 'Funkcje modemu pozostawione bez zmian - używa ich inny program, Windows odmówił albo nie udało się ich odczytać; Menedżer urządzeń może przypisać im inny sterownik: {0}.'
     'Uninstall.UsbRemoved'  = 'Funkcje niepodłączonego modemu, usunięte z systemu Windows - wybierze on ich sterownik od nowa po podłączeniu modemu: {0}.'
     'Uninstall.UsbAbsent'   = 'Funkcje niepodłączonego modemu pozostawione na WinUSB; po jego podłączeniu Menedżer urządzeń może przypisać im inny sterownik: {0}.'
     'Uninstall.UsbFailed'   = 'Nie można przywrócić funkcji modemu do ich sterownika ({0}): pozostają na WinUSB.'

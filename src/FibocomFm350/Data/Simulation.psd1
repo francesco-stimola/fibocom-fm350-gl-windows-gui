@@ -244,7 +244,7 @@
             Presence = 'Absent'
         }
 
-        # The modem on USB, its AT port without a driver.
+        # The modem on USB, its functions on MediaTek's driver: the app puts them on WinUSB.
         Unbound          = @{
             Presence = 'Unbound'
         }

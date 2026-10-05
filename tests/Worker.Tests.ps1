@@ -1984,6 +1984,72 @@ Describe 'The worker and the AT port' {
         $script:link['Snapshot'].Reason | Should -Be 'BindRestartNeeded'
     }
 
+    It 'carries a failed installation to the worker that replaces it, by a hash of its instance' {
+        $script:records = @(Get-TestRecord -Unbound)
+        $script:install = { [pscustomobject]@{ Done = $false; NeedReboot = $false; Step = 'Install'; Error = 5 } }
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $snapshot = $script:link['Snapshot']
+        $snapshot.Reason | Should -Be 'BindFailed'
+        @($snapshot.Usb.Failed).Count | Should -Be 1
+        $snapshot | ConvertTo-Json -Depth 12 | Should -Not -Match ([regex]::Escape('00000000&1&0006')) -Because 'a snapshot carries no instance ID'
+        $script:now += 5000
+        $script:worker = New-ModemWorker -Link $script:link -DataFolder $script:folder -Clock { $script:now } -Previous $snapshot
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs.Count | Should -Be 1 -Because 'an instance is tried once, not once per worker'
+        $script:link['Snapshot'].Reason | Should -Be 'BindFailed'
+        @($script:link['Snapshot'].Usb.Failed).Count | Should -Be 1
+    }
+
+    It 'still says, in the worker that replaces it, that Windows finishes an installation at its restart' {
+        $script:records = @(Get-TestRecord -Unbound)
+        $script:install = { [pscustomobject]@{ Done = $true; NeedReboot = $true; Step = 'Install'; Error = 0 } }
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:records[0].Service = 'WINUSB'
+        $script:records[0].ProblemCode = 14
+        $script:now += 5000
+        $script:worker = New-ModemWorker -Link $script:link -DataFolder $script:folder -Clock { $script:now } -Previous $script:link['Snapshot']
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs.Count | Should -Be 1
+        $script:link['Snapshot'].Reason | Should -Be 'BindRestartNeeded'
+    }
+
+    It 'tries again, when the user checks now, what the worker it replaced saw fail' {
+        $script:records = @(Get-TestRecord -Unbound)
+        $script:install = { [pscustomobject]@{ Done = $false; NeedReboot = $false; Step = 'Install'; Error = 5 } }
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:worker = New-ModemWorker -Link $script:link -DataFolder $script:folder -Clock { $script:now } -Previous $script:link['Snapshot']
+        $script:install = { [pscustomobject]@{ Done = $true; NeedReboot = $false; Step = 'Install'; Error = 0 } }
+        [void](Send-ModemCommand -Link $script:link -Kind ConnectNow)
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs.Count | Should -Be 2
+        $script:link['Snapshot'].State | Should -Be 'Online'
+        @($script:link['Snapshot'].Usb.Failed).Count | Should -Be 0
+    }
+
+    It 'looks at the ports of a function once per instance when looking fails, and says it once' {
+        $script:records = @(Get-TestRecord -Unbound)
+        Mock -ModuleName FibocomFm350 Test-UsbFunctionFree { throw [System.IO.IOException]::new('no') }
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:now += 5000
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        Should -Invoke -ModuleName FibocomFm350 Test-UsbFunctionFree -Times 1 -Exactly
+        $script:installs | Should -BeNullOrEmpty
+        $script:link['Snapshot'].Reason | Should -Be 'BindFailed'
+        @(Get-TestLog | Where-Object { $_ -match "can't be looked at" }).Count | Should -Be 1
+    }
+
+    It 'closes the AT port it opened when its channel can''t be made' {
+        Mock -ModuleName FibocomFm350 New-AtChannel { throw [System.InvalidOperationException]::new('no channel') }
+        try {
+            Invoke-ModemWorkerCycle -Worker $script:worker
+        }
+        catch {
+            $_.Exception.Message | Should -Be 'no channel'
+        }
+        $script:modems[1].Closed | Should -BeTrue
+        $script:worker.Channel | Should -BeNullOrEmpty
+    }
+
     It 'changes no driver without administrator rights, and says so' {
         Mock -ModuleName FibocomFm350 Test-AppElevation { $false }
         $script:worker = New-ModemWorker -Link $script:link -DataFolder $script:folder -Clock { $script:now }

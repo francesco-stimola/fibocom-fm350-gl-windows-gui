@@ -562,6 +562,15 @@ namespace FibocomFm350
             return null;
         }
 
+        // Whether DiInstallDevice's failure, with no driver named, means that no driver in the
+        // store fits the device - "no compatible drivers", "no driver selected" (AT-COMMANDS section
+        // 1.2) -: only then the null driver. Any other failure - a policy, a driver blocked, access
+        // denied - is told, the device left on the driver it has.
+        public static bool TakesNullDriver(int error)
+        {
+            return error == unchecked((int)0xE0000228) || error == unchecked((int)0xE0000203);
+        }
+
         // Gives the device back to the driver Windows ranks best in its driver store - or none,
         // when none matches: a null driver, as if Windows had found no driver for it.
         private static UsbBindingResult InstallBest(string instanceId)
@@ -584,7 +593,7 @@ namespace FibocomFm350
                     return new UsbBindingResult { Done = true, NeedReboot = reboot, Step = "Best" };
                 }
                 int best = Marshal.GetLastWin32Error();
-                if (best == 5)
+                if (!TakesNullDriver(best))
                 {
                     return Failed("Best", best);
                 }
@@ -1066,12 +1075,13 @@ function Restore-ModemUsbFunction {
         have exited, its port closed. A modem not plugged in can't be given its driver back: its
         functions on WinUSB are removed from Windows instead (Select-AbsentWinUsbFunction,
         Remove-AbsentUsbFunction), which chooses their driver afresh when it comes back. Throws when
-        PnP can't be read.
+        PnP can't be read. A read that missed a function is made again once; one still missed is
+        left as it is, and said ('Unread').
 
         Returns Modems (how many are present), Functions - each with Interface, Name, Role and
-        Result: 'Done', 'RestartNeeded', 'InUse', 'Failed' -, and Absent - the functions of the
-        modems not plugged in, each with Interface, Name and Result: 'Removed', 'RestartNeeded',
-        'Failed' -; with Step and Error.
+        Result: 'Done', 'RestartNeeded', 'InUse', 'Failed', 'Unread' -, and Absent - the functions
+        of the modems not plugged in, each with Interface, Name and Result: 'Removed',
+        'RestartNeeded', 'Failed', 'Unread' -; with Step and Error.
     .EXAMPLE
         Restore-ModemUsbFunction -Confirm:$false
     #>
@@ -1080,6 +1090,11 @@ function Restore-ModemUsbFunction {
     param()
 
     $records = @(Get-ModemPnpRecord -IncludeAbsent -Strict)
+    # A read that missed a function: the uninstallation reads once, so it looks again once.
+    if (@(Select-UnreadModemFunction -Device $records).Count -gt 0) {
+        $records = @(Get-ModemPnpRecord -IncludeAbsent -Strict)
+    }
+    $unread = @(Select-UnreadModemFunction -Device $records)
     $modems = @(Resolve-ModemUsbDevice -Device $records)
     $outcomes = foreach ($function in @(Resolve-ModemRestore -Modem $modems)) {
         $entry = [ordered]@{ Interface = $function.Interface; Name = $function.Name; Role = $function.Role; Result = $null; Step = $null; Error = $null }
@@ -1107,6 +1122,9 @@ function Restore-ModemUsbFunction {
         }
         [pscustomobject]$entry
     }
+    $outcomes = @($outcomes) + @(foreach ($function in @($unread | Where-Object Present)) {
+            [pscustomobject]@{ Interface = $function.Interface; Name = $function.Name; Role = $function.Role; Result = 'Unread'; Step = $null; Error = $null }
+        })
     $removals = foreach ($function in @(Select-AbsentWinUsbFunction -Device $records)) {
         $entry = [ordered]@{ Interface = $function.Interface; Name = $function.Name; Result = $null; Step = $null; Error = $null }
         if (-not $PSCmdlet.ShouldProcess("USB function $($function.InstanceId)", 'Remove from Windows')) {
@@ -1124,5 +1142,8 @@ function Restore-ModemUsbFunction {
         }
         [pscustomobject]$entry
     }
-    [pscustomobject]@{ Modems = $modems.Count; Functions = [object[]]@($outcomes); Absent = [object[]]@($removals) }
+    $removals = @($removals) + @(foreach ($function in @($unread | Where-Object { -not $_.Present })) {
+            [pscustomobject]@{ Interface = $function.Interface; Name = $function.Name; Result = 'Unread'; Step = $null; Error = $null }
+        })
+    [pscustomobject]@{ Modems = $modems.Count; Functions = [object[]]@($outcomes | Where-Object { $_ }); Absent = [object[]]@($removals | Where-Object { $_ }) }
 }

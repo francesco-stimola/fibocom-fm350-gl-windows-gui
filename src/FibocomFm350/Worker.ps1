@@ -454,10 +454,19 @@ function Get-WorkerMessageView {
     }
 }
 
+function Get-UsbInstanceHash {
+    # An instance ID as a snapshot may carry it: the SHA-256 of the ID upper-cased - Windows
+    # compares them without case -, in hexadecimal. Pure.
+    param([string] $InstanceId)
+
+    [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($InstanceId.ToUpperInvariant())))
+}
+
 function Get-WorkerUsbView {
     # The modem's vendor functions with the driver of each - 'WinUsb', 'Other', 'None' -, and the
     # last outcome of putting them on WinUSB: what the window's USB tab shows. Interfaces and
-    # names, never an instance ID.
+    # names, never an instance ID. Failed and AtFailure carry the installations that failed - as
+    # hashes of their instances - and the AT port's failure to a worker that replaces this one.
     param([hashtable] $Worker)
 
     $presence = $Worker.Presence
@@ -474,6 +483,8 @@ function Get-WorkerUsbView {
                 }
             })
         Binding   = $Worker.Binding
+        Failed    = [string[]]@(@($Worker.BindFailed | ForEach-Object { Get-UsbInstanceHash -InstanceId $_ }) + @($Worker.BindFailedCarried) | Sort-Object -Unique)
+        AtFailure = $Worker.BindAtFailure
     }
 }
 
@@ -693,6 +704,8 @@ function New-ModemWorker {
             SmsSim           = Get-AppDataPath -Name 'sms-sim.dat' -Local
         }
     }
+    # The USB section of the snapshot of the worker this one replaces, if any.
+    $usbBefore = if ($Previous -and $Previous.PSObject.Properties['Usb']) { $Previous.Usb } else { $null }
     @{
         Link              = $Link
         Simulation        = $Simulation
@@ -726,11 +739,15 @@ function New-ModemWorker {
         # installation failed - tried once each -, those whose held port was logged, why the AT
         # port isn't on WinUSB (BindState, for the connection's state; BindAtFailure, its failure
         # kept), the last outcome for the window, a look asked for while the port is open (the
-        # user's check now), the AT port just put there, and no rights, logged once.
+        # user's check now), the AT port just put there, and no rights, logged once. A worker that
+        # replaces another carries its failed installations, as its snapshot holds them - hashes of
+        # their instances, matched as the functions are found -, and the AT port's failure: tried
+        # once per instance, not once per worker (decided 2026-10-04).
         BindFailed        = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        BindFailedCarried = [System.Collections.Generic.HashSet[string]]::new([string[]]@(if ($usbBefore -and $usbBefore.PSObject.Properties['Failed']) { @($usbBefore.Failed) | Where-Object { $_ } }), [System.StringComparer]::OrdinalIgnoreCase)
         BindHeldLogged    = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
         BindState         = $null
-        BindAtFailure     = $null
+        BindAtFailure     = if ($usbBefore -and $usbBefore.PSObject.Properties['AtFailure']) { $usbBefore.AtFailure } else { $null }
         Binding           = $null
         BindDue           = $false
         BindJustDone      = $false
@@ -1497,6 +1514,14 @@ function Update-WorkerBinding {
         Justification = 'A step of the worker''s cycle: observe-only mode withholds it, and Install-WinUsbDriver, which changes the driver, supports ShouldProcess.')]
     param([hashtable] $Worker, [object] $Presence)
 
+    # The installations a worker this one replaced saw fail, matched now that their functions are found.
+    if ($Worker.BindFailedCarried.Count -gt 0) {
+        foreach ($function in @($Presence.Functions | Where-Object { $_ })) {
+            if ($Worker.BindFailedCarried.Remove((Get-UsbInstanceHash -InstanceId $function.InstanceId))) {
+                [void]$Worker.BindFailed.Add($function.InstanceId)
+            }
+        }
+    }
     # The port the worker holds is never given another driver: it is on WinUSB, whatever a read said.
     $open = if ($Worker.Channel) { $Worker.AtInstanceId } else { $null }
     $plan = Resolve-ModemBinding -Function @($Presence.Functions | Where-Object { $_ -and -not ($open -and [string]::Equals([string]$_.InstanceId, $open, 'OrdinalIgnoreCase')) }) -Failed @($Worker.BindFailed)
@@ -1536,9 +1561,15 @@ function Update-WorkerBinding {
             }
         }
         catch {
-            # Told by its type alone: the text may name the port or the device.
+            # Told by its type alone: the text may name the port or the device. Tried once per
+            # instance, as an installation that failed: not looked at every few seconds.
             $outcomes.Add([pscustomobject]@{ Interface = $function.Interface; Name = $function.Name; Role = $function.Role; Result = 'Failed'; Step = 'Check'; Error = $null })
             Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "USB function ${label}: its ports can't be looked at ($($_.Exception.GetType().Name)) - left on its driver"
+            [void]$Worker.BindFailed.Add($function.InstanceId)
+            if ($function.Role -eq 'AtPort') {
+                $Worker.BindAtFailure = 'Failed'
+                $Worker.BindState = 'Failed'
+            }
             continue
         }
         if ($held) {
@@ -1662,7 +1693,14 @@ function Find-WorkerModem {
     if ($portError) {
         return
     }
-    $Worker.Channel = New-AtChannel -Transport ([WorkerTransport]::new($inner, $Worker.Link, $script:WorkerBeatMs))
+    try {
+        $Worker.Channel = New-AtChannel -Transport ([WorkerTransport]::new($inner, $Worker.Link, $script:WorkerBeatMs))
+    }
+    catch {
+        # Never a port left open with no channel to close it.
+        $inner.Close()
+        throw
+    }
     $Worker.PortName = $inner.PortName
     $Worker.AtInstanceId = $presence.AtInstanceId
     $Worker.PassForced = $true
@@ -2671,6 +2709,7 @@ function Invoke-WorkerCommand {
                 'ConnectNow' {
                     # A function whose installation failed is tried again (decided 2026-10-04).
                     $Worker.BindFailed.Clear()
+                    $Worker.BindFailedCarried.Clear()
                     $Worker.BindAtFailure = $null
                     $Worker.BindDue = $true
                     $Worker.LastScan = $null

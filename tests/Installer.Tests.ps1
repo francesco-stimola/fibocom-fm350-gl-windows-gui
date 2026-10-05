@@ -738,11 +738,11 @@ Describe 'Restore-AppUsbFunction' {
 
     It 'says how many functions went back, waiting for a restart, or stayed: <Name>' -ForEach @(
         @{ Name = 'all back'; Results = @('Done', 'Done', 'Done'); Lines = @('*back on the driver Windows ranks best*: 3.') }
-        @{ Name = 'some later, some left'; Results = @('Done', 'RestartNeeded', 'InUse', 'Failed'); Lines = @('*: 1.', '*next restart of Windows: 1.', '*left on WinUSB*: 2.') }
+        @{ Name = 'some later, some left'; Results = @('Done', 'RestartNeeded', 'InUse', 'Failed', 'Unread'); Lines = @('*: 1.', '*next restart of Windows: 1.', '*left as they are*: 3.') }
         @{ Name = 'nothing on WinUSB'; Results = @(); Lines = @() }
         @{ Name = 'no modem plugged in, nothing on WinUSB'; Modems = 0; Results = @(); Lines = @() }
         @{ Name = 'a modem not plugged in'; Modems = 0; Absent = @('Removed', 'Removed', 'Removed'); Results = @(); Lines = @('*modem not plugged in, removed from Windows*: 3.') }
-        @{ Name = 'one not plugged in, a removal refused'; Modems = 0; Absent = @('Removed', 'Failed'); Results = @(); Lines = @('*removed from Windows*: 1.', '*modem not plugged in, left on WinUSB*: 1.') }
+        @{ Name = 'one not plugged in, a removal refused'; Modems = 0; Absent = @('Removed', 'Failed', 'Unread'); Results = @(); Lines = @('*removed from Windows*: 1.', '*modem not plugged in, left on WinUSB*: 2.') }
         @{ Name = 'one plugged in, one not'; Absent = @('Removed', 'RestartNeeded'); Results = @('Done'); Lines = @('*back on the driver Windows ranks best*: 1.', '*removed from Windows*: 2.') }
     ) {
         $functions = @(foreach ($result in $Results) { [pscustomobject]@{ Result = $result } })
@@ -759,7 +759,7 @@ Describe 'Restore-AppUsbFunction' {
     It 'gives the installed core module to the restore, and lets it go after' {
         $restore = { param($Core) [pscustomobject]@{ Modems = 1; Functions = @([pscustomobject]@{ Result = ($Core.ModuleBase) }) } }
         $said = InModuleScope FibocomFm350.Installer -Parameters @{ Layout = $script:restoreLayout; Restore = $restore } { param($Layout, $Restore) Restore-AppUsbFunction -Layout $Layout -Restore $Restore }
-        $said | Should -BeLike '*left on WinUSB*: 1.' -Because 'a result the restore didn''t give is no success'
+        $said | Should -BeLike '*left as they are*: 1.' -Because 'a result the restore didn''t give is no success'
         @(Get-Module FibocomFm350 | Where-Object ModuleBase -Like "$($script:restoreLayout.InstallFolder)*") | Should -BeNullOrEmpty
     }
 
@@ -770,6 +770,16 @@ Describe 'Restore-AppUsbFunction' {
         $restore = [scriptblock]::Create("throw '$Message'")
         $said = InModuleScope FibocomFm350.Installer -Parameters @{ Layout = $script:restoreLayout; Restore = $restore } { param($Layout, $Restore) Restore-AppUsbFunction -Layout $Layout -Restore $Restore }
         $said | Should -BeLike "*($Message)*stay on WinUSB."
+    }
+
+    It 'says nothing of an installed 1.x app, which put nothing on WinUSB' {
+        $old = [pscustomobject]@{ InstallFolder = (Join-Path $TestDrive 'app-1.x') }
+        $module = Join-Path $old.InstallFolder 'FibocomFm350'
+        [void](New-Item -ItemType Directory -Path $module -Force)
+        Set-Content -LiteralPath (Join-Path $module 'FibocomFm350.psm1') -Value 'function Get-Fm350Nothing { }' -Encoding utf8
+        Set-Content -LiteralPath (Join-Path $module 'FibocomFm350.psd1') -Value "@{ ModuleVersion = '1.2.0'; RootModule = 'FibocomFm350.psm1'; FunctionsToExport = @('Get-Fm350Nothing') }" -Encoding utf8
+        $said = InModuleScope FibocomFm350.Installer -Parameters @{ Layout = $old } { param($Layout) Restore-AppUsbFunction -Layout $Layout -Restore { throw 'must not run' } }
+        $said | Should -BeNullOrEmpty
     }
 
     It 'does nothing without the app''s code: an uninstallation run again' {

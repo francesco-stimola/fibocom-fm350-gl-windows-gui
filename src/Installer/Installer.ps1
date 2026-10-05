@@ -835,6 +835,10 @@ function Restore-AppUsbFunction {
     try {
         $core = Import-Module -Name $manifest -PassThru -ErrorAction Stop
         try {
+            if (-not $core.ExportedCommands.ContainsKey('Restore-ModemUsbFunction')) {
+                # The app installed is a 1.x one, which put nothing on WinUSB.
+                return
+            }
             $outcome = & $Restore $core
         }
         finally {

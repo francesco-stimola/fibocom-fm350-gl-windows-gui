@@ -152,6 +152,7 @@
         'Select-AbsentWinUsbFunction'
         'Send-AtMessagePdu'
         'Send-ModemCommand'
+        'Select-UnreadModemFunction'
         'Select-UsbBulkPipe'
         'Set-InterfaceDoh'
         'Set-ModemAdapterConfiguration'

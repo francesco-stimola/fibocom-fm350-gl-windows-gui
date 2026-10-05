@@ -71,6 +71,18 @@ Describe 'Install-WinUsbDriver and Restore-UsbFunctionDriver' {
         { [FibocomFm350.UsbDriverBinding]::RemoveAbsent('USB\VID_0E8D&PID_7127&MI_00\8&00000000&0&0000') } | Should -Throw
     }
 
+    It 'takes the null driver after <Name> only: <Takes>' -ForEach @(
+        @{ Name = 'no compatible driver (0xE0000228)'; Code = 0xE0000228; Takes = $true }
+        @{ Name = 'no driver selected (0xE0000203)'; Code = 0xE0000203; Takes = $true }
+        @{ Name = 'access denied (5)'; Code = 5; Takes = $false }
+        @{ Name = 'a driver blocked (0xE000024B)'; Code = 0xE000024B; Takes = $false }
+        @{ Name = 'installation not allowed by a policy (0xE0000248)'; Code = 0xE0000248; Takes = $false }
+        @{ Name = 'a device installer not ready (0x15)'; Code = 0x15; Takes = $false }
+        @{ Name = 'no error'; Code = 0; Takes = $false }
+    ) {
+        [FibocomFm350.UsbDriverBinding]::TakesNullDriver([int]$Code) | Should -Be $Takes
+    }
+
     It 'removes nothing that Windows doesn''t know' {
         # A function no device has: not plugged in, so looked for, and not found - nothing removed.
         $result = [FibocomFm350.UsbDriverBinding]::RemoveAbsent('USB\VID_0E8D&PID_7127&MI_03\FM350-TEST-NO-SUCH-DEVICE')
@@ -136,6 +148,52 @@ Describe 'Restore-ModemUsbFunction' {
         $script:restored[0].InterfaceGuid | Should -Be '{4FDE9624-2286-4DC0-9D07-601A3922581A}'
         @($script:restored | Where-Object InterfaceGuid).Count | Should -Be 1
         $script:restored.InstanceId | Should -Not -Contain 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003'
+    }
+
+    Context 'with a function a PnP read missed' {
+        BeforeEach {
+            $script:reads = 0
+            $script:missedAgain = $false
+            # The GNSS function's service missed by the first read - by every read with $missedAgain.
+            Mock -ModuleName FibocomFm350 Get-ModemPnpRecord {
+                $script:reads++
+                foreach ($record in $script:fixture) {
+                    $copy = $record.PSObject.Copy()
+                    if ($copy.InstanceId -like '*&MI_03\*' -and ($script:reads -eq 1 -or $script:missedAgain)) {
+                        $copy.Service = $null
+                    }
+                    $copy
+                }
+            }
+        }
+
+        It 'reads PnP again once, and gives the function back once read' {
+            $outcome = Restore-ModemUsbFunction -Confirm:$false
+            $script:reads | Should -Be 2
+            $outcome.Functions.Result | Should -Not -Contain 'Unread'
+            $outcome.Functions.Interface | Should -Contain 3
+        }
+
+        It 'says a function still missed, and leaves it as it is' {
+            $script:missedAgain = $true
+            $outcome = Restore-ModemUsbFunction -Confirm:$false
+            $script:reads | Should -Be 2
+            $missed = @($outcome.Functions | Where-Object Interface -EQ 3)
+            $missed.Result | Should -Be 'Unread'
+            $script:restored.InstanceId | Should -Not -Contain 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003'
+            @($outcome.Functions | Where-Object Result -EQ 'Done').Count | Should -BeGreaterThan 0
+        }
+
+        It 'says a function of a modem not plugged in that couldn''t be read' {
+            $script:missedAgain = $true
+            $script:fixture = foreach ($record in $script:fixture) {
+                $copy = $record.PSObject.Copy()
+                if ($copy.InstanceId -like '*&MI_03\*') { $copy.Present = $false }
+                $copy
+            }
+            $outcome = Restore-ModemUsbFunction -Confirm:$false
+            @($outcome.Absent | Where-Object Result -EQ 'Unread').Interface | Should -Be 3
+        }
     }
 
     Context 'with a modem not plugged in, its functions on WinUSB' {

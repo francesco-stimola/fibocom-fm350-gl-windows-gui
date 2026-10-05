@@ -553,6 +553,34 @@ Describe 'Select-AbsentWinUsbFunction' {
     }
 }
 
+Describe 'Select-UnreadModemFunction' {
+    It 'picks <Count> for <Case>' -ForEach @(
+        @{ Case = 'a function whose service couldn''t be read'; Count = 1; Id = 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003'; Present = $true; Service = $null; Parameters = $true; Problem = 0 }
+        @{ Case = 'a function whose registry parameters couldn''t be read'; Count = 1; Id = 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&0&0006'; Present = $true; Service = 'WINUSB'; Parameters = $false; Problem = 0 }
+        @{ Case = 'one not plugged in whose service couldn''t be read'; Count = 1; Id = 'USB\VID_0E8D&PID_7127&MI_02\8&00000000&0&0002'; Present = $false; Service = $null; Parameters = $true; Problem = 0 }
+        @{ Case = 'the AT port of the 7126 composition, unread'; Count = 1; Id = 'USB\VID_0E8D&PID_7126&MI_04\8&00000000&0&0004'; Present = $true; Service = $null; Parameters = $true; Problem = 0 }
+        @{ Case = 'one read whole'; Count = 0; Id = 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003'; Present = $true; Service = 'WINUSB'; Parameters = $true; Problem = 0 }
+        @{ Case = 'one not plugged in, its parameters not read'; Count = 0; Id = 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003'; Present = $false; Service = 'WINUSB'; Parameters = $false; Problem = 0 }
+        @{ Case = 'one with no driver by its problem code'; Count = 0; Id = 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003'; Present = $true; Service = $null; Parameters = $false; Problem = 28 }
+        @{ Case = 'the network function'; Count = 0; Id = 'USB\VID_0E8D&PID_7127&MI_00\8&00000000&0&0000'; Present = $true; Service = $null; Parameters = $true; Problem = 0 }
+        @{ Case = 'ADB'; Count = 0; Id = 'USB\VID_0E8D&PID_7127&MI_05\8&00000000&0&0005'; Present = $true; Service = $null; Parameters = $true; Problem = 0 }
+        @{ Case = 'another MediaTek device'; Count = 0; Id = 'USB\VID_0E8D&PID_2000&MI_03\8&00000000&0&0003'; Present = $true; Service = $null; Parameters = $true; Problem = 0 }
+    ) {
+        $record = [pscustomobject]@{ InstanceId = $Id; Present = $Present; ProblemCode = $Problem; Service = $Service; ParametersRead = $Parameters }
+        @(Select-UnreadModemFunction -Device @($record)).Count | Should -Be $Count
+    }
+
+    It 'gives each its interface, name, role and presence' {
+        $record = [pscustomobject]@{ InstanceId = 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&0&0006'; Present = $true; ProblemCode = 0; Service = $null; ParametersRead = $true }
+        $picked = Select-UnreadModemFunction -Device @($record)
+        $picked.Interface | Should -Be 6
+        $picked.Name | Should -Be 'MdAt'
+        $picked.Role | Should -Be 'AtPort'
+        $picked.Present | Should -BeTrue
+        Select-UnreadModemFunction -Device @() | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'Restart-ModemUsbDevice' {
     It 'restarts nothing but an FM350 composite device: <InstanceId>' -ForEach @(
         @{ InstanceId = 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&1&0006' }

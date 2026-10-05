@@ -50,7 +50,7 @@
     'Uninstall.UserData'    = 'Instellingen, geheimen en logboeken verwijderd: {0}.'
     'Uninstall.UsbRestored' = 'Functies van de modem terug op het stuurprogramma dat Windows het best vindt - het seriële stuurprogramma van MediaTek, waar het is geïnstalleerd: {0}.'
     'Uninstall.UsbRestart'  = 'Functies van de modem die bij de volgende herstart van Windows terug op dat stuurprogramma gaan: {0}.'
-    'Uninstall.UsbLeft'     = 'Functies van de modem die op WinUSB blijven - een ander programma gebruikt ze, of Windows weigerde; Apparaatbeheer kan ze een ander stuurprogramma geven: {0}.'
+    'Uninstall.UsbLeft'     = 'Functies van de modem die blijven zoals ze zijn - een ander programma gebruikt ze, Windows weigerde, of ze konden niet worden gelezen; Apparaatbeheer kan ze een ander stuurprogramma geven: {0}.'
     'Uninstall.UsbRemoved'  = 'Functies van een niet-aangesloten modem, uit Windows verwijderd - het kiest hun stuurprogramma opnieuw zodra de modem wordt aangesloten: {0}.'
     'Uninstall.UsbAbsent'   = 'Functies van een niet-aangesloten modem die op WinUSB blijven; zodra die is aangesloten, kan Apparaatbeheer ze een ander stuurprogramma geven: {0}.'
     'Uninstall.UsbFailed'   = 'De functies van de modem kunnen niet terug naar hun stuurprogramma ({0}): ze blijven op WinUSB.'
