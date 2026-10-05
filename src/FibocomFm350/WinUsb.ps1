@@ -149,6 +149,12 @@ namespace FibocomFm350
         [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
         public static extern int CM_Get_Device_Interface_ListW(ref Guid iface, string deviceId, char[] buffer, uint length, uint flags);
 
+        // Only a device in the device tree - plugged in - is found this way.
+        public const uint CmLocateDevnodeNormal = 0;
+
+        [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+        public static extern int CM_Locate_DevNodeW(out uint devInst, string deviceId, uint flags);
+
         public static readonly IntPtr InvalidHandle = new IntPtr(-1);
         public const uint DicsFlagGlobal = 1;
         public const uint DiregDev = 1;
@@ -265,6 +271,9 @@ namespace FibocomFm350
 
         [DllImport("newdev.dll", EntryPoint = "DiInstallDevice", SetLastError = true)]
         public static extern bool DiInstallBestDevice(IntPtr parent, IntPtr set, ref DevInfoData device, IntPtr driver, uint flags, out bool needReboot);
+
+        [DllImport("newdev.dll", SetLastError = true)]
+        public static extern bool DiUninstallDevice(IntPtr parent, IntPtr set, ref DevInfoData device, uint flags, out bool needReboot);
     }
 
     // One USB interface opened through WinUSB: its descriptor's class, its pipes, and transfers
@@ -748,6 +757,48 @@ namespace FibocomFm350
             return InstallBest(instanceId);
         }
 
+        // Removes a function of a modem that isn't plugged in from Windows - its device node, as
+        // Device Manager's "Uninstall device" does for a hidden one -, so that Windows chooses its
+        // driver afresh when the modem comes back. Never a device plugged in: that one is given
+        // back its driver (Restore).
+        public static UsbBindingResult RemoveAbsent(string instanceId)
+        {
+            RefuseNetworkFunction(instanceId);
+            uint node;
+            int located = Native.CM_Locate_DevNodeW(out node, instanceId, Native.CmLocateDevnodeNormal);
+            if (located == Native.CrSuccess)
+            {
+                throw new ArgumentException("The function is plugged in: it is given back its driver, never removed.", "instanceId");
+            }
+            if (located != Native.CrNoSuchDevinst)
+            {
+                return Failed("Locate", located);
+            }
+            IntPtr set = Native.SetupDiCreateDeviceInfoList(IntPtr.Zero, IntPtr.Zero);
+            if (set == Native.InvalidHandle)
+            {
+                return Failed("List", Marshal.GetLastWin32Error());
+            }
+            try
+            {
+                var device = new Native.DevInfoData { Size = (uint)Marshal.SizeOf(typeof(Native.DevInfoData)) };
+                if (!Native.SetupDiOpenDeviceInfoW(set, instanceId, IntPtr.Zero, 0, ref device))
+                {
+                    return Failed("Open", Marshal.GetLastWin32Error());
+                }
+                bool reboot;
+                if (!Native.DiUninstallDevice(IntPtr.Zero, set, ref device, 0, out reboot))
+                {
+                    return Failed("Remove", Marshal.GetLastWin32Error());
+                }
+                return new UsbBindingResult { Done = true, NeedReboot = reboot, Step = "Remove" };
+            }
+            finally
+            {
+                Native.SetupDiDestroyDeviceInfoList(set);
+            }
+        }
+
         // The same, on a thread of the pool: the caller waits for it a second at a time, its
         // heartbeat beating.
         public static Task<UsbBindingResult> StartInstallWinUsb(string instanceId, string infPath, string modelId, string classGuid, string interfaceGuid)
@@ -758,6 +809,11 @@ namespace FibocomFm350
         public static Task<UsbBindingResult> StartRestore(string instanceId, string interfaceGuid)
         {
             return Task.Run(() => Restore(instanceId, interfaceGuid));
+        }
+
+        public static Task<UsbBindingResult> StartRemoveAbsent(string instanceId)
+        {
+            return Task.Run(() => RemoveAbsent(instanceId));
         }
     }
 }
@@ -959,6 +1015,43 @@ function Restore-UsbFunctionDriver {
     Wait-UsbBindingTask -Task $task -TimeoutMs $TimeoutMs -Beat $Beat
 }
 
+function Remove-AbsentUsbFunction {
+    <#
+    .SYNOPSIS
+        Removes from Windows one of the functions of a modem that isn't plugged in.
+    .DESCRIPTION
+        The uninstallation's way back for a modem not plugged in (decided 2026-10-05): Windows
+        remembers its functions on WinUSB, and DiInstallDevice reaches present devices only. Its
+        device node goes instead, as Device Manager's "Uninstall device" removes a hidden one
+        (DiUninstallDevice), so that Windows chooses its driver afresh when the modem comes back -
+        MediaTek's serial driver when it is in the driver store, none otherwise. Never the network
+        function, and never a function plugged in: the C# refuses both. Administrator rights. Runs on
+        a thread of the pool, -Beat about once a second while it waits.
+
+        Returns Done, NeedReboot, Step ('Remove'; where it failed otherwise) and Error.
+    .EXAMPLE
+        Remove-AbsentUsbFunction -InstanceId $function.InstanceId -Confirm:$false
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidatePattern('^USB\\VID_0E8D&PID_712[67]&MI_(0[2-9A-F]|[1-9A-F][0-9A-F])\\[^\\]+$')]
+        [string] $InstanceId,
+
+        [scriptblock] $Beat,
+
+        [ValidateRange(1000, 600000)]
+        [int] $TimeoutMs = $script:UsbBindingTimeoutMs
+    )
+
+    if (-not $PSCmdlet.ShouldProcess("USB function $InstanceId", 'Remove from Windows')) {
+        return
+    }
+    $task = [FibocomFm350.UsbDriverBinding]::StartRemoveAbsent($InstanceId)
+    Wait-UsbBindingTask -Task $task -TimeoutMs $TimeoutMs -Beat $Beat
+}
+
 function Restore-ModemUsbFunction {
     <#
     .SYNOPSIS
@@ -970,12 +1063,15 @@ function Restore-ModemUsbFunction {
         driver (Restore-UsbFunctionDriver) - MediaTek's serial driver when it is in the driver store,
         none otherwise -, the app's interface class taken out of the AT port's. A function another
         program holds is left as it is (Test-UsbFunctionFree). Administrator rights; the app must
-        have exited, its port closed. A modem not plugged in can't be reached: its functions stay on
-        WinUSB, and are counted. Throws when PnP can't be read.
+        have exited, its port closed. A modem not plugged in can't be given its driver back: its
+        functions on WinUSB are removed from Windows instead (Select-AbsentWinUsbFunction,
+        Remove-AbsentUsbFunction), which chooses their driver afresh when it comes back. Throws when
+        PnP can't be read.
 
-        Returns Modems (how many are present), Absent (the functions on WinUSB of a modem not plugged
-        in, Measure-AbsentWinUsbFunction) and Functions: each with Interface, Name, Role and
-        Result - 'Done', 'RestartNeeded', 'InUse', 'Failed' -, Step and Error.
+        Returns Modems (how many are present), Functions - each with Interface, Name, Role and
+        Result: 'Done', 'RestartNeeded', 'InUse', 'Failed' -, and Absent - the functions of the
+        modems not plugged in, each with Interface, Name and Result: 'Removed', 'RestartNeeded',
+        'Failed' -; with Step and Error.
     .EXAMPLE
         Restore-ModemUsbFunction -Confirm:$false
     #>
@@ -1011,5 +1107,22 @@ function Restore-ModemUsbFunction {
         }
         [pscustomobject]$entry
     }
-    [pscustomobject]@{ Modems = $modems.Count; Absent = (Measure-AbsentWinUsbFunction -Device $records); Functions = [object[]]@($outcomes) }
+    $removals = foreach ($function in @(Select-AbsentWinUsbFunction -Device $records)) {
+        $entry = [ordered]@{ Interface = $function.Interface; Name = $function.Name; Result = $null; Step = $null; Error = $null }
+        if (-not $PSCmdlet.ShouldProcess("USB function $($function.InstanceId)", 'Remove from Windows')) {
+            continue
+        }
+        try {
+            $result = Remove-AbsentUsbFunction -InstanceId $function.InstanceId -Confirm:$false
+            $entry['Result'] = if ($result.Done -and $result.NeedReboot) { 'RestartNeeded' } elseif ($result.Done) { 'Removed' } else { 'Failed' }
+            $entry['Step'] = $result.Step
+            $entry['Error'] = $result.Error
+        }
+        catch {
+            $entry['Result'] = 'Failed'
+            $entry['Step'] = $_.Exception.GetType().Name
+        }
+        [pscustomobject]$entry
+    }
+    [pscustomobject]@{ Modems = $modems.Count; Functions = [object[]]@($outcomes); Absent = [object[]]@($removals) }
 }

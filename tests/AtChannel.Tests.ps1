@@ -5,7 +5,8 @@ BeforeAll {
     Import-Module "$PSScriptRoot/../src/FibocomFm350/FibocomFm350.psd1" -Force
 
     # A transport with the shape of Transport.ps1 that keeps what is written to it and answers
-    # a write matching a reply's When with its Text, read in one piece.
+    # a write matching a reply's When with its Text, read in one piece - or, Text an array, one
+    # piece a read, as a USB packet comes.
     function Get-TestTransport {
         param([hashtable[]] $Reply = @())
         $transport = [pscustomobject]@{
@@ -20,7 +21,9 @@ BeforeAll {
             $this.Written.Add($text)
             foreach ($candidate in $this.Replies) {
                 if ($text -match $candidate.When) {
-                    $this.Pending.Enqueue($candidate.Text)
+                    foreach ($piece in @($candidate.Text)) {
+                        $this.Pending.Enqueue($piece)
+                    }
                     break
                 }
             }
@@ -447,6 +450,21 @@ Describe 'Send-AtMessagePdu' {
         $sent.Status | Should -Be 'OK'
         $sent.Reference | Should -Be 7
         Receive-AtUrc -Channel $channel | Should -Be @('+CMTI: "MT",4', '+CMTI: "MT",5')
+    }
+
+    It 'takes the prompt and the answer in the packets WinUSB reads them in, a line end split between two' {
+        # As the FM350 sent them over WinUSB (AT-COMMANDS section 1.2): the echo, CR alone, then LF
+        # and the prompt.
+        $transport = Get-TestTransport -Reply @(
+            @{ When = '^AT\+CMGS=18\r$'; Text = @("AT+CMGS=18`r", "`r", "`n> ") }
+            @{ When = "$([char]0x1A)$"; Text = @("$($script:part.Pdu)$([char]0x1A)", "`r", "`n+CMGS: 7`r", "`n", "`r`nOK`r", "`n") }
+        )
+        $channel = New-AtChannel -Transport $transport
+        $sent = Send-AtMessagePdu -Channel $channel -Length 18 -Pdu $script:part.Pdu -PromptTimeoutMs 2000 -TimeoutMs 2000
+
+        $sent.Status | Should -Be 'OK'
+        $sent.Reference | Should -Be 7
+        $transport.Written[1] | Should -Be "$($script:part.Pdu)$([char]0x1A)"
     }
 
     It 'ends the modem''s input with ESC: <Name>' -ForEach @(

@@ -56,16 +56,26 @@ Describe 'Install-WinUsbDriver and Restore-UsbFunctionDriver' {
     ) {
         { Install-WinUsbDriver -InstanceId $InstanceId -WhatIf -ErrorAction Stop } | Should -Throw -ExceptionType ([System.Management.Automation.ParameterBindingException])
         { Restore-UsbFunctionDriver -InstanceId $InstanceId -WhatIf -ErrorAction Stop } | Should -Throw -ExceptionType ([System.Management.Automation.ParameterBindingException])
+        { Remove-AbsentUsbFunction -InstanceId $InstanceId -WhatIf -ErrorAction Stop } | Should -Throw -ExceptionType ([System.Management.Automation.ParameterBindingException])
     }
 
     It 'change nothing with -WhatIf' {
         Install-WinUsbDriver -InstanceId 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&0&0006' -WhatIf | Should -BeNullOrEmpty
         Restore-UsbFunctionDriver -InstanceId 'USB\VID_0E8D&PID_7126&MI_04\8&00000000&0&0004' -WhatIf | Should -BeNullOrEmpty
+        Remove-AbsentUsbFunction -InstanceId 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003' -WhatIf | Should -BeNullOrEmpty
     }
 
     It 'refuse the network function in the code that calls Windows too' {
         { [FibocomFm350.UsbDriverBinding]::InstallWinUsb('USB\VID_0E8D&PID_7127&MI_00\8&00000000&0&0000', 'x', 'x', 'x', $null) } | Should -Throw
         { [FibocomFm350.UsbDriverBinding]::Restore('USB\VID_0E8D&PID_7127&MI_00\8&00000000&0&0000', $null) } | Should -Throw
+        { [FibocomFm350.UsbDriverBinding]::RemoveAbsent('USB\VID_0E8D&PID_7127&MI_00\8&00000000&0&0000') } | Should -Throw
+    }
+
+    It 'removes nothing that Windows doesn''t know' {
+        # A function no device has: not plugged in, so looked for, and not found - nothing removed.
+        $result = [FibocomFm350.UsbDriverBinding]::RemoveAbsent('USB\VID_0E8D&PID_7127&MI_03\FM350-TEST-NO-SUCH-DEVICE')
+        $result.Done | Should -BeFalse
+        $result.Step | Should -BeIn @('Locate', 'Open')
     }
 }
 
@@ -128,16 +138,48 @@ Describe 'Restore-ModemUsbFunction' {
         $script:restored.InstanceId | Should -Not -Contain 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003'
     }
 
-    It 'reads PnP with the modems not plugged in, strictly, and counts their functions left on WinUSB' {
-        $absent = $script:fixture | Where-Object InstanceId -Like '*&MI_03\*' | Select-Object -First 1 | ForEach-Object { $_.PSObject.Copy() }
-        $absent.InstanceId = 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&9&0003'
-        $absent.Present = $false
-        $script:fixture = @($script:fixture) + $absent
-        $outcome = Restore-ModemUsbFunction -Confirm:$false
-        $outcome.Absent | Should -Be 1
-        $outcome.Functions.Count | Should -Be 7
-        $script:restored.InstanceId | Should -Not -Contain $absent.InstanceId
-        Should -Invoke -ModuleName FibocomFm350 Get-ModemPnpRecord -Times 1 -Exactly -ParameterFilter { $IncludeAbsent -and $Strict }
+    Context 'with a modem not plugged in, its functions on WinUSB' {
+        BeforeEach {
+            # The same modem's functions under another instance, not present: as a reset can leave them.
+            $script:absent = foreach ($record in @($script:fixture | Where-Object { $_.InstanceId -match '&MI_0[2-9]\\' })) {
+                $copy = $record.PSObject.Copy()
+                $copy.InstanceId = $record.InstanceId -replace '\\8&00000000&0&', '\8&00000000&9&'
+                $copy.Present = $false
+                $copy
+            }
+            $script:fixture = @($script:fixture) + @($script:absent)
+            $script:removed = [System.Collections.Generic.List[string]]::new()
+            Mock -ModuleName FibocomFm350 Remove-AbsentUsbFunction {
+                $script:removed.Add($InstanceId)
+                if ($InstanceId -like '*&MI_07\*') { [pscustomobject]@{ Done = $false; NeedReboot = $false; Step = 'Remove'; Error = 5 } }
+                else { [pscustomobject]@{ Done = $true; NeedReboot = $false; Step = 'Remove'; Error = 0 } }
+            }
+        }
+
+        It 'reads PnP with the modems not plugged in, strictly, and removes their functions on WinUSB from Windows' {
+            $outcome = Restore-ModemUsbFunction -Confirm:$false
+            Should -Invoke -ModuleName FibocomFm350 Get-ModemPnpRecord -Times 1 -Exactly -ParameterFilter { $IncludeAbsent -and $Strict }
+            $outcome.Functions.Count | Should -Be 7
+            $script:restored.InstanceId | Should -Not -Contain $script:absent[0].InstanceId
+            # The vendor functions on winusb.inf: not ADB (MI_05), which Windows put on WinUSB itself.
+            $script:removed | Should -Be @($script:absent | Where-Object { $_.InstanceId -notlike '*&MI_05\*' } | ForEach-Object InstanceId)
+            $outcome.Absent.Interface | Should -Be @(2, 3, 4, 6, 7, 8, 9)
+            $outcome.Absent.Result | Should -Be @('Removed', 'Removed', 'Removed', 'Removed', 'Failed', 'Removed', 'Removed')
+        }
+
+        It 'goes on past a removal that throws' {
+            Mock -ModuleName FibocomFm350 Remove-AbsentUsbFunction { throw [System.ArgumentException]::new('no') } -ParameterFilter { $InstanceId -like '*&MI_02\*' }
+            $outcome = Restore-ModemUsbFunction -Confirm:$false
+            $outcome.Absent[0].Result | Should -Be 'Failed'
+            $outcome.Absent[0].Step | Should -Be 'ArgumentException'
+            $outcome.Absent.Count | Should -Be 7
+        }
+
+        It 'removes nothing with -WhatIf' {
+            $outcome = Restore-ModemUsbFunction -WhatIf
+            $outcome.Absent | Should -BeNullOrEmpty
+            $script:removed | Should -BeNullOrEmpty
+        }
     }
 
     It 'throws, giving nothing back, when PnP can''t be read' {
@@ -156,7 +198,7 @@ Describe 'Restore-ModemUsbFunction' {
         Mock -ModuleName FibocomFm350 Get-ModemPnpRecord { }
         $outcome = Restore-ModemUsbFunction -Confirm:$false
         $outcome.Modems | Should -Be 0
-        $outcome.Absent | Should -Be 0
+        $outcome.Absent | Should -BeNullOrEmpty
         $outcome.Functions | Should -BeNullOrEmpty
     }
 

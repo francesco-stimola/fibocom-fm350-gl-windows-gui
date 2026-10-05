@@ -420,38 +420,42 @@ function Resolve-ModemRestore {
     }
 }
 
-function Measure-AbsentWinUsbFunction {
+function Select-AbsentWinUsbFunction {
     <#
     .SYNOPSIS
-        Counts the FM350 vendor functions on Windows' WinUSB that Windows remembers but that aren't
-        plugged in: what the uninstallation can't give back.
+        Picks the FM350 vendor functions on Windows' WinUSB that Windows remembers but that aren't
+        plugged in: what the uninstallation removes from Windows.
     .DESCRIPTION
-        A pure count over Get-ModemPnpRecord -IncludeAbsent's records: an FM350 instance not present
-        - a modem unplugged, or plugged in elsewhere since, as another instance (AT-COMMANDS section
-        1) -, its function a vendor one (never the network function), on WINUSB from winusb.inf.
-        DiInstallDevice reaches present devices only: such a function keeps WinUSB.
+        A pure decision over Get-ModemPnpRecord -IncludeAbsent's records: an FM350 instance not
+        present - a modem unplugged, or plugged in since as another instance (AT-COMMANDS section 1)
+        -, its function a vendor one (never the network function, nor ADB), on WINUSB from
+        winusb.inf, the model the app installs. DiInstallDevice reaches present devices only: such a
+        function would keep WinUSB when the modem comes back.
+
+        Returns InstanceId, Interface and Name of each.
     .EXAMPLE
-        Measure-AbsentWinUsbFunction -Device @(Get-ModemPnpRecord -IncludeAbsent)
+        Select-AbsentWinUsbFunction -Device @(Get-ModemPnpRecord -IncludeAbsent)
     #>
     [CmdletBinding()]
-    [OutputType([int])]
+    [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory)]
         [AllowEmptyCollection()]
         [object[]] $Device
     )
 
-    @(foreach ($record in $Device) {
-            if (-not $record -or $record.Present -or [string]$record.InstanceId -notmatch '^USB\\VID_0E8D&PID_(7126|7127)&MI_([0-9A-F]{2})\\') {
-                continue
-            }
-            $interface = [Convert]::ToInt32($Matches[2], 16)
-            $vendor = $interface -eq $script:AtPortInterfaces[$Matches[1]] -or @(@($record.CompatibleIds) | Where-Object { [string]::Equals([string]$_, $script:VendorFunctionId, 'OrdinalIgnoreCase') }).Count -gt 0
-            if ($interface -ne $script:NetworkInterface -and $vendor -and [string]::Equals([string]$record.Service, 'WINUSB', 'OrdinalIgnoreCase') -and
-                [string]::Equals([string]$record.DriverInfPath, $script:WinUsbInfName, 'OrdinalIgnoreCase')) {
-                $record
-            }
-        }).Count
+    foreach ($record in $Device) {
+        if (-not $record -or $record.Present -or [string]$record.InstanceId -notmatch '^USB\\VID_0E8D&PID_(7126|7127)&MI_([0-9A-F]{2})\\') {
+            continue
+        }
+        $productId = $Matches[1]
+        $interface = [Convert]::ToInt32($Matches[2], 16)
+        $vendor = $interface -eq $script:AtPortInterfaces[$productId] -or @(@($record.CompatibleIds) | Where-Object { [string]::Equals([string]$_, $script:VendorFunctionId, 'OrdinalIgnoreCase') }).Count -gt 0
+        if ($interface -ne $script:NetworkInterface -and $vendor -and [string]::Equals([string]$record.Service, 'WINUSB', 'OrdinalIgnoreCase') -and
+            [string]::Equals([string]$record.DriverInfPath, $script:WinUsbInfName, 'OrdinalIgnoreCase')) {
+            [pscustomobject]@{ InstanceId = [string]$record.InstanceId; Interface = $interface; Name = $script:FunctionNames[$productId][$interface] }
+        }
+    }
 }
 
 function Restart-ModemUsbDevice {

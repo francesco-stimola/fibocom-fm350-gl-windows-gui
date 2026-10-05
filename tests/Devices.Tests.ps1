@@ -526,8 +526,8 @@ Describe 'Resolve-ModemRestore' {
     }
 }
 
-Describe 'Measure-AbsentWinUsbFunction' {
-    It 'counts <Count> for <Case>' -ForEach @(
+Describe 'Select-AbsentWinUsbFunction' {
+    It 'picks <Count> for <Case>' -ForEach @(
         @{ Case = 'an absent vendor function on winusb.inf'; Count = 1; Id = 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003'; Present = $false; Service = 'WINUSB'; Inf = 'winusb.inf'; Compat = @('USB\Class_ff&SubClass_00&Prot_00') }
         @{ Case = 'an absent AT port of the 7126 composition'; Count = 1; Id = 'USB\VID_0E8D&PID_7126&MI_04\8&00000000&0&0004'; Present = $false; Service = 'WINUSB'; Inf = 'winusb.inf'; Compat = @() }
         @{ Case = 'a present one: given back'; Count = 0; Id = 'USB\VID_0E8D&PID_7127&MI_03\8&00000000&0&0003'; Present = $true; Service = 'WINUSB'; Inf = 'winusb.inf'; Compat = @('USB\Class_ff&SubClass_00&Prot_00') }
@@ -538,15 +538,18 @@ Describe 'Measure-AbsentWinUsbFunction' {
         @{ Case = 'another MediaTek device'; Count = 0; Id = 'USB\VID_0E8D&PID_2000&MI_03\8&00000000&0&0003'; Present = $false; Service = 'WINUSB'; Inf = 'winusb.inf'; Compat = @('USB\Class_ff&SubClass_00&Prot_00') }
     ) {
         $record = ConvertTo-PnpRecord -InstanceId $Id -Present $Present -Service $Service -DriverInfPath $Inf -CompatibleIds $Compat
-        Measure-AbsentWinUsbFunction -Device @($record) | Should -Be $Count
+        @(Select-AbsentWinUsbFunction -Device @($record)).Count | Should -Be $Count
     }
 
-    It 'counts every absent one, and none without records' {
+    It 'picks every absent one, each with its instance and its name, and none without records' {
         $records = foreach ($interface in '02', '03', '06') {
             ConvertTo-PnpRecord -InstanceId "USB\VID_0E8D&PID_7127&MI_$interface\8&00000000&0&00$interface" -Present $false -Service 'WINUSB' -DriverInfPath 'winusb.inf'
         }
-        Measure-AbsentWinUsbFunction -Device @($records) | Should -Be 3
-        Measure-AbsentWinUsbFunction -Device @() | Should -Be 0
+        $picked = @(Select-AbsentWinUsbFunction -Device @($records))
+        $picked.Interface | Should -Be @(2, 3, 6)
+        $picked.Name | Should -Be @('ApLog', 'ApGnss', 'MdAt')
+        $picked[2].InstanceId | Should -Be 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&0&0006'
+        Select-AbsentWinUsbFunction -Device @() | Should -BeNullOrEmpty
     }
 }
 

@@ -52,6 +52,7 @@
     'Uninstall.UsbRestored' = 'Funktionen des Modems wieder auf dem Treiber, den Windows am besten bewertet - dem seriellen Treiber von MediaTek, wo er installiert ist: {0}.'
     'Uninstall.UsbRestart'  = 'Funktionen des Modems, die beim nächsten Neustart von Windows wieder diesen Treiber verwenden: {0}.'
     'Uninstall.UsbLeft'     = 'Funktionen des Modems, die auf WinUSB bleiben - ein anderes Programm verwendet sie, oder Windows hat abgelehnt; der Geräte-Manager kann ihnen einen anderen Treiber geben: {0}.'
+    'Uninstall.UsbRemoved'  = 'Funktionen eines nicht angeschlossenen Modems, aus Windows entfernt - es wählt ihren Treiber neu, sobald das Modem angeschlossen wird: {0}.'
     'Uninstall.UsbAbsent'   = 'Funktionen eines nicht angeschlossenen Modems, die auf WinUSB bleiben; sobald es angeschlossen ist, kann der Geräte-Manager ihnen einen anderen Treiber geben: {0}.'
     'Uninstall.UsbFailed'   = 'Die Funktionen des Modems können nicht wieder ihren Treiber erhalten ({0}): Sie bleiben auf WinUSB.'
 }

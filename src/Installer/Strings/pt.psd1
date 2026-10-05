@@ -52,6 +52,7 @@
     'Uninstall.UsbRestored' = 'Funções do modem devolvidas ao controlador que o Windows considera melhor - o controlador série da MediaTek, onde está instalado: {0}.'
     'Uninstall.UsbRestart'  = 'Funções do modem que voltam a esse controlador no próximo reinício do Windows: {0}.'
     'Uninstall.UsbLeft'     = 'Funções do modem que ficam no WinUSB - outro programa usa-as, ou o Windows recusou; o Gestor de Dispositivos pode dar-lhes outro controlador: {0}.'
+    'Uninstall.UsbRemoved'  = 'Funções de um modem não ligado, removidas do Windows - voltará a escolher o seu controlador quando o modem for ligado: {0}.'
     'Uninstall.UsbAbsent'   = 'Funções de um modem não ligado que ficam no WinUSB; depois de o ligar, o Gestor de Dispositivos pode dar-lhes outro controlador: {0}.'
     'Uninstall.UsbFailed'   = 'Não é possível devolver as funções do modem ao seu controlador ({0}): ficam no WinUSB.'
 }

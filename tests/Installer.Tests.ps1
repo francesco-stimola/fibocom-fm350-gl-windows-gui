@@ -741,13 +741,14 @@ Describe 'Restore-AppUsbFunction' {
         @{ Name = 'some later, some left'; Results = @('Done', 'RestartNeeded', 'InUse', 'Failed'); Lines = @('*: 1.', '*next restart of Windows: 1.', '*left on WinUSB*: 2.') }
         @{ Name = 'nothing on WinUSB'; Results = @(); Lines = @() }
         @{ Name = 'no modem plugged in, nothing on WinUSB'; Modems = 0; Results = @(); Lines = @() }
-        @{ Name = 'a modem not plugged in'; Modems = 0; Absent = 7; Results = @(); Lines = @('*modem not plugged in, left on WinUSB*: 7.') }
-        @{ Name = 'one plugged in, one not'; Absent = 2; Results = @('Done'); Lines = @('*back on the driver Windows ranks best*: 1.', '*modem not plugged in*: 2.') }
+        @{ Name = 'a modem not plugged in'; Modems = 0; Absent = @('Removed', 'Removed', 'Removed'); Results = @(); Lines = @('*modem not plugged in, removed from Windows*: 3.') }
+        @{ Name = 'one not plugged in, a removal refused'; Modems = 0; Absent = @('Removed', 'Failed'); Results = @(); Lines = @('*removed from Windows*: 1.', '*modem not plugged in, left on WinUSB*: 1.') }
+        @{ Name = 'one plugged in, one not'; Absent = @('Removed', 'RestartNeeded'); Results = @('Done'); Lines = @('*back on the driver Windows ranks best*: 1.', '*removed from Windows*: 2.') }
     ) {
         $functions = @(foreach ($result in $Results) { [pscustomobject]@{ Result = $result } })
         $modemCount = if ($null -ne $Modems) { $Modems } else { 1 }
-        $absentCount = if ($null -ne $Absent) { $Absent } else { 0 }
-        $restore = { [pscustomobject]@{ Modems = $modemCount; Absent = $absentCount; Functions = $functions } }.GetNewClosure()
+        $absentOutcomes = @(foreach ($result in @($Absent | Where-Object { $_ })) { [pscustomobject]@{ Result = $result } })
+        $restore = { [pscustomobject]@{ Modems = $modemCount; Functions = $functions; Absent = $absentOutcomes } }.GetNewClosure()
         $said = @(InModuleScope FibocomFm350.Installer -Parameters @{ Layout = $script:restoreLayout; Restore = $restore } { param($Layout, $Restore) Restore-AppUsbFunction -Layout $Layout -Restore $Restore })
         $said.Count | Should -Be $Lines.Count
         for ($i = 0; $i -lt $Lines.Count; $i++) {
