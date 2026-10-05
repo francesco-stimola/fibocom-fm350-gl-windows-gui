@@ -23,7 +23,7 @@ written `(planned)`.
 | [M7 — Packaging & first release](#m7) — tag `v1.0.0` | ✅ complete |
 | [M8 — SMS, USSD & data usage](#m8) — tag `v1.1.0` | ✅ complete |
 | [M9 — eSIM](#m9) — tag `v1.2.0` | ✅ complete |
-| [M10 — Driverless AT port & Windows on Arm](#m10) — tag `v2.0.0` (planned) | 📋 planned |
+| [M10 — Driverless AT port & Windows on Arm](#m10) — tag `v2.0.0` (planned) | 🔨 code-complete |
 
 ---
 
