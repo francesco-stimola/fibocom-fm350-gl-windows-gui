@@ -43,8 +43,8 @@ function Get-ModemPnpRecord {
         Returns one record per device: InstanceId, Present, ProblemCode, Service ('' when the device
         has none; $null when it couldn't be read), Parent, CompatibleIds, PortName (its COM port,
         $null when it has none) and InterfaceGuids (its DeviceInterfaceGUIDs, $null when none) -
-        ParametersRead $false when those couldn't be read -, and its driver: DriverInfPath (the name
-        its package has in the driver store), DriverVersion, DriverProvider - $null without one.
+        ParametersRead $false when those couldn't be read -, and DriverInfPath: the name its
+        driver's package has in the driver store, $null without one.
     .EXAMPLE
         Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord)
     #>
@@ -66,7 +66,7 @@ function Get-ModemPnpRecord {
         return
     }
     $keys = 'DEVPKEY_Device_ProblemCode', 'DEVPKEY_Device_Service', 'DEVPKEY_Device_Parent', 'DEVPKEY_Device_CompatibleIds',
-    'DEVPKEY_Device_DriverInfPath', 'DEVPKEY_Device_DriverVersion', 'DEVPKEY_Device_DriverProvider'
+    'DEVPKEY_Device_DriverInfPath'
     foreach ($device in $devices) {
         $own = @(Get-PnpDeviceProperty -InputObject $device -KeyName $keys -ErrorAction SilentlyContinue |
                 Where-Object InstanceId -EQ $device.InstanceId)
@@ -96,8 +96,6 @@ function Get-ModemPnpRecord {
             InterfaceGuids = if ($guids) { [string[]]@($guids) } else { $null }
             ParametersRead = $parametersRead
             DriverInfPath  = & $value 'DEVPKEY_Device_DriverInfPath'
-            DriverVersion  = & $value 'DEVPKEY_Device_DriverVersion'
-            DriverProvider = & $value 'DEVPKEY_Device_DriverProvider'
         }
     }
 }
@@ -110,8 +108,8 @@ function Resolve-ModemUsbDevice {
     .DESCRIPTION
         Takes device records as read from PnP, each with InstanceId, Present, ProblemCode,
         Service and Parent, plus, when read, CompatibleIds, PortName (the COM port of a function
-        on MediaTek's driver), InterfaceGuids (its DeviceInterfaceGUIDs) and DriverInfPath,
-        DriverVersion and DriverProvider; other properties are ignored. Only present USB
+        on MediaTek's driver), InterfaceGuids (its DeviceInterfaceGUIDs) and DriverInfPath; other
+        properties are ignored. Only present USB
         functions of the FM350 compositions (USB\VID_0E8D&PID_7126 and 7127, interface MI_xx)
         count: devices left over from an earlier plug-in, the composite device itself and other
         MediaTek devices are skipped. A modem is the composite device its functions hang from.
@@ -123,7 +121,7 @@ function Resolve-ModemUsbDevice {
         serial functions of vendor class ff/00/00 and the AT port: those the app puts on WinUSB;
         never the network function), WinUsb ($true when its driver is Windows' WinUSB), Read ($false
         when its service or its registry parameters couldn't be read: what it is on is unknown), State,
-        ProblemCode, Service, PortName, InterfaceGuids and Driver (InfPath, Version, Provider).
+        ProblemCode, Service, PortName, InterfaceGuids and Driver (InfPath).
         State is 'Working' (no problem code, and a service or none read), 'NoDriver' (problem
         code 1 or 28, or no problem code and a service read as '': a driver just uninstalled) or
         'Problem' (any other problem code: disabled, failed to start...). AtPort or Network is
@@ -196,7 +194,7 @@ function Resolve-ModemUsbDevice {
                 PortName       = if (& $property 'PortName') { [string](& $property 'PortName') } else { $null }
                 InterfaceGuids = if ($guids.Count -gt 0) { [string[]]$guids } else { $null }
                 Driver         = if (& $driver 'DriverInfPath') {
-                    [pscustomobject]@{ InfPath = & $driver 'DriverInfPath'; Version = & $driver 'DriverVersion'; Provider = & $driver 'DriverProvider' }
+                    [pscustomobject]@{ InfPath = & $driver 'DriverInfPath' }
                 }
                 else {
                     $null
@@ -256,8 +254,7 @@ function Resolve-ModemPresence {
         (its network function), ProductId, Functions (every function of it, as
         Resolve-ModemUsbDevice gives them) - each $null without a modem - and Modems, how many
         there are. The modem chosen is the first by instance ID whose AT port works on WinUSB,
-        else the first with an AT port: the same at every look. Driver: its AT port's (InfPath,
-        Version, Provider), $null without one.
+        else the first with an AT port: the same at every look.
     .EXAMPLE
         Resolve-ModemPresence -Modem @(Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord))
     #>
@@ -294,7 +291,6 @@ function Resolve-ModemPresence {
         Modems            = $Modem.Count
         ProductId         = if ($chosen -and $chosen.PSObject.Properties['ProductId']) { $chosen.ProductId } else { $null }
         Functions         = if ($chosen -and $chosen.PSObject.Properties['Functions']) { @($chosen.Functions) } else { $null }
-        Driver            = if ($chosen -and $chosen.AtPort.PSObject.Properties['Driver']) { $chosen.AtPort.Driver } else { $null }
     }
 }
 
@@ -503,6 +499,55 @@ function Select-UnreadModemFunction {
                 Present    = [bool]$record.Present
             }
         }
+    }
+}
+
+function Join-ModemPnpRecord {
+    <#
+    .SYNOPSIS
+        Joins two PnP reads of the modems' devices, keeping each device's record that was read whole.
+    .DESCRIPTION
+        A pure decision over two Get-ModemPnpRecord reads, the second made because the first missed
+        a function (Select-UnreadModemFunction): a read now and then misses one, and the second may
+        miss another. Each device as -Second has it, unless -Second missed it and -First had it
+        whole, or -Second has no record of it.
+
+        Returns the records, in -Second's order, then those only -First has.
+    .EXAMPLE
+        Join-ModemPnpRecord -First $records -Second @(Get-ModemPnpRecord -IncludeAbsent -Strict)
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]] $First,
+
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]] $Second
+    )
+
+    $unread = {
+        param([object[]] $Records)
+        $set = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($function in @(Select-UnreadModemFunction -Device $Records)) { [void]$set.Add($function.InstanceId) }
+        , $set
+    }
+    $firstUnread = & $unread $First
+    $secondUnread = & $unread $Second
+    $earlier = @{}
+    foreach ($record in @($First | Where-Object { $_ })) {
+        $earlier[[string]$record.InstanceId] = $record
+    }
+    $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($record in @($Second | Where-Object { $_ })) {
+        $id = [string]$record.InstanceId
+        [void]$seen.Add($id)
+        if ($earlier.ContainsKey($id) -and $secondUnread.Contains($id) -and -not $firstUnread.Contains($id)) { $earlier[$id] } else { $record }
+    }
+    foreach ($record in @($First | Where-Object { $_ -and -not $seen.Contains([string]$_.InstanceId) })) {
+        $record
     }
 }
 

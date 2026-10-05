@@ -184,6 +184,40 @@ Describe 'Restore-ModemUsbFunction' {
             @($outcome.Functions | Where-Object Result -EQ 'Done').Count | Should -BeGreaterThan 0
         }
 
+        It 'keeps what the first read had whole when the second misses another function' {
+            # The second read has the GNSS function, but misses the modem's META.
+            Mock -ModuleName FibocomFm350 Get-ModemPnpRecord {
+                $script:reads++
+                foreach ($record in $script:fixture) {
+                    $copy = $record.PSObject.Copy()
+                    if (($script:reads -eq 1 -and $copy.InstanceId -like '*&MI_03\*') -or ($script:reads -eq 2 -and $copy.InstanceId -like '*&MI_07\*')) {
+                        $copy.Service = $null
+                    }
+                    $copy
+                }
+            }
+            $outcome = Restore-ModemUsbFunction -Confirm:$false
+            $script:reads | Should -Be 2
+            $outcome.Functions.Result | Should -Not -Contain 'Unread'
+            $outcome.Functions.Interface | Should -Be @(6, 2, 3, 4, 7, 8, 9)
+        }
+
+        It 'goes on with the first read when the second fails' {
+            Mock -ModuleName FibocomFm350 Get-ModemPnpRecord {
+                $script:reads++
+                if ($script:reads -eq 2) { throw [System.InvalidOperationException]::new('WMI down') }
+                foreach ($record in $script:fixture) {
+                    $copy = $record.PSObject.Copy()
+                    if ($copy.InstanceId -like '*&MI_03\*') { $copy.Service = $null }
+                    $copy
+                }
+            }
+            $outcome = Restore-ModemUsbFunction -Confirm:$false
+            $script:reads | Should -Be 2
+            @($outcome.Functions | Where-Object Interface -EQ 3).Result | Should -Be 'Unread'
+            @($outcome.Functions | Where-Object Result -EQ 'Done').Count | Should -BeGreaterThan 0
+        }
+
         It 'says a function of a modem not plugged in that couldn''t be read' {
             $script:missedAgain = $true
             $script:fixture = foreach ($record in $script:fixture) {
@@ -223,6 +257,20 @@ Describe 'Restore-ModemUsbFunction' {
             $script:removed | Should -Be @($script:absent | Where-Object { $_.InstanceId -notlike '*&MI_05\*' } | ForEach-Object InstanceId)
             $outcome.Absent.Interface | Should -Be @(2, 3, 4, 6, 7, 8, 9)
             $outcome.Absent.Result | Should -Be @('Removed', 'Removed', 'Removed', 'Removed', 'Failed', 'Removed', 'Removed')
+        }
+
+        It 'starts no installation after one that timed out, nor a removal' {
+            Mock -ModuleName FibocomFm350 Restore-UsbFunctionDriver {
+                $script:restored.Add([pscustomobject]@{ InstanceId = $InstanceId; InterfaceGuid = $InterfaceGuid })
+                [pscustomobject]@{ Done = $false; NeedReboot = $false; Step = 'TimedOut'; Error = 0 }
+            } -ParameterFilter { $InstanceId -like '*&MI_02\*' }
+            $outcome = Restore-ModemUsbFunction -Confirm:$false
+            $script:restored.InstanceId -replace '^.*&(MI_\d\d)\\.*$', '$1' | Should -Be @('MI_06', 'MI_02') -Because 'an installation that hangs holds Windows'' others'
+            $outcome.Functions.Result | Should -Be @('Done', 'Failed', 'InUse', 'Failed', 'Failed', 'Failed', 'Failed')
+            @($outcome.Functions | Where-Object Result -EQ 'Failed').Step | Should -Be @('TimedOut', 'TimedOut', 'TimedOut', 'TimedOut', 'TimedOut')
+            $script:removed | Should -BeNullOrEmpty
+            $outcome.Absent.Result | Should -Be @('Failed', 'Failed', 'Failed', 'Failed', 'Failed', 'Failed', 'Failed')
+            $outcome.Absent.Step | Should -Be @('TimedOut', 'TimedOut', 'TimedOut', 'TimedOut', 'TimedOut', 'TimedOut', 'TimedOut')
         }
 
         It 'goes on past a removal that throws' {

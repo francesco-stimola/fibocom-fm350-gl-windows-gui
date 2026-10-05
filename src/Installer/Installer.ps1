@@ -855,10 +855,12 @@ function Restore-AppUsbFunction {
     $gone = @(if ($outcome.PSObject.Properties['Absent']) { @($outcome.Absent) | Where-Object { $_ } | ForEach-Object { $_.Result } })
     $back = @($results | Where-Object { $_ -eq 'Done' }).Count
     $later = @($results | Where-Object { $_ -eq 'RestartNeeded' }).Count
-    $left = @($results | Where-Object { $_ -notin 'Done', 'RestartNeeded' }).Count
+    # A function of a modem not plugged in that couldn't be read is on a driver no one knows: left
+    # as it is, as one plugged in.
+    $left = @($results | Where-Object { $_ -notin 'Done', 'RestartNeeded' }).Count + @($gone | Where-Object { $_ -eq 'Unread' }).Count
     # Removed, Windows finishing it at a restart or not: either way it is no longer there to use.
     $removed = @($gone | Where-Object { $_ -in 'Removed', 'RestartNeeded' }).Count
-    $stayed = @($gone | Where-Object { $_ -notin 'Removed', 'RestartNeeded' }).Count
+    $stayed = @($gone | Where-Object { $_ -notin 'Removed', 'RestartNeeded', 'Unread' }).Count
     if ($back) { Get-SetupText 'Uninstall.UsbRestored' $back }
     if ($later) { Get-SetupText 'Uninstall.UsbRestart' $later }
     if ($left) { Get-SetupText 'Uninstall.UsbLeft' $left }

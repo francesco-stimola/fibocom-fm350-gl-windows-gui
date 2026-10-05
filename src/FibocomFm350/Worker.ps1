@@ -1506,7 +1506,8 @@ function Update-WorkerBinding {
     # port first: those Resolve-ModemBinding names, each once per instance. A function whose COM
     # port or device interface another program holds is left on its driver, and looked at again
     # next time (decided 2026-10-04); so is the function whose port the worker holds open, whatever
-    # a PnP read says of it. Nothing in observe-only mode, nothing without administrator rights. Sets the
+    # a PnP read says of it. After an installation that timed out, the others of this look aren't
+    # started. Nothing in observe-only mode, nothing without administrator rights. Sets the
     # worker's BindState - why the AT port isn't on WinUSB, for the connection's state - and
     # Binding, the last outcome, for the window. Returns $true when a function was put on
     # WinUSB: PnP is read again.
@@ -1550,6 +1551,7 @@ function Update-WorkerBinding {
     $beat = Get-WorkerBeat -Worker $Worker
     $outcomes = [System.Collections.Generic.List[object]]::new()
     $bound = $false
+    $timedOut = $false
     foreach ($function in $plan.Bind) {
         $label = Get-UsbFunctionLabel -Function $function
         try {
@@ -1587,12 +1589,20 @@ function Update-WorkerBinding {
         if ($function.Role -eq 'AtPort') {
             $options['InterfaceGuid'] = $script:AppInterfaceGuid
         }
-        $result = try {
-            if ($Worker.Simulation) { $Worker.Simulation.Bind($function.InstanceId) } else { Install-WinUsbDriver @options }
+        $result = if ($timedOut) {
+            # An installation that hangs holds Windows' others: this one would wait as long, and the
+            # worker with it. Not started - counted as failed, tried again as one.
+            [pscustomobject]@{ Done = $false; NeedReboot = $false; Step = 'TimedOut'; Error = 0 }
         }
-        catch {
-            [pscustomobject]@{ Done = $false; NeedReboot = $false; Step = $_.Exception.GetType().Name; Error = 0 }
+        else {
+            try {
+                if ($Worker.Simulation) { $Worker.Simulation.Bind($function.InstanceId) } else { Install-WinUsbDriver @options }
+            }
+            catch {
+                [pscustomobject]@{ Done = $false; NeedReboot = $false; Step = $_.Exception.GetType().Name; Error = 0 }
+            }
         }
+        $timedOut = $timedOut -or $result.Step -eq 'TimedOut'
         # Windows' code as it writes it: a negative one is its 0xE... form.
         $code = if ($result.Error) { '0x' + ([int]$result.Error).ToString('X8', [cultureinfo]::InvariantCulture) } else { $null }
         $outcome = if ($result.Done -and $result.NeedReboot) { 'RestartNeeded' } elseif ($result.Done) { 'Done' } else { 'Failed' }
@@ -1611,8 +1621,8 @@ function Update-WorkerBinding {
             }
         }
         else {
-            # Tried once per instance: again at the next start, at a new instance, or when the user
-            # asks to check now (decided 2026-10-04).
+            # Tried once per instance: again at the next start, at a new instance, when the user
+            # asks to check now (decided 2026-10-04), or when the modem comes back (2026-10-05).
             [void]$Worker.BindFailed.Add($function.InstanceId)
             $why = if ($outcome -eq 'RestartNeeded') { 'Windows finishes it at the next restart' } else { "failed at $($result.Step)$(if ($code) { ", error $code" })" }
             Write-WorkerLog -Worker $Worker -Level 'Warning' -Message "USB function ${label}: not put on WinUSB - $why"
@@ -1632,7 +1642,14 @@ function Find-WorkerModem {
     param([hashtable] $Worker)
 
     $presence = Get-WorkerPresence -Worker $Worker
-    if ($presence.Device -ne 'Absent' -and (Update-WorkerBinding -Worker $Worker -Presence $presence)) {
+    if ($presence.Device -eq 'Absent') {
+        # The modem gone - unplugged, reset, its SIM taken out: an installation that failed is tried
+        # again when it comes back, whichever of its instances it comes back as (decided 2026-10-05).
+        $Worker.BindFailed.Clear()
+        $Worker.BindFailedCarried.Clear()
+        $Worker.BindAtFailure = $null
+    }
+    elseif (Update-WorkerBinding -Worker $Worker -Presence $presence) {
         $presence = Get-WorkerPresence -Worker $Worker
     }
     $before = if ($Worker.Presence) { $Worker.Presence.Device } else { $null }

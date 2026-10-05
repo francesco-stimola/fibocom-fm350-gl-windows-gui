@@ -1076,7 +1076,8 @@ function Restore-ModemUsbFunction {
         functions on WinUSB are removed from Windows instead (Select-AbsentWinUsbFunction,
         Remove-AbsentUsbFunction), which chooses their driver afresh when it comes back. Throws when
         PnP can't be read. A read that missed a function is made again once; one still missed is
-        left as it is, and said ('Unread').
+        left as it is, and said ('Unread'). After an installation that timed out, which holds
+        Windows' others, none is started: those left are 'Failed', Step 'TimedOut'.
 
         Returns Modems (how many are present), Functions - each with Interface, Name, Role and
         Result: 'Done', 'RestartNeeded', 'InUse', 'Failed', 'Unread' -, and Absent - the functions
@@ -1090,12 +1091,19 @@ function Restore-ModemUsbFunction {
     param()
 
     $records = @(Get-ModemPnpRecord -IncludeAbsent -Strict)
-    # A read that missed a function: the uninstallation reads once, so it looks again once.
+    # A read that missed a function: the uninstallation reads once, so it looks again once - each
+    # device as the read that had it whole, and the first read alone when the second fails.
     if (@(Select-UnreadModemFunction -Device $records).Count -gt 0) {
-        $records = @(Get-ModemPnpRecord -IncludeAbsent -Strict)
+        $again = try { @(Get-ModemPnpRecord -IncludeAbsent -Strict) } catch { $null }
+        if ($null -ne $again) {
+            $records = @(Join-ModemPnpRecord -First $records -Second $again)
+        }
     }
     $unread = @(Select-UnreadModemFunction -Device $records)
     $modems = @(Resolve-ModemUsbDevice -Device $records)
+    # An installation that hangs holds Windows' others: after one that timed out, none is started.
+    $timedOut = $false
+    $skipped = [pscustomobject]@{ Done = $false; NeedReboot = $false; Step = 'TimedOut'; Error = 0 }
     $outcomes = foreach ($function in @(Resolve-ModemRestore -Modem $modems)) {
         $entry = [ordered]@{ Interface = $function.Interface; Name = $function.Name; Role = $function.Role; Result = $null; Step = $null; Error = $null }
         if (-not $PSCmdlet.ShouldProcess("USB function $($function.InstanceId)", 'Restore its best driver')) {
@@ -1111,7 +1119,8 @@ function Restore-ModemUsbFunction {
             if ($function.Role -eq 'AtPort') {
                 $options['InterfaceGuid'] = $script:AppInterfaceGuid
             }
-            $result = Restore-UsbFunctionDriver @options
+            $result = if ($timedOut) { $skipped } else { Restore-UsbFunctionDriver @options }
+            $timedOut = $timedOut -or $result.Step -eq 'TimedOut'
             $entry['Result'] = if ($result.Done -and $result.NeedReboot) { 'RestartNeeded' } elseif ($result.Done) { 'Done' } else { 'Failed' }
             $entry['Step'] = $result.Step
             $entry['Error'] = $result.Error
@@ -1131,7 +1140,8 @@ function Restore-ModemUsbFunction {
             continue
         }
         try {
-            $result = Remove-AbsentUsbFunction -InstanceId $function.InstanceId -Confirm:$false
+            $result = if ($timedOut) { $skipped } else { Remove-AbsentUsbFunction -InstanceId $function.InstanceId -Confirm:$false }
+            $timedOut = $timedOut -or $result.Step -eq 'TimedOut'
             $entry['Result'] = if ($result.Done -and $result.NeedReboot) { 'RestartNeeded' } elseif ($result.Done) { 'Removed' } else { 'Failed' }
             $entry['Step'] = $result.Step
             $entry['Error'] = $result.Error

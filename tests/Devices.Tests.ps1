@@ -315,7 +315,6 @@ Describe 'Resolve-ModemPresence' {
         $presence.Modems | Should -Be 1
         $presence.ProductId | Should -Be '7127'
         $presence.Functions.Count | Should -Be 9
-        $presence.Driver.InfPath | Should -Be 'winusb.inf'
     }
 
     It 'says the AT port is on another driver: MediaTek''s, with its COM port' {
@@ -323,7 +322,7 @@ Describe 'Resolve-ModemPresence' {
         $presence = Resolve-ModemPresence -Modem @(Resolve-ModemUsbDevice -Device $fixture.Devices)
         $presence.Device | Should -Be 'Unbound'
         $presence.AtInstanceId | Should -BeLike 'USB\VID_0E8D&PID_7127&MI_06\*'
-        $presence.Driver.InfPath | Should -Be 'oem24.inf'
+        @($presence.Functions | Where-Object Role -EQ 'AtPort')[0].Driver.InfPath | Should -Be 'oem24.inf'
     }
 
     It 'says the AT port is on no driver on the captured modem without it' {
@@ -331,16 +330,15 @@ Describe 'Resolve-ModemPresence' {
         $presence = Resolve-ModemPresence -Modem @(Resolve-ModemUsbDevice -Device $fixture.Devices)
         $presence.Device | Should -Be 'Unbound'
         $presence.ProductId | Should -Be '7127'
-        $presence.Driver | Should -BeNullOrEmpty
+        @($presence.Functions | Where-Object Role -EQ 'AtPort')[0].Driver | Should -BeNullOrEmpty
     }
 
-    It 'names no modem, no function and no driver without a modem' {
+    It 'names no modem and no function without a modem' {
         $presence = Resolve-ModemPresence -Modem @()
         $presence.Device | Should -Be 'Absent'
         $presence.ProductId | Should -BeNullOrEmpty
         $presence.AtInstanceId | Should -BeNullOrEmpty
         $presence.Functions | Should -BeNullOrEmpty
-        $presence.Driver | Should -BeNullOrEmpty
     }
 
     It '<Name>: <Device>' -ForEach @(
@@ -581,6 +579,43 @@ Describe 'Select-UnreadModemFunction' {
     }
 }
 
+Describe 'Join-ModemPnpRecord' {
+    BeforeAll {
+        # One read of the GNSS function, the modem's META and the network function; -Missed: those
+        # whose service it missed. Each record says which read it came from.
+        function Get-TestRead {
+            param([string] $From, [string[]] $Missed = @())
+            foreach ($interface in '03', '07', '00') {
+                [pscustomobject]@{
+                    InstanceId = "USB\VID_0E8D&PID_7127&MI_$interface\8&00000000&0&00$interface"; Present = $true; ProblemCode = 0
+                    Service = if ($interface -in $Missed) { $null } elseif ($interface -eq '00') { 'usbrndis6' } else { 'WINUSB' }
+                    ParametersRead = $true; From = $From
+                }
+            }
+        }
+    }
+
+    It 'keeps each device as the read that had it whole: <Name>' -ForEach @(
+        @{ Name = 'the second read missed another one'; FirstMissed = @('03'); SecondMissed = @('07'); Expected = @('Second', 'First', 'Second') }
+        @{ Name = 'both missed the same one'; FirstMissed = @('03'); SecondMissed = @('03'); Expected = @('Second', 'Second', 'Second') }
+        @{ Name = 'the second read had all'; FirstMissed = @('03'); SecondMissed = @(); Expected = @('Second', 'Second', 'Second') }
+        @{ Name = 'the second read missed one the first had'; FirstMissed = @(); SecondMissed = @('03', '07'); Expected = @('First', 'First', 'Second') }
+    ) {
+        $joined = @(Join-ModemPnpRecord -First @(Get-TestRead -From 'First' -Missed $FirstMissed) -Second @(Get-TestRead -From 'Second' -Missed $SecondMissed))
+        $joined.From | Should -Be $Expected
+    }
+
+    It 'keeps a device only the first read has, after the second''s, whatever the case of its ID' {
+        $first = @(Get-TestRead -From 'First')
+        $second = @(Get-TestRead -From 'Second' -Missed '07' | Where-Object { $_.InstanceId -notlike '*&MI_03\*' })
+        $second[0].InstanceId = $second[0].InstanceId.ToLowerInvariant()
+        $joined = @(Join-ModemPnpRecord -First $first -Second $second)
+        $joined.From | Should -Be @('First', 'Second', 'First')
+        $joined[2].InstanceId | Should -BeLike '*&MI_03\*'
+        @(Join-ModemPnpRecord -First @() -Second @()) | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'Restart-ModemUsbDevice' {
     It 'restarts nothing but an FM350 composite device: <InstanceId>' -ForEach @(
         @{ InstanceId = 'USB\VID_0E8D&PID_7127&MI_06\8&00000000&1&0006' }
@@ -624,8 +659,6 @@ Describe 'Get-ModemPnpRecord' {
                     DEVPKEY_Device_Parent         = if ($device.InstanceId -eq $script:composite) { 'USB\ROOT_HUB30\6&00000000&1&0' } else { $script:composite }
                     DEVPKEY_Device_CompatibleIds  = if ($device.InstanceId -eq $script:atPortId) { [string[]]@('USB\COMPAT_VID_0e8d&Class_ff&SubClass_00&Prot_00', 'USB\Class_ff&SubClass_00&Prot_00') } else { $null }
                     DEVPKEY_Device_DriverInfPath  = if ($service -eq 'usb2ser') { 'oem24.inf' } else { $null }
-                    DEVPKEY_Device_DriverVersion  = if ($service -eq 'usb2ser') { '3.22.43.1' } else { $null }
-                    DEVPKEY_Device_DriverProvider = if ($service -eq 'usb2ser') { 'MediaTek' } else { $null }
                 }
                 # As the cmdlet does, a key without a value comes back without Data.
                 foreach ($key in $KeyName) {
@@ -668,12 +701,10 @@ Describe 'Get-ModemPnpRecord' {
         $modem.Network.PortName | Should -BeNullOrEmpty
     }
 
-    It 'reads each device''s driver package, version and provider in the same call' {
+    It 'reads each device''s driver package in the same call' {
         $atPort = Get-ModemPnpRecord | Where-Object InstanceId -EQ $script:atPortId
         $atPort.DriverInfPath | Should -Be 'oem24.inf'
-        $atPort.DriverVersion | Should -Be '3.22.43.1'
-        $atPort.DriverProvider | Should -Be 'MediaTek'
-        (Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord)).AtPort.Driver.Version | Should -Be '3.22.43.1'
+        (Resolve-ModemUsbDevice -Device @(Get-ModemPnpRecord)).AtPort.Driver.InfPath | Should -Be 'oem24.inf'
         Should -Invoke -ModuleName FibocomFm350 Get-PnpDeviceProperty -ParameterFilter { 'DEVPKEY_Device_DriverInfPath' -in $KeyName -and 'DEVPKEY_Device_ProblemCode' -in $KeyName }
     }
 

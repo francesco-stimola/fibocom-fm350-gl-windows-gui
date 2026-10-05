@@ -1960,6 +1960,46 @@ Describe 'The worker and the AT port' {
         $script:link['Snapshot'].State | Should -Be 'Online'
     }
 
+    It 'starts no installation after one that timed out, and tries them again when the user checks now' {
+        $script:records = @(Get-TestRecord -Unbound -Gnss)
+        $script:install = { [pscustomobject]@{ Done = $false; NeedReboot = $false; Step = 'TimedOut'; Error = 0 } }
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs.InstanceId | Should -Be @('USB\VID_0E8D&PID_7127&MI_06\8&00000000&1&0006') -Because 'an installation that hangs holds Windows'' others'
+        $snapshot = $script:link['Snapshot']
+        $snapshot.Usb.Binding.Functions.Result | Should -Be @('Failed', 'Failed')
+        $snapshot.Usb.Binding.Functions.Step | Should -Be @('TimedOut', 'TimedOut')
+        $snapshot.Reason | Should -Be 'BindFailed'
+        $script:now += 5000
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs.Count | Should -Be 1 -Because 'each counts as an installation that failed: once per instance'
+
+        $script:install = { [pscustomobject]@{ Done = $true; NeedReboot = $false; Step = 'Install'; Error = 0 } }
+        [void](Send-ModemCommand -Link $script:link -Kind ConnectNow)
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs.Count | Should -Be 3
+        $script:link['Snapshot'].State | Should -Be 'Online'
+    }
+
+    It 'tries again a failed installation when the modem comes back, as the same instance too' {
+        $script:records = @(Get-TestRecord -Unbound)
+        $script:install = { [pscustomobject]@{ Done = $false; NeedReboot = $false; Step = 'Install'; Error = 5 } }
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:now += 5000
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs.Count | Should -Be 1
+        # Gone from USB - unplugged, reset, its SIM taken out -, then back as the same instance.
+        $script:records = @()
+        $script:now += 5000
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        @($script:link['Snapshot'].Usb.Failed).Count | Should -Be 0
+        $script:records = @(Get-TestRecord -Unbound)
+        $script:install = { [pscustomobject]@{ Done = $true; NeedReboot = $false; Step = 'Install'; Error = 0 } }
+        $script:now += 5000
+        Invoke-ModemWorkerCycle -Worker $script:worker
+        $script:installs.Count | Should -Be 2
+        $script:link['Snapshot'].State | Should -Be 'Online'
+    }
+
     It 'tries again a new instance of a function whose installation failed' {
         $script:records = @(Get-TestRecord -Unbound)
         $script:install = { [pscustomobject]@{ Done = $false; NeedReboot = $false; Step = 'Install'; Error = 5 } }

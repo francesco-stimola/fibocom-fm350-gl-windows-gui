@@ -97,6 +97,7 @@
         'Invoke-ModemWorker'
         'Invoke-ModemWorkerCycle'
         'Invoke-RecoveryStep'
+        'Join-ModemPnpRecord'
         'Join-SmsPart'
         'Measure-DataUsage'
         'Measure-SmsText'

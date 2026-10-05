@@ -742,7 +742,8 @@ Describe 'Restore-AppUsbFunction' {
         @{ Name = 'nothing on WinUSB'; Results = @(); Lines = @() }
         @{ Name = 'no modem plugged in, nothing on WinUSB'; Modems = 0; Results = @(); Lines = @() }
         @{ Name = 'a modem not plugged in'; Modems = 0; Absent = @('Removed', 'Removed', 'Removed'); Results = @(); Lines = @('*modem not plugged in, removed from Windows*: 3.') }
-        @{ Name = 'one not plugged in, a removal refused'; Modems = 0; Absent = @('Removed', 'Failed', 'Unread'); Results = @(); Lines = @('*removed from Windows*: 1.', '*modem not plugged in, left on WinUSB*: 2.') }
+        @{ Name = 'one not plugged in, a removal refused'; Modems = 0; Absent = @('Removed', 'Failed'); Results = @(); Lines = @('*removed from Windows*: 1.', '*modem not plugged in, left on WinUSB*: 1.') }
+        @{ Name = 'one not plugged in that couldn''t be read, its driver unknown'; Modems = 0; Absent = @('Removed', 'Unread'); Results = @(); Lines = @('*left as they are*: 1.', '*removed from Windows*: 1.') }
         @{ Name = 'one plugged in, one not'; Absent = @('Removed', 'RestartNeeded'); Results = @('Done'); Lines = @('*back on the driver Windows ranks best*: 1.', '*removed from Windows*: 2.') }
     ) {
         $functions = @(foreach ($result in $Results) { [pscustomobject]@{ Result = $result } })
