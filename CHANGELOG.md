@@ -23,6 +23,8 @@ A major version: the modem's AT port is no longer a COM port.
 - Uninstalling gives the modem's ports back to the driver Windows ranks best — MediaTek's serial
   driver, where it is installed, none otherwise. A modem not plugged in has its ports removed from
   Windows, which chooses their driver again when it comes back.
+- **Not tested on WinUSB: sleep and resume**, a computer that goes to sleep with the modem plugged
+  in.
 
 ### Added
 - **Windows on Arm64**: the installer accepts 64-bit Windows on an Arm64 processor, and the release

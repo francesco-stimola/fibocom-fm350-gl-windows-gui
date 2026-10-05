@@ -899,7 +899,9 @@ itself. The network function stays on Windows' RNDIS driver, as before.
    driver, it is looked at again next time —; a function the user disabled; one with a
    problem on WinUSB; one whose installation failed already — **tried once per instance**, again
    at the app's next start, at a new instance, or when the user asks to check now (decided
-   2026-10-04) — not again by a worker that replaces another: the snapshot carries the failed
+   2026-10-04), and when the modem comes back after it left USB — unplugged, reset, its SIM taken
+   out —, whichever of its instances it comes back as (decided 2026-10-05: it alternates between
+   two) — not again by a worker that replaces another: the snapshot carries the failed
    instances to it as hashes (SHA-256), never their IDs.
 4. **Put them on WinUSB** (`Install-WinUsbDriver`, in the worker, with administrator rights):
    - **Never under another program.** A function whose COM port or device interface another
@@ -918,7 +920,10 @@ itself. The network function stays on Windows' RNDIS driver, as before.
      driver store. A failure after the class changed gives the function back to its best driver,
      and takes the interface class back out.
    - On a thread of the pool, the worker waiting for it a second at a time, its heartbeat beating;
-     given up after 5 minutes, as pnputil was.
+     given up after 5 minutes, as pnputil was. An installation that hangs holds Windows' others:
+     after one that timed out, the rest of that look's aren't started — failed as it did, each
+     tried again as one —, so the worker waits 5 minutes at most, not 5 for each function. The
+     uninstallation's way back does the same.
    - **Never the network function** — refused by the decision, by the command's parameter check
      and by the C# that calls Windows —, and never a modem reset.
    - **Never an open port taken away**: the AT port is put on WinUSB only when it isn't usable
@@ -945,7 +950,9 @@ itself. The network function stays on Windows' RNDIS driver, as before.
    *no compatible driver* or *no driver selected*, and only then —, a null driver: the function as
    Windows leaves one it found no driver for. Any other failure is said, the function left on its
    driver. The uninstallation does it for every vendor function on `winusb.inf` of every FM350
-   plugged in, reading PnP again once when a read missed one, and saying one still missed. Those of an FM350 not plugged in,
+   plugged in, reading PnP again once when a read missed one — each device as the read that had it
+   whole (`Join-ModemPnpRecord`), the first read alone when the second fails —, and saying one
+   still missed, left as it is, plugged in or not: its driver is unknown. Those of an FM350 not plugged in,
    which Windows remembers on WinUSB, it removes from Windows (`Select-AbsentWinUsbFunction`,
    `Remove-AbsentUsbFunction`: `DiUninstallDevice`), so that their driver is chosen afresh when
    the modem comes back — never the network function, never ADB, never a device plugged in, which

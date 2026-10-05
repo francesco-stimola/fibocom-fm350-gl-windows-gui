@@ -4,6 +4,47 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-05 — M10: the modem off USB, the way back to MediaTek's driver, a hung installation
+
+On the device (AT-COMMANDS §1.2): the SIM taken out takes the modem off USB until one is back, and
+the modem reads it only minutes after; unplugged, and plugged back. Each time the app saw its port
+lost, escalated nothing while the modem was away or had no SIM — H1 has no ladder, *no SIM* is out
+of the app's reach —, put the functions of an instance left on no driver back on WinUSB, and
+connected again by itself. The installed 2.0's uninstallation gave the functions back to MediaTek's
+driver with its package in the driver store: the way back of the installed app, until then proven
+by the app's code in a session script. Sleep and resume stays open: no test machine resumes from
+sleep with the modem attached. The question of a zero-length packet after a full one is closed as
+moot: each of the app's reads is one packet.
+
+Two changes the third review pass left:
+- **An installation that hangs held the worker 5 minutes for each function**: Windows'
+  installations wait on one another, so after one timed out the next would too — 35 minutes for
+  seven. After one that timed out, the rest of that look's aren't started, each failed as it did
+  and tried again as one; the uninstallation's way back does the same. Rejected: one 5-minute
+  budget shared by the look — the same bound, with a clock to carry, for installations that take
+  100–200 ms each.
+- The PnP read no longer asks each device's driver version and provider, which nothing used: only
+  the name of its INF, which the way back needs.
+
+A targeted review pass on the third pass's fixes and on these — agreed for M10 alone, not a fourth
+full pass — found two, fixed with tests:
+- **The uninstallation's second PnP read replaced the first**: one that missed another function
+  left that function on WinUSB though the first read had it whole, and one that failed failed the
+  whole way back. Each device is now taken from the read that had it whole
+  (`Join-ModemPnpRecord`), and a second read that fails leaves the first.
+- **A function of a modem not plugged in that couldn't be read was said left on WinUSB**, though
+  its driver is unknown: it is counted with the functions left as they are, whose line says some
+  couldn't be read.
+
+And one decision it led to, the maintainer's: **an installation that failed is tried again when the
+modem comes back** after it left USB — unplugged, reset, its SIM taken out —, whichever instance it
+comes back as. The window said so already (*the app tries again at "Check now", or when the modem is
+plugged in again*), but the worker tried again only a new instance, and the modem alternates
+between two: plugged in again, it could come back as the one that failed. The worker now forgets
+its failed installations when it finds the modem gone; an absence is an event, so nothing loops.
+Rejected: the text changed to say *Check now* alone, which leaves the user to find the button after
+replugging; the difference left as a known limit.
+
 ## 2026-10-05 — The modem's other functions: nothing for the app
 
 What could the vendor functions other than the AT port serve? By their names (MediaTek's INF,
