@@ -4,6 +4,17 @@ Newest first. One entry per meaningful change — note *what* and *why*, not jus
 the running history, so context is never lost between sessions. Technical and design decisions
 only.
 
+## 2026-10-06 — M10 complete: 24 hours on WinUSB, v2.0.0
+
+The installed 2.0's final build ran 24 hours on the real modem, the idle night included, its log
+read every 4 hours through a mask: online throughout, one worker, no port lost, no recovery step,
+no warning — 17 log lines in a day, all at its start: the seven vendor functions put on WinUSB from
+no driver, online, the data path proven. The data usage it saves every 5 minutes was saved to the
+end. Memory and handles were not sampled this time (M4's day measured them, on the COM port). The
+modem's state then compared with the start of the session: equal, but for the adapter's address —
+a new one since the cable was plugged back — and the modem's own context 0, which comes and goes.
+Left open: sleep and resume, and Windows on Arm64 on hardware (AT-COMMANDS §1.2).
+
 ## 2026-10-05 — M10: the modem off USB, the way back to MediaTek's driver, a hung installation
 
 On the device (AT-COMMANDS §1.2): the SIM taken out takes the modem off USB until one is back, and

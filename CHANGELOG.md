@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-06
+
 A major version: the modem's AT port is no longer a COM port.
 
 ### Changed

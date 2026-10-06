@@ -177,7 +177,7 @@ the app does both from 2.0.
 | On x64 the structures marshal as the SDK lays them out for 64-bit Windows: `SP_DEVINFO_DATA` 32 bytes, `SP_DEVINSTALL_PARAMS_W` 584, `SP_DRVINFO_DATA_V2_W` 1568, `SP_DRVINFO_DETAIL_DATA_W` 1584 (up to its first hardware-ID character), `WINUSB_PIPE_INFORMATION` 12, `USB_INTERFACE_DESCRIPTOR` 9. The app names no size: they come from the marshaller, so Arm64's 64-bit layout follows (not verified: no Arm64 hardware). | ✅ · ❓ | `[HOST]` (marshalled sizes) |
 
 Open questions for M10 (on the device unless said):
-1. Hours and days on WinUSB. *The unsolicited codes, the `> ` prompt of `AT+CMGS` and the eSIM's APDUs: answered above, in a session's time.*
+1. Hours and days on WinUSB. *A day answered: 24 hours of the installed 2.0's normal use, the idle night included, with no port lost, no recovery step and no warning in its log. The unsolicited codes, the `> ` prompt of `AT+CMGS` and the eSIM's APDUs: answered above, in a session's time.*
 2. ~~A response whose length is a multiple of 512 bytes: does a zero-length packet end the transfer, or does the read wait for its timeout?~~ — moot: the app reads one packet of the maximum size at a time, which a full packet completes (above); a zero-length packet after it completes the next read with nothing. On the device no packet over 434 bytes seen.
 3. ~~What the transport sees when the modem leaves USB — after `AT+CFUN=15`, unplugged, the SIM taken out —; whether a new instance comes back on MediaTek's driver, when it is in the driver store, before the app binds it again~~ — answered above.
 4. Sleep and resume with the function on WinUSB. *Not tried: no test machine that resumes from sleep with the modem attached.*
